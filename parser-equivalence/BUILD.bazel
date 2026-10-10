@@ -276,6 +276,8 @@ _DIAGNOSTICS = [
 # Asserting parity classes in a gate-8 target of their own (named below), not in parser_parity
 _OWN_TARGETS = [
     "RoundTripProofTest",
+    # leg 8's oracle: run with the round trip's inputs, in :round_trip_proof
+    "JsonModelDoorTest",
 ]
 
 # Gate 8: every asserting parity class. Selected by PACKAGE, so a new test is in the

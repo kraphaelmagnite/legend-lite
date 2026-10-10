@@ -602,6 +602,9 @@ public final class PmcdParser {
         }
         if (TokenStreamCursor.IDENTIFIER_TOKENS.contains(t)) {
             String word = ts.text(cursor);
+            if (CONNECTION_FLAVORS.contains(word)) {
+                return 7;   // every connection flavor the engine's ###Connection reads
+            }
             if ("Primitive".equals(word)) {
                 return PRIMITIVE_SITE;
             }

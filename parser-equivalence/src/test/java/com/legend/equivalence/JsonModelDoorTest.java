@@ -27,15 +27,21 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * LEG 8'S ORACLE (docs/PROTOCOL_PROGRAM_2026_10_05.md §4): a model given as JSON reaches the compiler exactly as its
- * text does. For every text of the round trip's inputs -- legend-engine's test collection, lite's projects, the
- * showcase projects (as {@link RoundTripProofTest} reads them) -- the compiler's parsed model from the text
- * ({@code ElementParser}, as {@code Compiler.compileModel} parses) equals the one the door builds from lite's JSON of
- * that text without source information ({@code ModelReader}, {@code ModelFromProtocol}, as a client's
- * {@code PureModelContextData} arrives): the same elements, each record equal (the model's records compare by value),
- * and each element's imports the same. Equal input, so the compiler builds the same model and answers the same errors.
+ * text does. With one parser (step 1), the text and the JSON differ only by the JSON hop, so for every text of the
+ * round trip's inputs -- legend-engine's test collection, lite's projects, the showcase projects (as
+ * {@link RoundTripProofTest} reads them) -- two things are checked:
+ * <ol>
+ *   <li><b>the hop</b>: the text's records (the engine's dialect, what a client's JSON carries), written as JSON and
+ *       read back ({@code ModelReader}), are the same records, field by field, positions included;</li>
+ *   <li><b>lite's dialect</b>: the compiler's parsed model from the text at lite's dialect ({@code ElementParser}, as
+ *       {@code Compiler.compileModel} parses) equals the door's over the engine's records ({@code ModelFromProtocol}):
+ *       the same elements, each equal, each element's imports the same.</li>
+ * </ol>
+ * Together: equal input to the compiler, so the same model and the same errors.
  *
  * <p>Counted apart, never as a pass: a text lite's parser refuses, or whose JSON lite does not write (nothing to
- * compare). Anything else is a FAILURE, listed. The counts are pinned per input: matched up-only, failed down-only.
+ * compare). Anything else is a FAILURE, listed by kind. The counts are pinned per input: matched up-only, failed
+ * down-only.
  */
 class JsonModelDoorTest {
 
@@ -106,6 +112,33 @@ class JsonModelDoorTest {
 
     /** One text: its parsed model from the text against the door's from its JSON. */
     private static void text(Tally t, String id, String text) {
+        // the records a client's JSON carries: the text at the engine's dialect
+        com.legend.protocol.Protocol.PureModelContextData records;
+        try {
+            records = PmcdParser.parseModel(text);
+        } catch (RuntimeException e) {
+            t.jsonRefused++;
+            return;
+        }
+        if (records.elements().stream().allMatch(e -> e instanceof com.legend.protocol.Protocol.PSectionIndex)) {
+            return;   // not a model (an expected message, a resource's name)
+        }
+        // 1. THE JSON HOP: the records written as JSON and read back are the same records, field by field
+        com.legend.protocol.Protocol.PureModelContextData read;
+        try {
+            read = ModelReader.read(com.legend.protocol.ProtocolEmitter.emit(records));
+        } catch (RuntimeException e) {
+            fail(t, id, "hop: unread " + e.getClass().getSimpleName(), "lite's reader refuses its own JSON: " + e);
+            return;
+        }
+        if (!read.elements().equals(records.elements())) {
+            String meaning = difference(records.elements(), read.elements(), "records", false);
+            String where = meaning != null ? meaning : difference(records.elements(), read.elements(), "records", true);
+            fail(t, id, "hop " + (meaning != null ? "meaning " : "position ") + field(where), "the records differ at "
+                    + where);
+            return;
+        }
+        // 2. LITE'S DIALECT: the compiler's input from the text (lite's dialect) is the door's over the engine's records
         ParsedModel fromText;
         try {
             fromText = ElementParser.parse(text, Dialect.LEGEND_LITE);
@@ -113,66 +146,37 @@ class JsonModelDoorTest {
             t.textRefused++;
             return;
         }
-        String json;
-        try {
-            json = PmcdParser.parseDocument(text);
-        } catch (RuntimeException e) {
-            t.jsonRefused++;
-            return;
-        }
-        if (fromText.elements().isEmpty()) {
-            return;   // not a model (an expected message, a resource's name)
-        }
-        ParsedModel fromJson;
-        try {
-            fromJson = ModelFromProtocol.of(ModelReader.read(json));
-        } catch (RuntimeException e) {
-            fail(t, id, "door refuses: " + e.getClass().getSimpleName(),
-                    "the door refuses lite's own JSON of the text: " + e);
-            return;
-        }
+        ParsedModel fromRecords = ModelFromProtocol.of(records);
         Map<String, List<PackageableElement>> a = byKey(fromText);
-        Map<String, List<PackageableElement>> b = byKey(fromJson);
+        Map<String, List<PackageableElement>> b = byKey(fromRecords);
         if (!a.keySet().equals(b.keySet())) {
-            fail(t, id, "element sets differ",
-                    "elements: from the text only " + minus(a, b) + "; from the JSON only " + minus(b, a));
+            fail(t, id, "dialect: element sets differ",
+                    "elements: lite's only " + minus(a, b) + "; the engine's only " + minus(b, a));
             return;
         }
         for (String key : a.keySet()) {
             if (!a.get(key).equals(b.get(key))) {
-                // where the records first differ, by field: in meaning first, then in positions alone
                 String meaning = difference(a.get(key), b.get(key), a.get(key).get(0).getClass().getSimpleName(), false);
                 String where = meaning != null ? meaning
                         : difference(a.get(key), b.get(key), a.get(key).get(0).getClass().getSimpleName(), true);
-                String field = String.valueOf(where).split(":", 2)[0].replaceAll("\\[\\d+\\]", "[]");
-                fail(t, id, (meaning != null ? "meaning " : "position ") + field,
+                fail(t, id, "dialect " + (meaning != null ? "meaning " : "position ") + field(where),
                         "element " + key + " differs at " + where);
                 return;
             }
             ImportScope ia = fromText.elementImports().getOrDefault(key, ImportScope.empty());
-            ImportScope ib = fromJson.elementImports().getOrDefault(key, ImportScope.empty());
+            ImportScope ib = fromRecords.elementImports().getOrDefault(key, ImportScope.empty());
             if (!ia.equals(ib)) {
-                fail(t, id, "imports differ",
-                        "element " + key + "'s imports differ: text " + ia.wildcards() + ", json " + ib.wildcards()
-                                + "; the JSON's sections " + sections(json));
+                fail(t, id, "dialect: imports differ",
+                        "element " + key + "'s imports differ: lite " + ia.wildcards() + ", the engine " + ib.wildcards());
                 return;
             }
         }
         t.matched++;
     }
 
-    /** The JSON's section index, summarized: each section's parser, imports and element paths. */
-    private static String sections(String json) {
-        StringBuilder out = new StringBuilder();
-        for (com.legend.protocol.Protocol.Element e : ModelReader.read(json).elements()) {
-            if (e instanceof com.legend.protocol.Protocol.PSectionIndex index) {
-                for (com.legend.protocol.Protocol.PSection s : index.sections()) {
-                    out.append(" {").append(s.parserName()).append(" imports=").append(s.imports())
-                            .append(" elements=").append(s.elements()).append('}');
-                }
-            }
-        }
-        return out.toString();
+    /** A difference's place, its indices dropped: the field it is in, for counting kinds together. */
+    private static String field(@com.legend.base.Nullable String where) {
+        return String.valueOf(where).split(":", 2)[0].replaceAll("\\[\\d+\\]", "[]");
     }
 
     private static Map<String, List<PackageableElement>> byKey(ParsedModel m) {
@@ -209,7 +213,12 @@ class JsonModelDoorTest {
         if (a == null || b == null) {
             return path + ": " + abbreviate(a) + " vs " + abbreviate(b);
         }
-        if (a.getClass() != b.getClass()) {
+        if (a.equals(b)) {
+            return null;   // equal values (two List implementations with the same contents among them)
+        }
+        if (a instanceof List<?> && b instanceof List<?>) {
+            // lists by their contents, whichever implementation holds them
+        } else if (a.getClass() != b.getClass()) {
             return path + ": " + a.getClass().getSimpleName() + " vs " + b.getClass().getSimpleName()
                     + " -- text " + abbreviate(a) + " -- json " + abbreviate(b);
         }
