@@ -25,26 +25,52 @@ function ok(sql: string): string {
  * the real module here would make a fast unit suite slow and would
  * test legend-lite twice.
  */
+/** What the fake module's table of models held saw: each model held, each handle let go. */
+interface HeldLog {
+  readonly holds: string[];
+  readonly releases: number[];
+}
+
+/** The module's exports, held models and all, answering a plan with `answer` over the model its handle names. */
+function fakeExports(
+  answer: (model: string, query: string, runtime: string) => string,
+  onWarm?: (model: string) => void,
+  log: HeldLog = { holds: [], releases: [] },
+) {
+  const models = new Map<number, string>();
+  let next = 1;
+  const over = (h: number, q: string, r: string): string =>
+    (models.has(h) ? answer(models.get(h)!, q, r) : `ERR\n500\nno model is held under handle ${h}`);
+  return {
+    holdModelOrError: (m: string) => {
+      onWarm?.(m);
+      log.holds.push(m);
+      if (m === 'does not compile') return 'ERR\nCOMPILATION\nthe model does not compile';
+      const handle = next++;
+      models.set(handle, m);
+      return `OK\n${handle}`;
+    },
+    releaseModel: (h: number) => { log.releases.push(h); models.delete(h); return 1; },
+    planHeldOrError: over,
+    planJsonHeldOrError: over,
+    relationTypeHeldOrError: () => 'OK\n{"_type":"relationType","columns":[]}',
+    tableModelOrError: () => 'ERR\nfake\nnot in this fake',
+    catalogColumnsSqlOrError: () => 'ERR\nfake\nnot in this fake',
+    pureV1OrError: () => 'ERR\nfake\nnot in this fake',
+    testDataSqlOrError: () => 'ERR\nfake\nnot in this fake',
+  };
+}
+
 function fakeRuntime(
   answer: (model: string, query: string, runtime: string) => string,
   onLoad?: () => void,
   onWarm?: (model: string) => void,
+  log?: HeldLog,
 ) {
   return async () => ({
     async load() {
       onLoad?.();
-      return {
-        exports: {
-          planOrError: (m: string, q: string, r: string) => answer(m, q, r),
-          relationTypeOrError: () => 'OK\n{"_type":"relationType","columns":[]}',
-          tableModelOrError: () => 'ERR\nfake\nnot in this fake',
-          catalogColumnsSqlOrError: () => 'ERR\nfake\nnot in this fake',
-          planJsonOrError: (m: string, q: string, r: string) => answer(m, q, r),
-          pureV1OrError: () => 'ERR\nfake\nnot in this fake',
-          testDataSqlOrError: () => 'ERR\nfake\nnot in this fake',
-          warmModel: (m: string) => { onWarm?.(m); return 1; },
-        },
-      };
+      return { exports: fakeExports(answer, onWarm, log) };
     },
   });
 }
@@ -55,13 +81,15 @@ function planner(
     cache?: boolean;
     onLoad?: () => void;
     onWarm?: (model: string) => void;
+    log?: HeldLog;
+    model?: string;
   } = {},
 ) {
   return new WasmPlanner({
-    model: '###Relational\nDatabase trades::DB ( Table T ( a VARCHAR(1) ) )',
+    model: extra.model ?? '###Relational\nDatabase trades::DB ( Table T ( a VARCHAR(1) ) )',
     runtime: 'trades::RT',
     ...(extra.cache === undefined ? {} : { cache: extra.cache }),
-    loadRuntime: fakeRuntime(answer, extra.onLoad, extra.onWarm),
+    loadRuntime: fakeRuntime(answer, extra.onLoad, extra.onWarm, extra.log),
   });
 }
 
@@ -210,10 +238,43 @@ describe('WasmPlanner', () => {
     const p = planner(() => ok('SELECT 1'),
       { onWarm: (m) => { warmed.push(m); } });
     await p.warmUp();
-    assert.equal(warmed.length, 1, 'warmUp must call warmModel');
+    assert.equal(warmed.length, 1, 'warmUp must hold the model');
     assert.match(warmed[0]!, /Database trades::DB/,
-      'warmModel must get the REAL model, so the graph it builds is'
+      'the module must hold the REAL model, so the graph it builds is'
       + ' the one the first plan wants');
+    await p.planText('g');
+    assert.equal(warmed.length, 1, 'the first plan uses the model warmUp held');
+  });
+
+  it('holds its model once, however many plans it makes, and lets it go when done', async () => {
+    const log: HeldLog = { holds: [], releases: [] };
+    const p = planner(() => ok('SELECT 1'), { cache: false, log });
+    for (const q of ['a', 'b', 'c']) await p.planText(q);
+    await p.plan(fromElement('trades::T').select(['a']).lambda());
+    assert.equal(log.holds.length, 1, 'compiled once: every plan over the model held');
+    p.dispose();
+    await new Promise((done) => setTimeout(done, 0));
+    assert.deepEqual(log.releases, [1], 'dispose lets the model go');
+  });
+
+  it('a model changed: the old one let go, the new one held on its first plan', async () => {
+    const log: HeldLog = { holds: [], releases: [] };
+    const models: string[] = [];
+    const p = planner((m) => { models.push(m); return ok('SELECT 1'); }, { cache: false, log });
+    await p.planText('a');
+    p.useModel('another model', 'trades::RT');
+    await p.planText('a');
+    assert.deepEqual(models, [log.holds[0], 'another model'], 'each plan over the model the planner has now');
+    assert.equal(log.holds.length, 2);
+    assert.deepEqual(log.releases, [1]);
+  });
+
+  it('a model that does not compile is refused as a plan is, held by no one, and tried again next time', async () => {
+    const log: HeldLog = { holds: [], releases: [] };
+    const p = planner(() => ok('SELECT 1'), { cache: false, log, model: 'does not compile' });
+    await assert.rejects(() => p.planText('a'), PlanError);
+    await assert.rejects(() => p.planText('a'), PlanError);
+    assert.equal(log.holds.length, 2, 'a refusal is not kept as the verdict');
   });
 
   it('honours an abort raised before the call', async () => {
@@ -276,16 +337,7 @@ describe('WasmPlanner', () => {
         return {
           async load() {
             return {
-              exports: {
-                planOrError: () => ok('SELECT 1'),
-                relationTypeOrError: () => 'OK\n{"_type":"relationType","columns":[]}',
-                tableModelOrError: () => 'ERR\nfake\nnot in this fake',
-                catalogColumnsSqlOrError: () => 'ERR\nfake\nnot in this fake',
-                planJsonOrError: () => 'ERR\nfake\nnot in this fake',
-                pureV1OrError: () => 'ERR\nfake\nnot in this fake',
-                testDataSqlOrError: () => 'ERR\nfake\nnot in this fake',
-                warmModel: () => 1,
-              },
+              exports: fakeExports(() => ok('SELECT 1')),
             };
           },
         };
@@ -323,6 +375,84 @@ describe('WasmPlanner', () => {
     const p = planner(() => 'SELECT 1');
     await assert.rejects(() => p.planText('g'),
       PlannerUnavailableError);
+  });
+});
+
+describe('WasmPlanner off the main thread: the models its worker holds', () => {
+  /**
+   * A stand-in Worker answering as planner-worker.ts does, over a fake module of its own: each worker its own table of
+   * models held, as a real worker's module is. Node has no Worker; the planner uses one when `Worker` exists.
+   */
+  class FakeWorker {
+    static made: FakeWorker[] = [];
+    readonly exports = fakeExports((_m) => ok('SELECT 1'), undefined, { holds: [], releases: [] });
+    readonly holds: string[] = [];
+    readonly releases: number[] = [];
+    terminated = false;
+    onmessage: ((e: { data: unknown }) => void) | null = null;
+    onerror: ((e: { message: string }) => void) | null = null;
+    constructor() {
+      FakeWorker.made.push(this);
+    }
+    postMessage(msg: Record<string, unknown>): void {
+      const x = this.exports;
+      const answer = msg['kind'] === 'hold' ? (this.holds.push(msg['model'] as string), x.holdModelOrError(msg['model'] as string))
+        : msg['kind'] === 'release' ? (this.releases.push(msg['handle'] as number), x.releaseModel(msg['handle'] as number), 'OK\n')
+        : msg['kind'] === 'plan' ? x.planHeldOrError(msg['handle'] as number, msg['query'] as string, msg['runtime'] as string)
+        : 'ERR\nfake\nnot in this fake';
+      queueMicrotask(() => this.onmessage?.({ data: { id: msg['id'], ok: true, answer } }));
+    }
+    terminate(): void {
+      this.terminated = true;
+    }
+    die(): void {
+      this.onerror?.({ message: 'gone' });
+    }
+  }
+  const g = globalThis as unknown as { Worker?: unknown };
+  const workerPlanner = (): WasmPlanner => new WasmPlanner({ model: 'm', runtime: 'r', workerUrl: 'worker.js', cache: false });
+
+  it('dispose lets its model go to the worker running, and starts none to do it', async () => {
+    FakeWorker.made = [];
+    g.Worker = FakeWorker;
+    try {
+      const p = workerPlanner();
+      await p.planText('a');
+      p.dispose();
+      await new Promise((done) => setTimeout(done, 0));
+      assert.equal(FakeWorker.made.length, 1, 'no worker started to let a model go');
+      assert.equal(FakeWorker.made[0]!.terminated, true);
+    } finally {
+      delete g.Worker;
+    }
+  });
+
+  it('a worker that dies takes its models with it: the next plan holds its model again, on the new worker', async () => {
+    FakeWorker.made = [];
+    g.Worker = FakeWorker;
+    try {
+      const p = workerPlanner();
+      await p.planText('a');
+      FakeWorker.made[0]!.die();
+      assert.equal((await p.planText('b')).sql, 'SELECT 1', 'planned, no stale handle sent');
+      assert.equal(FakeWorker.made.length, 2);
+      assert.deepEqual(FakeWorker.made[1]!.holds, ['m'], 'held again on the new worker');
+    } finally {
+      delete g.Worker;
+    }
+  });
+});
+
+describe('WasmPlanner: a plan in flight while its model changes', () => {
+  it('is planned against the model and runtime it began with, and not kept for the new model', async () => {
+    const asked: string[] = [];
+    const p = planner((m, q, r) => { asked.push(`${m}|${q}|${r}`); return ok('SELECT 1'); }, { model: 'old' });
+    const first = p.planText('a');
+    p.useModel('new', 'other::RT');
+    await first;
+    assert.deepEqual(asked, ['old|a|trades::RT'], 'the old model with its own runtime');
+    await p.planText('a');
+    assert.deepEqual(asked.at(-1), 'new|a|other::RT', 'the new model planned afresh, the old answer not kept for it');
   });
 });
 

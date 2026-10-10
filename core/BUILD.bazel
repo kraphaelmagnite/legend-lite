@@ -197,6 +197,8 @@ legend_java_library(
 _PLANNER_SRCS = [
     "src/main/java/com/legend/Compiler.java",
     "src/main/java/com/legend/CrossStoreGuard.java",
+    # the models a host holds, compiled once and planned against many times (docs/DATACUBE_MODEL_DESIGN_2026_10_10.md §9)
+    "src/main/java/com/legend/HeldModels.java",
     "src/main/java/com/legend/PlanMaker.java",
     "src/main/java/com/legend/ProgramFacts.java",
     "src/main/java/com/legend/QueryParameters.java",

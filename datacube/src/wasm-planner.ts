@@ -35,15 +35,17 @@ import type { SeedTable, TableSeed } from '../../engine-client/src/model-data.ts
 /** The subset of TeaVM's module surface this file uses. */
 interface TeavmModule {
   readonly exports: {
-    planOrError(model: string, query: string, runtime: string): string;
-    relationTypeOrError(model: string, query: string): string;
+    // a model held: compiled once, planned against many times (docs/DATACUBE_MODEL_DESIGN_2026_10_10.md §8)
+    holdModelOrError(model: string): string;
+    releaseModel(handle: number): number;
+    planHeldOrError(handle: number, query: string, runtime: string): string;
+    planJsonHeldOrError(handle: number, lambdaJson: string, runtime: string): string;
+    relationTypeHeldOrError(handle: number, query: string): string;
     tableModelOrError(table: string): string;
     catalogColumnsSqlOrError(schema: string, table: string): string;
-    planJsonOrError(model: string, lambdaJson: string, runtime: string): string;
     // legend-engine's pure/v1, routed as legend-lite's server routes it: `OK\n<status>\n<type>\n<body>`
     pureV1OrError(path: string, rawQuery: string, body: string): string;
     testDataSqlOrError(model: string, database: string, tablesJson: string): string;
-    warmModel(model: string): number;
   };
 }
 
@@ -118,6 +120,9 @@ interface Transport {
   worker: Worker | undefined;
   readonly pending: Map<number, { resolve(answer: string): void; reject(e: unknown): void }>;
   nextId: number;
+  /** Which module holds the models held: one more each time a module, or a worker with its own, starts (a handle
+   *  taken under another is no longer held by anything). */
+  generation: number;
 }
 
 export class WasmPlanner implements Planner, TableModels {
@@ -128,9 +133,11 @@ export class WasmPlanner implements Planner, TableModels {
    * The module and its worker: SHARED by every planner `withModel` made from this one, since
    * each request carries its own model (planner-worker.ts). One worker, one boot layer.
    */
-  #t: Transport = { module: undefined, worker: undefined, pending: new Map(), nextId: 1 };
+  #t: Transport = { module: undefined, worker: undefined, pending: new Map(), nextId: 1, generation: 0 };
   /** Made by `withModel`: the worker is its maker's, and `dispose` leaves it running. */
   #borrowed = false;
+  /** This planner's model, held by the module (compiled once, every plan against it), and under which module. */
+  #held: { readonly handle: Promise<number>; readonly generation: number } | undefined;
 
   constructor(options: WasmPlannerOptions) {
     this.#options = options;
@@ -156,6 +163,8 @@ export class WasmPlanner implements Planner, TableModels {
   #ensureWorker(): Worker {
     if (this.#t.worker) return this.#t.worker;
     const w = new Worker(this.#options.workerUrl!, { type: 'module' });
+    // its module is its own: none of the models held before are held by it
+    this.#t.generation += 1;
     w.onmessage = (e: MessageEvent<{
       id: number; ok: boolean; answer?: string; error?: string;
     }>) => {
@@ -176,6 +185,8 @@ export class WasmPlanner implements Planner, TableModels {
       for (const waiting of this.#t.pending.values()) waiting.reject(dead);
       this.#t.pending.clear();
       this.#t.worker = undefined;
+      // the models it held died with it: no planner's handle names anything now
+      this.#t.generation += 1;
     };
     this.#t.worker = w;
     return w;
@@ -195,9 +206,14 @@ export class WasmPlanner implements Planner, TableModels {
   dispose(): void {
     this.#cache.clear();
     this.#types.clear();
+    this.#letGo();
     if (this.#borrowed) return;
-    this.#t.worker?.terminate();
-    this.#t.worker = undefined;
+    if (this.#t.worker) {
+      this.#t.worker.terminate();
+      this.#t.worker = undefined;
+      // the models it held go with it
+      this.#t.generation += 1;
+    }
     this.#t.pending.clear();
   }
 
@@ -255,6 +271,8 @@ export class WasmPlanner implements Planner, TableModels {
     const importRuntime = this.#options.loadRuntime
       ?? ((url: string) => import(/* @vite-ignore */ url) as Promise<TeavmRuntime>);
 
+    // a module of its own: none of the models held before are held by it
+    this.#t.generation += 1;
     this.#t.module = (async () => {
       let runtime: TeavmRuntime;
       try {
@@ -273,7 +291,7 @@ export class WasmPlanner implements Planner, TableModels {
             // The module writes compiler diagnostics to stdout/stderr.
             // Left unbound they reach the host console one CHARACTER
             // at a time, which is unreadable; the messages that matter
-            // come back through planOrError's return value anyway.
+            // come back through each export's return value anyway.
             imports.teavmConsole = { putcharStdout() {}, putcharStderr() {} };
           },
         });
@@ -321,25 +339,62 @@ export class WasmPlanner implements Planner, TableModels {
    * the shape of a warm-up that warms nothing.
    *
    * So this also builds the boot layer -- the Pure prelude, the
-   * system metamodel, and both resolved and normalized -- against
-   * the real model, and throws the result away. `boot` calls it
-   * concurrently with DuckDB's own startup, so the cost lands inside
-   * a wait the page was making anyway.
+   * system metamodel, and both resolved and normalized -- and the
+   * real model on it, which the module then holds for every plan
+   * (#handle). `boot` calls it concurrently with DuckDB's own
+   * startup, so the cost lands inside a wait the page was making
+   * anyway.
    *
    * Safe to call repeatedly and safe never to call at all; `plan`
    * loads on demand either way.
    */
   async warmUp(): Promise<void> {
-    if (this.#useWorker()) {
-      await this.#ask({ kind: 'warm', model: this.#options.model });
-      return;
-    }
-    const module = await this.#load();
-    module.exports.warmModel(this.#options.model);
+    // the model held: its compile is the work a first plan would do, kept for every plan after it
+    await this.#handle();
   }
 
   /**
-   * Pure TEXT planned: the text entry (planOrError), kept for callers that send grammar -- a
+   * This planner's model as the module holds it: held on first need (its compile refused as a plan is, and then held
+   * by no one), and again when the module holding it is not the one there now (a worker started anew).
+   */
+  #handle(): Promise<number> {
+    if (this.#held !== undefined && this.#held.generation === this.#t.generation) return this.#held.handle;
+    const model = this.#options.model;
+    let handle: Promise<number>;
+    if (this.#useWorker()) {
+      this.#ensureWorker();
+      handle = this.#ask({ kind: 'hold', model }).then((answer) => Number(decode(answer, model)));
+    } else {
+      const module = this.#load();
+      handle = module.then((m) => Number(decode(m.exports.holdModelOrError(model), model)));
+    }
+    const held = { handle, generation: this.#t.generation };
+    this.#held = held;
+    handle.catch(() => {
+      if (this.#held === held) this.#held = undefined;
+    });
+    return handle;
+  }
+
+  /** Let go of this planner's model, if it holds one under the module there now. */
+  #letGo(): void {
+    const held = this.#held;
+    this.#held = undefined;
+    if (held === undefined || held.generation !== this.#t.generation) return;
+    void held.handle.then((handle) => {
+      // a module or worker since replaced, or none running now, holds nothing to let go: never start one to do it
+      if (held.generation !== this.#t.generation) return undefined;
+      if (this.#useWorker()) {
+        return this.#t.worker ? this.#ask({ kind: 'release', handle }).then(() => undefined) : undefined;
+      }
+      return this.#t.module ? this.#t.module.then((m) => { m.exports.releaseModel(handle); }) : undefined;
+    }).catch(() => {
+      // a model never held, or a worker gone with the models it held: nothing to let go
+    });
+  }
+
+  /**
+   * Pure TEXT planned: the text entry (planHeldOrError), kept for callers that send grammar -- a
    * harness, another tool (the user, 2026-09-27: upstream accepts grammar). The cube sends trees
    * (`plan`).
    */
@@ -352,31 +407,37 @@ export class WasmPlanner implements Planner, TableModels {
     // so an abort cannot stop it -- but it can stop a stale answer
     // reaching the grid. Check on both sides of the call.
     if (signal?.aborted) throw signal.reason ?? new Error('aborted');
+    // the model and its runtime as they are now, together: a useModel while this waits changes neither
+    const { model, runtime } = this.#options;
+    const handle = await this.#handle();
     const answer = this.#useWorker()
-      ? await this.#ask({ kind: 'plan', model: this.#options.model, query: pureGrammar, runtime: this.#options.runtime })
-      : (await this.#load()).exports.planOrError(this.#options.model, pureGrammar, this.#options.runtime);
+      ? await this.#ask({ kind: 'plan', handle, query: pureGrammar, runtime })
+      : (await this.#load()).exports.planHeldOrError(handle, pureGrammar, runtime);
     if (signal?.aborted) throw signal.reason ?? new Error('aborted');
     // `{"sql", "type"}`: the SQL and the compiler's type of its result, in upstream's
     // RelationType shape -- the same renderer legend-lite's pure/v1 answers use.
     const body = JSON.parse(decode(answer, pureGrammar)) as { sql: string; type: unknown };
     const plan: Plan = { sql: body.sql, columns: relationColumns(body.type) };
-    if (useCache) this.#cache.set(key, plan);
+    // kept only while it is the planner's model still: an answer for a model since replaced is not this one's
+    if (useCache && this.#options.model === model) this.#cache.set(key, plan);
     return plan;
   }
 
-  /** Pure TEXT typed, compile-only: the text entry (relationTypeOrError). */
+  /** Pure TEXT typed, compile-only: the text entry (relationTypeHeldOrError). */
   async relationTypeText(pureGrammar: string, signal?: AbortSignal): Promise<PlanColumn[]> {
     const useCache = this.#options.cache !== false;
     const key = `text:${pureGrammar}`;
     const hit = useCache ? this.#types.get(key) : undefined;
     if (hit !== undefined) return hit;
     if (signal?.aborted) throw signal.reason ?? new Error('aborted');
+    const { model } = this.#options;
+    const handle = await this.#handle();
     const answer = this.#useWorker()
-      ? await this.#ask({ kind: 'relationType', model: this.#options.model, query: pureGrammar })
-      : (await this.#load()).exports.relationTypeOrError(this.#options.model, pureGrammar);
+      ? await this.#ask({ kind: 'relationType', handle, query: pureGrammar })
+      : (await this.#load()).exports.relationTypeHeldOrError(handle, pureGrammar);
     if (signal?.aborted) throw signal.reason ?? new Error('aborted');
     const columns = relationColumns(JSON.parse(decode(answer, pureGrammar)));
-    if (useCache) this.#types.set(key, columns);
+    if (useCache && this.#options.model === model) this.#types.set(key, columns);
     return columns;
   }
 
@@ -389,13 +450,15 @@ export class WasmPlanner implements Planner, TableModels {
     const hit = useCache ? this.#cache.get(json) : undefined;
     if (hit !== undefined) return hit;
     if (signal?.aborted) throw signal.reason ?? new Error('aborted');
+    const { model, runtime } = this.#options;
+    const handle = await this.#handle();
     const answer = this.#useWorker()
-      ? await this.#ask({ kind: 'planJson', model: this.#options.model, lambda: json, runtime: this.#options.runtime })
-      : (await this.#load()).exports.planJsonOrError(this.#options.model, json, this.#options.runtime);
+      ? await this.#ask({ kind: 'planJson', handle, lambda: json, runtime })
+      : (await this.#load()).exports.planJsonHeldOrError(handle, json, runtime);
     if (signal?.aborted) throw signal.reason ?? new Error('aborted');
     const body = JSON.parse(decode(answer, query)) as { sql: string; type: unknown };
     const plan: Plan = { sql: body.sql, columns: relationColumns(body.type) };
-    if (useCache) this.#cache.set(json, plan);
+    if (useCache && this.#options.model === model) this.#cache.set(json, plan);
     return plan;
   }
 
@@ -524,6 +587,7 @@ export class WasmPlanner implements Planner, TableModels {
    * ~600ms of boot.
    */
   useModel(model: string, runtime: string, how: ModelOptions = {}): void {
+    if (model !== this.#options.model) this.#letGo();
     this.#options = { ...readsOf(this.#options), model, runtime, ...readsHow(how) };
     this.#cache.clear();
     this.#types.clear();

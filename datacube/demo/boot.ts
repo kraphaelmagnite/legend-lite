@@ -943,12 +943,18 @@ async function startPage(makePlanner: MakePlanner, settled: { show: (reason: str
         columns: columns.map((c) => ({ name: c.name, type: c.type })),
       };
       const r = rebuilt(saved, m.source, columns, name, capped);
+      const snap = snapOf(chosen, m);
       return {
         label: name,
         notes: r.notes,
         make: gridMaker(r.snapshot, r.configuration, [], {
-          planner: own, live, ...snapOf(chosen, m), cubeSource, label: name, ...(r.tree ? { tree: r.tree } : {}), foldPanel: capped,
+          planner: own, live, ...snap, cubeSource, label: name, ...(r.tree ? { tree: r.tree } : {}), foldPanel: capped,
         }),
+        // never made into a grid: its planners' models let go
+        discard: async () => {
+          own.dispose?.();
+          snap.snapTarget.planner.dispose?.();
+        },
       };
     }
 
@@ -1002,12 +1008,16 @@ async function startPage(makePlanner: MakePlanner, settled: { show: (reason: str
       });
     /** The tables files were read into for grids, by table: the file's name, to drop it by. */
     const held = new Map<string, string>();
+    /** Each grid's own planners (by its tile's id), which hold its model: let go with the last grid using them. */
+    const gridPlanners = new Map<string, readonly Planner[]>();
     renamePage = (name) => {
       current = { ...current, name };
       page.setTitle(name);
       onCubeView?.();
     };
     madeGrid = (id, place) => {
+      // its own planners (its source's, and a snapped copy's): let go with the last grid planning through them
+      gridPlanners.set(id, [place.planner, place.snapTarget?.planner].filter((p): p is Planner => p !== undefined));
       const src = place.cubeSource;
       if (place.file && src?._type === 'file') {
         files.set(id, { ...place.file, sha256: src.sha256, sample: src.sample !== undefined });
@@ -1027,6 +1037,13 @@ async function startPage(makePlanner: MakePlanner, settled: { show: (reason: str
         if (read.has(table)) continue;
         held.delete(table);
         void forgetUpload(engine, db, fileName, table).catch(() => {}).finally(() => taken.delete(table));
+      }
+      // a planner no grid plans through any more lets its model go (a grid and its copies share one)
+      for (const [grid, owned] of [...gridPlanners]) {
+        if (live.has(grid)) continue;
+        gridPlanners.delete(grid);
+        const still = new Set([...gridPlanners.values()].flat());
+        for (const p of owned) if (!still.has(p)) p.dispose?.();
       }
     };
 
@@ -1117,8 +1134,11 @@ async function startPage(makePlanner: MakePlanner, settled: { show: (reason: str
         return {
           label: opened.fileName,
           notes,
-          // never made into a grid: its table goes, and its name is free again
-          discard: () => forgetUpload(engine, db, file.name, table).catch(() => {}).finally(() => taken.delete(table)),
+          // never made into a grid: its planner's model let go, its table gone, and its name free again
+          discard: () => {
+            own.dispose?.();
+            return forgetUpload(engine, db, file.name, table).catch(() => {}).finally(() => taken.delete(table));
+          },
           make: gridMaker(r.snapshot, r.configuration, [], {
             planner: own,
             cubeSource: source,
@@ -1758,6 +1778,7 @@ async function startPage(makePlanner: MakePlanner, settled: { show: (reason: str
           planner: o.planner, cubeSource: o.cubeSource, label: o.label, ...(o.engine ? { engine: o.engine } : {}),
           ...(r.tree ? { tree: r.tree } : {}), foldPanel: capped,
         }),
+        discard: async () => o.planner.dispose?.(),
       };
     }
 
@@ -1773,6 +1794,7 @@ async function startPage(makePlanner: MakePlanner, settled: { show: (reason: str
         label: name,
         notes: r.notes,
         make: gridMaker(r.snapshot, r.configuration, [], { planner: own, cubeSource, label: name, ...(r.tree ? { tree: r.tree } : {}), foldPanel: capped }),
+        discard: async () => own.dispose?.(),
       };
     }
 

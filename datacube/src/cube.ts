@@ -98,6 +98,11 @@ export interface Planner {
   parse(text: string, signal?: AbortSignal): Promise<Lambda>;
   /** A query as Pure text, for a person to read: E4, the compiler's print (PRETTY unless asked). */
   print(query: Lambda, style?: PrintStyle, signal?: AbortSignal): Promise<string>;
+  /**
+   * Let go of what the planner holds -- its model, compiled once and held while it plans
+   * (docs/DATACUBE_MODEL_DESIGN_2026_10_10.md §9): called by its owner when nothing plans through it any more.
+   */
+  dispose?(): void;
 }
 
 export interface CubeView {

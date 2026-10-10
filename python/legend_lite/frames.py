@@ -80,6 +80,8 @@ class Table:
         self.source: dict[str, Any] = {}
         self.excluded: tuple[str, ...] = ()
         self.columns: tuple[compiler.Column, ...] = ()
+        # its model, compiled once and held while the table is registered (each plan then pays for its query alone)
+        self.held: compiler.HeldModel | None = None
 
     def _load(self, arrow: pa.Table) -> None:
         """Puts the frame in DuckDB as the table it is named, reads its catalog, and writes its model."""
@@ -109,7 +111,12 @@ class Table:
         self.source = written['source']
         self.accessor = written['accessor']
         self.excluded = tuple(written['excluded'])
-        self.columns = compiler.relation_type(self.model, {'_type': 'lambda', 'body': [self.source], 'parameters': []})
+        # the model as it is now held; the one before (columns changed) let go
+        held, before = compiler.HeldModel(self.model), self.held
+        self.held = held
+        if before is not None:
+            before.close()
+        self.columns = self.relation_type({'_type': 'lambda', 'body': [self.source], 'parameters': []})
         self._schema = arrow.schema
 
     def _drop(self) -> None:
@@ -118,6 +125,8 @@ class Table:
         con.execute(f"DROP {'VIEW' if self.mode == LIVE else 'TABLE'} IF EXISTS {self._target}")
         if self.mode == LIVE:
             con.unregister(self._registered)
+        if self.held is not None:
+            self.held.close()
         self._closed = True
 
     def _refresh(self) -> None:
@@ -134,6 +143,15 @@ class Table:
         # "->filter(...)": a query that starts at this table
         return compiler.parse('|' + self.accessor + query if query.lstrip().startswith('->') else query)
 
+    def _model(self) -> compiler.HeldModel:
+        if self.held is None:
+            raise ValueError(f'the frame {self.name!r} has no model yet')
+        return self.held
+
+    def relation_type(self, tree: dict[str, Any]) -> tuple[compiler.Column, ...]:
+        """The columns a query over this table returns, as the compiler types them, against its model held."""
+        return self._model().relation_type(tree)
+
     def _ready(self) -> None:
         if self._closed:
             raise ValueError(f'the frame {self.name!r} was registered again or unregistered: use the new table')
@@ -144,13 +162,13 @@ class Table:
         """The compiler's plan for a query over this table: Pure text, a tree, or ``->...`` applied to it."""
         with self._frames._lock:
             self._ready()
-            return compiler.plan(self.model, self._tree(query), self.runtime)
+            return self._model().plan(self._tree(query), self.runtime)
 
     def execute(self, query: str | dict[str, Any]) -> pa.Table:
         """Runs a query over this table (as ``plan`` takes it) and answers as an Arrow table."""
         with self._frames._lock:
             self._ready()
-            planned = compiler.plan(self.model, self._tree(query), self.runtime)
+            planned = self._model().plan(self._tree(query), self.runtime)
             return self._frames.connection.execute(planned.sql).to_arrow_table()
 
 

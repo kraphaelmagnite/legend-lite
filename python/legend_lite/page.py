@@ -429,7 +429,7 @@ class Grid(Tile):
         # typed as the grid runs it (query.ts, extendDerived): the frame's rows extended by its calculated columns in
         # order, then by it
         before = ''.join(_step(d) for d in derived if 'lambda' in d and 'window' not in d and 'childAggregate' not in d)
-        compiler.relation_type(table.model, compiler.parse(
+        table.relation_type(compiler.parse(
             f'|{table.accessor}{before}->extend(~{_pure_name(name)}:x|{expression})'))
         return self._set('derived', [*derived, {'name': name, 'lambda': compiler.parse(f'x|{expression}')}])
 

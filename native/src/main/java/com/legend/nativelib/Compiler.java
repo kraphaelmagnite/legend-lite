@@ -87,6 +87,65 @@ public final class Compiler {
         return answer(a);
     }
 
+    // ---- models held: compiled once, planned against many times (docs/DATACUBE_MODEL_DESIGN_2026_10_10.md §9). A
+    // handle travels as its digits, as every argument here is a C string.
+
+    /** {@code Boundary.holdModel}: the handle that names {@code model}, compiled the first time it is held. */
+    @CEntryPoint(name = "lite_hold_model")
+    static CCharPointer holdModel(IsolateThread thread, CCharPointer model) {
+        String a;
+        try {
+            String m = text(model);
+            a = Folded.of(() -> Integer.toString(Boundary.holdModel(m)));
+        } catch (Throwable failure) {
+            a = Folded.failure(failure);
+        }
+        return answer(a);
+    }
+
+    /** {@code Boundary.releaseModel}: the model let go of once. */
+    @CEntryPoint(name = "lite_release_model")
+    static CCharPointer releaseModel(IsolateThread thread, CCharPointer handle) {
+        String a;
+        try {
+            String h = text(handle);
+            a = Folded.of(() -> {
+                Boundary.releaseModel(Integer.parseInt(h));
+                return "";
+            });
+        } catch (Throwable failure) {
+            a = Folded.failure(failure);
+        }
+        return answer(a);
+    }
+
+    /** A lambda's protocol JSON planned over a model held ({@code Boundary.planJsonHeld}). */
+    @CEntryPoint(name = "lite_plan_json_held")
+    static CCharPointer planJsonHeld(IsolateThread thread, CCharPointer handle, CCharPointer lambdaJson,
+            CCharPointer runtime) {
+        String a;
+        try {
+            String h = text(handle), l = text(lambdaJson), r = text(runtime);
+            a = Folded.of(() -> Boundary.planJsonHeld(Integer.parseInt(h), l, r));
+        } catch (Throwable failure) {
+            a = Folded.failure(failure);
+        }
+        return answer(a);
+    }
+
+    /** A lambda's protocol JSON typed, compile-only, over a model held ({@code Boundary.relationTypeJsonHeld}). */
+    @CEntryPoint(name = "lite_relation_type_held")
+    static CCharPointer relationTypeHeld(IsolateThread thread, CCharPointer handle, CCharPointer lambdaJson) {
+        String a;
+        try {
+            String h = text(handle), l = text(lambdaJson);
+            a = Folded.of(() -> Boundary.relationTypeJsonHeld(Integer.parseInt(h), l));
+        } catch (Throwable failure) {
+            a = Folded.failure(failure);
+        }
+        return answer(a);
+    }
+
     /** A Pure Database (model text) written from a table's catalog rows, as DataCube writes one for a file. */
     @CEntryPoint(name = "lite_database_from_catalog")
     static CCharPointer databaseFromCatalog(IsolateThread thread, CCharPointer catalogJson) {

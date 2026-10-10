@@ -125,6 +125,25 @@ class Compiling(unittest.TestCase):
         self.assertEqual((m['runtime'], m['snapRuntime'], m['accessor']), ('shop::RT', 'shop::SnapRT', '#>{shop::DB.orders}#'))
         self.assertEqual((m['conversions'], m['copySelectList'], m['excluded'], m['bitColumns']), ([], '*', [], ['open']))
 
+    def test_a_held_model_is_compiled_once_and_plans_as_a_model_given_each_time(self):
+        # docs/DATACUBE_MODEL_DESIGN_2026_10_10.md §9: the same answers, the model compiled once
+        with ll.HeldModel(MODEL) as held:
+            self.assertEqual(held.plan(ll.parse(GROUP), 'trades::RT'), ll.plan(MODEL, ll.parse(GROUP), 'trades::RT'))
+            tree = ll.parse("|#>{trades::DB.TRADES}#->select(~[desk])")
+            self.assertEqual(held.relation_type(tree), ll.relation_type(MODEL, tree))
+            with ll.HeldModel(MODEL) as again:
+                self.assertNotEqual(again._handle, held._handle, 'each hold its own handle')
+                self.assertEqual(again.plan(ll.parse(GROUP), 'trades::RT'), held.plan(ll.parse(GROUP), 'trades::RT'))
+            # the other holder let go: this one still holds it
+            self.assertEqual(held.plan(ll.parse(GROUP), 'trades::RT').sql, ll.plan(MODEL, ll.parse(GROUP), 'trades::RT').sql)
+        with self.assertRaisesRegex(ValueError, 'was let go'):
+            held.plan(ll.parse(GROUP), 'trades::RT')
+        held.close()
+
+    def test_a_model_that_does_not_compile_is_refused_when_held(self):
+        with self.assertRaises(ll.LegendError):
+            ll.HeldModel('###Pure\nClass bad::C { a: Nope[1]; }')
+
     def test_a_duckdb_session_answers_in_utc(self):
         self.assertEqual(ll.session_setup('DuckDB'), ["SET TimeZone='UTC'"])
 

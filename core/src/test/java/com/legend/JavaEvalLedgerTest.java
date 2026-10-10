@@ -1229,6 +1229,10 @@ class JavaEvalLedgerTest {
                     // statements and setup written at plan time. Planning only: it renders
                     // and records, no value is evaluated and no database is touched
                     "PlanMaker.java",
+                    // compile once, plan many (2026-10-10, docs/DATACUBE_MODEL_DESIGN_2026_10_10.md §9): the models a host
+                    // holds -- a model compiled once and its context lent to each plan, under its own lock; a
+                    // HeldStore (com.legend.cache) of contexts. Compiles and lends, evaluates nothing
+                    "HeldModels.java",
                     "ConnectionLets.java",
                     // audit §4y (2026-09-20): pure's equality KIND CLASSES
                     // over stamps as a CLOSED type (the stringly "numeric" /

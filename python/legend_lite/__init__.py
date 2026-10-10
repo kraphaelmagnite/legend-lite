@@ -14,6 +14,7 @@ Python -- its grids, charts, sheets and stacks -- is ``Page``, in ``legend_lite.
 
 from .compiler import (
     Column,
+    HeldModel,
     LegendError,
     Plan,
     catalog_columns_sql,
@@ -30,7 +31,7 @@ from .compiler import (
 
 # Frames, Engine, show, DataCube and Page are not listed: `from legend_lite import *` would import duckdb through them
 __all__ = [
-    'Column', 'LegendError', 'Plan', 'catalog_columns_sql', 'database_from_catalog', 'model_elements', 'parse',
+    'Column', 'HeldModel', 'LegendError', 'Plan', 'catalog_columns_sql', 'database_from_catalog', 'model_elements', 'parse',
     'plan', 'plan_text', 'print_tree', 'relation_type', 'session_setup', 'table_model',
 ]
 

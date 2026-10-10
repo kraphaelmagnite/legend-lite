@@ -50,6 +50,37 @@ public final class TabExports {
         return Folded.of(() -> Boundary.planJson(model, lambdaJson, runtime));
     }
 
+    /** {@link Boundary#holdModel}: the handle, or the refusal of a model that does not compile. */
+    @JSExport
+    public static String holdModelOrError(String model) {
+        return Folded.of(() -> Integer.toString(Boundary.holdModel(model)));
+    }
+
+    /** {@link Boundary#releaseModel}: 1, so the call cannot be optimised away. */
+    @JSExport
+    public static int releaseModel(int handle) {
+        Boundary.releaseModel(handle);
+        return 1;
+    }
+
+    /** {@link Boundary#planHeld}. */
+    @JSExport
+    public static String planHeldOrError(int handle, String query, String runtime) {
+        return Folded.of(() -> Boundary.planHeld(handle, query, runtime));
+    }
+
+    /** {@link Boundary#planJsonHeld}. */
+    @JSExport
+    public static String planJsonHeldOrError(int handle, String lambdaJson, String runtime) {
+        return Folded.of(() -> Boundary.planJsonHeld(handle, lambdaJson, runtime));
+    }
+
+    /** {@link Boundary#relationTypeHeld}. */
+    @JSExport
+    public static String relationTypeHeldOrError(int handle, String query) {
+        return Folded.of(() -> Boundary.relationTypeHeld(handle, query));
+    }
+
     // ---- a model's data and its tables
 
     /** {@link Boundary#testDataSql}. */

@@ -127,6 +127,45 @@ public final class Boundary {
         return com.legend.json.Json.toCompact(out);
     }
 
+    // ---- models held: compiled once, planned against many times (docs/DATACUBE_MODEL_DESIGN_2026_10_10.md §9)
+
+    /** This host's held models: the module's (one per module instance, a worker's own) or Python's library's. */
+    private static final com.legend.HeldModels MODELS = new com.legend.HeldModels();
+
+    /** {@link com.legend.HeldModels#hold}: the handle that names {@code model}, compiled the first time it is held. */
+    public static int holdModel(String model) {
+        return MODELS.hold(model);
+    }
+
+    /** {@link com.legend.HeldModels#release}. */
+    public static void releaseModel(int handle) {
+        MODELS.release(handle);
+    }
+
+    /** {@link #plan} over a model held: the query planned, the model compiled no more. */
+    public static String planHeld(int handle, String query, String runtime) {
+        return MODELS.with(handle, ctx -> planned(com.legend.Compiler.query(ctx, query).plan(runtime)));
+    }
+
+    /** {@link #planJson} over a model held. */
+    public static String planJsonHeld(int handle, String lambdaJson, String runtime) {
+        return MODELS.with(handle, ctx -> planned(com.legend.Compiler.query(ctx,
+                com.legend.protocol.ProtocolReader.lambda(lambdaJson)).plan(runtime)));
+    }
+
+    /** A lambda's protocol JSON typed, compile-only, over a model held: upstream's {@code lambdaRelationType} answer. */
+    public static String relationTypeJsonHeld(int handle, String lambdaJson) {
+        return MODELS.with(handle, ctx -> com.legend.json.Json.toCompact(
+                com.legend.plan.UpstreamRelationType.of(com.legend.Compiler.query(ctx,
+                        com.legend.protocol.ProtocolReader.lambda(lambdaJson)).resultType())));
+    }
+
+    /** {@link #relationType} over a model held. */
+    public static String relationTypeHeld(int handle, String query) {
+        return MODELS.with(handle, ctx -> com.legend.json.Json.toCompact(
+                com.legend.plan.UpstreamRelationType.of(com.legend.Compiler.query(ctx, query).resultType())));
+    }
+
     // ---- a model's data and its tables
 
     /**

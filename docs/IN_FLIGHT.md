@@ -133,7 +133,8 @@ with the compiler's plan/execution split**, in this order:
    dashboards are built on them), its steps in order: 1 compile once everywhere; 2 Make a class; 3 dashboards on
    classes (the charts' batch 1 page filters land here); 4 combining in prep (every join form); 5 the model view; 6
    projects and publishing; 7 measures in the model.
-   **Step 1 announced 2026-10-10 (rule 5): a cross-area edit in `core/`; amended before landing** -- compile once, plan
+   **Step 1 landed 2026-10-10 (fe7961b7b; run 38090412797; GATES "Compile once, plan many").** Next: step 2, Make a
+   class (its design first, for the user). **Step 1 as announced (rule 5): a cross-area edit in `core/`, amended before landing** -- compile once, plan
    many (the design's §9, reviewed by the Compiler Rewrite and Plan Gen / Exec Split lines: a held `PureModelContext` is
    safe, one thread at a time). Core files: `core/src/main/java/com/legend/cache/HeldStore.java` (new: a generic store of
    values held by their users, keyed by a content `Hash` -- Invariant 3 -- each hold its own handle, a value built

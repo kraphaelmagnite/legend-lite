@@ -8395,3 +8395,39 @@ messages, each fixed, the history rebuilt so every commit passes). BUILD edits r
 CI run 38084878587 on `ci/datacube-kpi-land`, green on the lanes with a path to the change (product, checks, warehouse,
 datacube, ui) on every platform (21 jobs); pushed to main as f68b19aad, the tested commit, with the user's "push if
 green and up to date on main".
+
+## 2026-10-10 — Compile once, plan many: a model held while a planner over it lives (the DataCube + Python line)
+
+The DataCube model plan's step 1 (`docs/DATACUBE_MODEL_DESIGN_2026_10_10.md` §9, §10, §13; announced in IN_FLIGHT and
+amended before landing). Every plan the tab made compiled the whole model again (a model of 200 classes, 3.8 s a plan);
+now a host compiles a model once and plans against it while something holds it. Landed as one fast-forward,
+`b7a873ce2..fe7961b7b` (ten commits, four of them the design's):
+
+1. **core**: `com.legend.cache.HeldStore<T>` (new) -- values held by their users, keyed by a content `Hash` (Invariant
+   3), each hold its own handle, a value built outside the store's lock, one user at a time per entry; generic, as
+   `HandleStore` is. `com.legend.HeldModels` (new, in `_PLANNER_SRCS`, registered in the root package's closed register)
+   -- a host's held models over it, an instance: no static state in core. The server makes none (the Studio line: its
+   leg 8 compiles once per request).
+2. **The tab**: the wasm Boundary owns the module's instance; TabExports' held entries; `WasmPlanner` holds its model on
+   its first plan or `warmUp`, plans every query against it, holds it again under a new module or worker, and lets it go
+   on dispose and on a changed model; a planner's `dispose` (cube.ts), called by `boot.ts` when a grid's last user goes.
+3. **Python**: the native library's held entries; `ll.HeldModel`; a frame holds its model while registered.
+
+Measured (`//datacube:model_scale_measure`, a MEASUREMENT in `//gates:heavy`): a plan over a held model 6 to 14 ms at 1
+to 200 classes, where every plan paid the whole compile (54 to 3,812 ms); the compile, once, 9 ms to 3.9 s. The
+compile's per-class cost is the normalizer's eager work (the Compiler Rewrite line): making it demand-driven is the
+root-cause fix, after L7, the user's to schedule.
+
+What judges it: `//core:core_tests_cache` (HeldStoreTest: built once per key while held; a second release takes nothing
+from another holder; a slow build holds up no other key's hold or use), `//core:core_tests_root` (HeldModelsTest),
+`//core:guardrails` and `:core_tests_architecture` (no static mutable state; caches in `com.legend.cache`),
+`//core:census` (the register), `//parser-equivalence/...` (its ratchet up four snippets, HeldModelsTest's),
+`//datacube:wasm_planner_test` (a stand-in Worker: dispose starts none to let go; a worker that dies, its planner holds
+again; a plan in flight keeps its model and runtime), `//wasm:differential_test` and `:round_trip_test` (HeldStore under
+TeaVM), `//python:all`. Reviewed by the Plan Gen / Exec Split line (two changes, made) and the Compiler Rewrite line
+(the BUILD line; the TeaVM check), audited (0 blockers, 6 should-fix, each fixed with a test). Local gate 325 of 334
+before the register and the ratchet (fixed); the seven timeouts under its load pass alone. CI run 38090412797 on
+`ci/datacube-m1-step1`, green on the lanes with a path to the change (product, core, checks, parser_equivalence,
+warehouse, datacube, ui, sdlc) on every platform (30 jobs) -- the PCT and corpus lanes not run: the change adds two
+classes they never use and alters no compile path; rebased over docs-only commits before the push (the tested code
+unchanged); pushed to main as fe7961b7b with the user's "Yes push to main".

@@ -41,6 +41,21 @@ class Answers(unittest.TestCase):
         self.assertEqual(table.accessor, '#>{trades::DB.trades}#')
         self.assertIn('type: DuckDB;', table.model)
 
+    def test_a_frame_holds_its_model_while_registered(self):
+        frames = ll.Frames()
+        table = frames.register('held_trades', pd.DataFrame({'desk': ['A', 'B'], 'qty': [1, 2]}))
+        held = table.held
+        self.assertIsNotNone(held)
+        self.assertEqual(table.execute('->select(~[desk])').num_rows, 2)
+        # registered again with other columns: a new model held, the one before let go
+        again = frames.register('held_trades', pd.DataFrame({'desk': ['A'], 'qty': [1], 'note': ['x']}))
+        with self.assertRaisesRegex(ValueError, 'was let go'):
+            held.plan(again._tree('->select(~[desk])'), again.runtime)
+        frames.unregister('held_trades')
+        with self.assertRaisesRegex(ValueError, 'was let go'):
+            again.held.plan(again._tree('->select(~[desk])'), again.runtime)
+        frames.close()
+
     def test_a_query_is_text_a_tree_or_a_step_on_the_table(self):
         table = ll.Frames().register('trades', trades())
         step = table.execute("->filter(x|$x.desk == 'EQ')->select(~[id])").to_pylist()

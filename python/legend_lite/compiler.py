@@ -2,8 +2,8 @@
 
 It works on PROTOCOL TREES (upstream's V1 lambda JSON, as Python dicts), the way DataCube builds its
 queries: Pure text is one way to make a tree (``parse``), and a tree prints back as Pure
-(``print_tree``). Typing and planning take a model's text; the compiler keeps what it built for a model
-it has seen, so passing the same text again costs nothing.
+(``print_tree``). Typing and planning take a model's text, compiled for the call; a ``HeldModel`` is a model
+compiled once and planned against many times, for as long as it is open.
 """
 
 from __future__ import annotations
@@ -120,6 +120,43 @@ def plan_text(model: str, text: str, runtime: str) -> Plan:
     """The same, from Pure text."""
     out = _json.loads(_answer(library().call('lite_plan_text', model, text, runtime)))
     return Plan(out['sql'], _columns(out['type']))
+
+
+class HeldModel:
+    """A model the compiler holds: compiled once, when it is made, and planned and typed against as often as asked,
+    each time paying for the query alone (docs/DATACUBE_MODEL_DESIGN_2026_10_10.md §9). The same text held twice is
+    the one model, compiled once. Held until ``close()`` (or the end of a ``with`` block); a model that does not compile
+    is refused when it is made, and nothing is held. Safe from several threads: one plans against it at a time."""
+
+    def __init__(self, model: str) -> None:
+        self.model = model
+        self._handle: str | None = _answer(library().call('lite_hold_model', model))
+
+    def _held(self) -> str:
+        if self._handle is None:
+            raise ValueError('this model was let go (closed): hold it again')
+        return self._handle
+
+    def plan(self, tree: Tree, runtime: str) -> Plan:
+        """A relation query planned against the model held, through ``runtime``: its SQL and its columns."""
+        out = _json.loads(_answer(library().call('lite_plan_json_held', self._held(), _json.dumps(tree), runtime)))
+        return Plan(out['sql'], _columns(out['type']))
+
+    def relation_type(self, tree: Tree) -> tuple[Column, ...]:
+        """The columns a relation query returns, typed against the model held, compile-only."""
+        return _columns(_json.loads(_answer(library().call('lite_relation_type_held', self._held(), _json.dumps(tree)))))
+
+    def close(self) -> None:
+        """Lets the model go; closing it again does nothing."""
+        if self._handle is not None:
+            handle, self._handle = self._handle, None
+            _answer(library().call('lite_release_model', handle))
+
+    def __enter__(self) -> HeldModel:
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        self.close()
 
 
 def model_elements(text: str) -> list[dict[str, Any]]:
