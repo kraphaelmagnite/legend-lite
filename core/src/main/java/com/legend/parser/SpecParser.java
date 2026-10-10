@@ -1712,11 +1712,23 @@ public final class SpecParser implements TokenStreamCursor {
             List<TypeExpression> typeArgs,
             List<String> typeMultArgs,
             List<com.legend.protocol.spec.NewInstance.KeyBinding> properties) {
-        return new AppliedFunction(
-                AppliedFunction.NEW,
-                List.of(
-                        receiver,
-                        new NewInstance(className, typeArgs, typeMultArgs, properties)));
+        NewInstance ni = new NewInstance(className, typeArgs, typeMultArgs, properties);
+        if (dialect.refusesPlatformDialect() && receiver instanceof PackageableElementPtr) {
+            // ^Pair / ^BasicColumnSpecification / ^TdsOlapRank are the calls the engine's walker writes for
+            // them (pair(a, b), col(f, n), tds::func(f); their type arguments dropped, as the engine drops
+            // them): the JSON has no `new` for them, so neither does the record (leg 8 step 2). legend-pure
+            // (the platform dialect) keeps its `^`
+            AppliedFunction special;
+            try {
+                special = com.legend.protocol.CaretSpecials.call(ni);
+            } catch (UnsupportedOperationException missingKey) {
+                throw error(String.valueOf(missingKey.getMessage()));
+            }
+            if (special != null) {
+                return special;
+            }
+        }
+        return new AppliedFunction(AppliedFunction.NEW, List.of(receiver, ni));
     }
 
     /**

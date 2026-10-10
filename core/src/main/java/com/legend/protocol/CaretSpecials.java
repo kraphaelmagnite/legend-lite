@@ -16,10 +16,11 @@ import java.util.List;
  * object ({@code DomainParseTreeWalker}; ProbeWireShapes "caret specials") -- {@code ^Pair(first=a, second=b)} is
  * {@code pair(a, b)}, {@code ^BasicColumnSpecification(func=f, name=n[, documentation=d])} is {@code col(f, n[, d])},
  * {@code ^TdsOlapRank(func=f)} is {@code tds::func(f)}: the keys in that order, whatever order they were written in,
- * matched by the class's simple or full name exactly as spelled. One rule, for the emitter (which writes that call) and
- * the printer (which prints it).
+ * matched by the class's simple or full name exactly as spelled. One rule, for the parser (which builds that call at
+ * the engine's and lite's dialects, as the engine's walker does; leg 8 step 2), the emitter (which writes it for the
+ * platform dialect's records) and the printer (which prints it).
  */
-final class CaretSpecials {
+public final class CaretSpecials {
 
     private CaretSpecials() {
     }
@@ -29,7 +30,7 @@ final class CaretSpecials {
      * that is missing has no rule ({@code col}'s {@code documentation} alone is optional, the engine's
      * {@code select(nonNull)}).
      */
-    static @com.legend.base.Nullable AppliedFunction call(NewInstance ni) {
+    public static @com.legend.base.Nullable AppliedFunction call(NewInstance ni) {
         String spelled = ni.className();
         if ("Pair".equals(spelled) || "meta::pure::functions::collection::Pair".equals(spelled)) {
             return call(ni, "meta::pure::functions::collection::pair", new String[]{"first", "second"}, false);
