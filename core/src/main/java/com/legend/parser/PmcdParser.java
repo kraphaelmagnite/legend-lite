@@ -441,8 +441,7 @@ public final class PmcdParser {
             return strictWalk(ts, r, PmcdParser::platformHead, importsOk, line, null, null, null, dialect);
         }
         return switch (parserName) {
-            case "Pure" -> strictWalk(ts, r, !dialect.refusesLiteExtensions() ? PmcdParser::liteHead
-                            : PmcdParser::pureHead, importsOk, -1, null, null, null, dialect);
+            case "Pure" -> strictWalk(ts, r, PmcdParser::domainHead, importsOk, -1, null, null, null, dialect);
             case "Runtime" -> {
                 // the engine's runtime walker collects BY GRAMMAR RULE:
                 // every `Runtime` first, then every
@@ -555,11 +554,20 @@ public final class PmcdParser {
     private static final Set<String> PLATFORM_OPEN_SECTIONS = Set.of("Pure", "Mapping", "Relational", "Runtime",
             "Connection", "Data");
 
-    /** Lite's {@code ###Pure}: the engine's, and its declared extension {@code Primitive}. */
-    private static int liteHead(TokenStream ts, int cursor) {
+    /**
+     * {@code ###Pure} at the engine's and lite's dialects: the engine's declarations, and the two the other dialects
+     * add -- {@code Primitive} (lite's) and {@code native} (the platform's) -- recognized so that their element parser
+     * refuses them BY NAME where the dialect does not admit them ("Primitive type declarations are not supported",
+     * "Unsupported syntax": the dialect quarantine's own words, which the parity sweep classifies), never as a bare
+     * unexpected token.
+     */
+    private static int domainHead(TokenStream ts, int cursor) {
         int kind = pureHead(ts, cursor);
         if (kind >= 0) {
             return kind;
+        }
+        if (ts.type(cursor) == TokenType.NATIVE) {
+            return NATIVE_SITE;
         }
         return TokenStreamCursor.IDENTIFIER_TOKENS.contains(ts.type(cursor)) && "Primitive".equals(ts.text(cursor))
                 ? PRIMITIVE_SITE : -1;
