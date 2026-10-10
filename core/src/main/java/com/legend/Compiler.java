@@ -86,8 +86,7 @@ public final class Compiler {
         ParsedModel parsed;
         try {
             parsed = com.legend.model.ModelFromProtocol.of(Objects.requireNonNull(model, "model"));
-        } catch (com.legend.model.FromProtocol.UnsupportedConnectionShape
-                | com.legend.model.MappingFromProtocol.UnsupportedMappingShape u) {
+        } catch (com.legend.model.ModelFromProtocol.Unrepresentable u) {
             // a shape the compiler's model cannot represent: a construct legend-lite does not compile (from text, the
             // parser refuses the same shape at its position)
             throw new com.legend.error.NotImplementedException(String.valueOf(u.getMessage()));

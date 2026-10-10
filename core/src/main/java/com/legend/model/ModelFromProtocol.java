@@ -27,12 +27,24 @@ public final class ModelFromProtocol {
     }
 
     /** A model given as records, as the compiler's parsed model. A shape the model cannot represent is refused by
-     *  name (the converter's own refusal, the element's path before its reason), never dropped. */
+     *  name ({@link Unrepresentable}), never dropped. */
     public static ParsedModel of(Protocol.PureModelContextData model) {
+        return of(model, null, List.of());
+    }
+
+    /** {@link #of(Protocol.PureModelContextData)} for a model parsed from {@code source}: the text kept on the model,
+     *  and the sections no grammar claimed (the platform dialect records them). */
+    public static ParsedModel of(Protocol.PureModelContextData model, @com.legend.base.Nullable String source,
+            List<ParsedModel.UnclaimedSection> unclaimed) {
         Map<String, Protocol.PSection> sectionOf = new HashMap<>();
+        // the model's whole import scope: every section's, a section with no element included
+        ImportScope.Builder all = new ImportScope.Builder();
         for (Protocol.Element e : model.elements()) {
             if (e instanceof Protocol.PSectionIndex index) {
                 for (Protocol.PSection s : index.sections()) {
+                    for (String pkg : s.imports()) {
+                        all.add(pkg + "::*");
+                    }
                     for (String path : s.elements()) {
                         if (path != null) {
                             sectionOf.putIfAbsent(path, s);
@@ -42,7 +54,6 @@ public final class ModelFromProtocol {
             }
         }
         List<PackageableElement> elements = new ArrayList<>();
-        ImportScope.Builder all = new ImportScope.Builder();
         Map<String, ImportScope> elementImports = new LinkedHashMap<>();
         Map<String, ParsedModel.Position> spans = new LinkedHashMap<>();
         for (Protocol.Element e : model.elements()) {
@@ -58,7 +69,6 @@ public final class ModelFromProtocol {
                 for (String pkg : section.imports()) {
                     // the section index lists an import as its package (`a::b`), the grammar writes `a::b::*`
                     own.add(pkg + "::*");
-                    all.add(pkg + "::*");
                 }
                 elementImports.putIfAbsent(key, own.build());
             }
@@ -67,19 +77,84 @@ public final class ModelFromProtocol {
                 spans.putIfAbsent(key, new ParsedModel.Position(span.startLine(), span.startColumn()));
             }
         }
-        return new ParsedModel(elements, all.build(), null, Map.of(), elementImports, Map.of(), List.of(), spans);
+        if (source != null) {
+            // a model parsed from a text keeps where each element starts as an offset into that text, as it always
+            // has (what reads a model's text by offset goes on working); one kind of position per model
+            Map<String, Integer> offsets = new LinkedHashMap<>();
+            int[] lineStarts = lineStarts(source);
+            for (Map.Entry<String, ParsedModel.Position> p : spans.entrySet()) {
+                int line = p.getValue().line();
+                if (line >= 1 && line <= lineStarts.length) {
+                    offsets.put(p.getKey(), Math.min(source.length(), lineStarts[line - 1] + p.getValue().column() - 1));
+                }
+            }
+            return new ParsedModel(elements, all.build(), source, offsets, elementImports, Map.of(), unclaimed,
+                    Map.of());
+        }
+        return new ParsedModel(elements, all.build(), null, Map.of(), elementImports, Map.of(), unclaimed, spans);
     }
 
-    /** {@link #element}, a shape the model cannot represent refused with the element's path (the compiler's driver
-     *  answers it as a construct legend-lite does not compile). */
+    /** The char offset each line of {@code text} starts at (line 1 at index 0). */
+    private static int[] lineStarts(String text) {
+        List<Integer> starts = new ArrayList<>();
+        starts.add(0);
+        for (int i = 0; i < text.length(); i++) {
+            if (text.charAt(i) == '\n') {
+                starts.add(i + 1);
+            }
+        }
+        int[] out = new int[starts.size()];
+        for (int i = 0; i < out.length; i++) {
+            out[i] = starts.get(i);
+        }
+        return out;
+    }
+
+    /**
+     * A shape the compiler's model cannot represent (a converter's refusal), named: the element's path, the reason,
+     * and where the element starts when its record says. The parser answers it as a parse error at that place, as it
+     * always has; a model given as JSON is answered with a construct legend-lite does not compile.
+     */
+    public static final class Unrepresentable extends RuntimeException {
+        private final String path;
+        private final String reason;
+        private final ParsedModel.@com.legend.base.Nullable Position at;
+
+        Unrepresentable(String path, String reason, ParsedModel.@com.legend.base.Nullable Position at) {
+            super(path + ": " + reason);
+            this.path = path;
+            this.reason = reason;
+            this.at = at;
+        }
+
+        public String path() {
+            return path;
+        }
+
+        public String reason() {
+            return reason;
+        }
+
+        public ParsedModel.@com.legend.base.Nullable Position at() {
+            return at;
+        }
+    }
+
+    /** {@link #element}, a shape the model cannot represent refused as {@link Unrepresentable}. */
     private static PackageableElement refusingUnsupported(Protocol.Element e) {
         try {
             return element(e);
         } catch (FromProtocol.UnsupportedConnectionShape u) {
-            throw new FromProtocol.UnsupportedConnectionShape(pathOf(e) + ": " + u.reason());
+            throw unrepresentable(e, u.reason());
         } catch (MappingFromProtocol.UnsupportedMappingShape u) {
-            throw new MappingFromProtocol.UnsupportedMappingShape(pathOf(e) + ": " + u.reason());
+            throw unrepresentable(e, u.reason());
         }
+    }
+
+    private static Unrepresentable unrepresentable(Protocol.Element e, String reason) {
+        SourceInfo span = spanOf(e);
+        return new Unrepresentable(pathOf(e), reason,
+                span == null ? null : new ParsedModel.Position(span.startLine(), span.startColumn()));
     }
 
     /**
@@ -125,6 +200,14 @@ public final class ModelFromProtocol {
             case Protocol.PBinding b -> carried("ExternalFormat", "Binding", b.qualifiedName());
             case Protocol.PServiceStoreDefinition s -> carried("ServiceStore", "ServiceStore", s.qualifiedName());
             case Protocol.PRelationalMapper m -> carried("QueryPostProcessor", "RelationalMapper", m.qualifiedName());
+            // legend-lite's own records (no wire carries them; only its parser makes them)
+            case Protocol.PNativeFunction n -> new NativeFunctionDefinition(n.qualifiedName(), n.typeParams(),
+                    n.multParams(), FromProtocol.toFunctionParams(n.parameters()), n.returnType(), n.returnMultiplicity(),
+                    FromProtocol.stereotypes(n.stereotypes()), FromProtocol.taggedValues(n.taggedValues()));
+            case Protocol.PPrimitive p -> new PrimitiveExtensionDefinition(p.qualifiedName(), p.baseTypeName(),
+                    p.typeVariables());
+            case Protocol.POpaqueElement o -> new OpaqueElementDefinition(o.qualifiedName(), o.sectionName(),
+                    o.protocolJson());
             case Protocol.PSectionIndex i ->
                     throw new IllegalArgumentException("a section index is not an element: its sections are read by of");
         };
@@ -150,43 +233,9 @@ public final class ModelFromProtocol {
         return new GenericSectionElementDefinition(section, kind, qualifiedName, Map.of(), null);
     }
 
-    /** The path an element is listed under in its section index (its package and name, as the JSON writes them). */
+    /** The path an element is listed under in its section index ({@code Protocol.pathOf}, the parser's rule). */
     private static String pathOf(Protocol.Element e) {
-        return switch (e) {
-            case Protocol.PClass c -> c.qualifiedName();
-            case Protocol.PAssociation a -> a.qualifiedName();
-            case Protocol.PEnumeration en -> en.qualifiedName();
-            // a function is listed by its name with its signature, as the engine names it
-            case Protocol.PFunction f -> f.pkg().isEmpty() ? f.mangledName() : f.pkg() + "::" + f.mangledName();
-            case Protocol.PProfile p -> p.qualifiedName();
-            case Protocol.PMeasure m -> m.qualifiedName();
-            case Protocol.PRuntime r -> r.qualifiedName();
-            case Protocol.PConnection c -> c.qualifiedName();
-            case Protocol.PDatabase d -> d.qualifiedName();
-            case Protocol.PMapping m -> m.qualifiedName();
-            case Protocol.PService s -> s.qualifiedName();
-            case Protocol.PExecutionEnvironment x -> x.qualifiedName();
-            case Protocol.PDataSpace d -> d.qualifiedName();
-            case Protocol.PPersistence p -> p.qualifiedName();
-            case Protocol.PPersistenceContext p -> p.qualifiedName();
-            case Protocol.PFunctionActivator a -> a.qualifiedName();
-            case Protocol.PDataElement d -> d.qualifiedName();
-            case Protocol.PDiagram d -> d.qualifiedName();
-            case Protocol.PText t -> t.qualifiedName();
-            case Protocol.PGenerationSpecification g -> g.qualifiedName();
-            case Protocol.PFileGeneration f -> f.qualifiedName();
-            case Protocol.PDeephavenDatabase d -> d.qualifiedName();
-            case Protocol.PElasticsearch7Cluster s -> s.qualifiedName();
-            case Protocol.PMongoDatabase m -> m.qualifiedName();
-            case Protocol.PDataQualityValidation v -> v.qualifiedName();
-            case Protocol.PDataQualityRelationValidation v -> v.qualifiedName();
-            case Protocol.PDataQualityRelationComparison v -> v.qualifiedName();
-            case Protocol.PSchemaSet s -> s.qualifiedName();
-            case Protocol.PBinding b -> b.qualifiedName();
-            case Protocol.PServiceStoreDefinition s -> s.qualifiedName();
-            case Protocol.PRelationalMapper m -> m.qualifiedName();
-            case Protocol.PSectionIndex i -> i.pkg() + "::" + i.name();
-        };
+        return Protocol.pathOf(e);
     }
 
     /** An element record's source information, when it carries one (a model read from JSON without it carries none). */
@@ -223,6 +272,9 @@ public final class ModelFromProtocol {
             case Protocol.PBinding b -> b.sourceInformation();
             case Protocol.PServiceStoreDefinition s -> s.sourceInformation();
             case Protocol.PRelationalMapper m -> m.sourceInformation();
+            case Protocol.PNativeFunction n -> n.sourceInformation();
+            case Protocol.PPrimitive p -> p.sourceInformation();
+            case Protocol.POpaqueElement o -> o.sourceInformation();
             case Protocol.PSectionIndex i -> null;
         };
     }

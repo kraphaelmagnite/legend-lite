@@ -205,6 +205,11 @@ final class ElementFamilies {
             case Protocol.PMapping m -> "mapping";
             case Protocol.PDataElement d -> "dataElement";
             case Protocol.PRelationalMapper m -> "relationalMapper";
+            case Protocol.PNativeFunction n -> throw ProtocolEmitter.liteOnly("a native function declaration",
+                    n.qualifiedName());
+            case Protocol.PPrimitive p -> throw ProtocolEmitter.liteOnly("a Primitive declaration", p.qualifiedName());
+            case Protocol.POpaqueElement o -> throw ProtocolEmitter.liteOnly(
+                    "an element of the foreign section '" + o.sectionName() + "'", o.qualifiedName());
         };
     }
 }

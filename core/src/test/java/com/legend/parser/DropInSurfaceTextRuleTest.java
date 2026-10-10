@@ -79,7 +79,11 @@ class DropInSurfaceTextRuleTest {
             // section's text has no token form — the SectionSource handoff
             // to a RawSectionGrammar is the same necessity as the OVERLAY
             // handoff above.
-            "parser/ElementParser.java", 6,
+            // 6 -> 3 (2026-10-10, the protocol program's leg 8, one parser): the
+            // compiler's own top-level assembly is deleted, and with it the
+            // overlay and raw-section handoffs -- the one parser (PmcdParser)
+            // hands a raw-skipped section's text to its grammar now.
+            "parser/ElementParser.java", 3,
             // reconstructText itself — MOVED here from ElementParser
             // (2026-08-09, Runtime migration) so section grammars outside
             // com.legend.parser can extract island chunks; the one source

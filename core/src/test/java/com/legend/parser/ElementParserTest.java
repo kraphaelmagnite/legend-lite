@@ -170,7 +170,9 @@ final class ElementParserTest {
         // lite-only invention (invention census batch 2)
         ParseException ex = assertThrows(ParseException.class,
                 () -> com.legend.testing.Platform.model("import simple::model::Firm;"));
-        assertTrue(String.valueOf(ex.getMessage()).contains("::*"));
+        // refused as the engine's grammar refuses it, at the token that is not the wildcard (leg 8: one parser, the
+        // engine's section walk and its refusals at every dialect)
+        assertTrue(String.valueOf(ex.getMessage()).contains("Unexpected token"), ex.getMessage());
     }
 
     @Test
@@ -503,10 +505,11 @@ final class ElementParserTest {
         // names the offending TEXT, which is what a user can act on.
         // ('Measure' was this test's example until 2026-08-09, when it
         // became a supported element — see measureElementParses.)
+        // (leg 8, one parser: refused as the engine's section walk refuses an unknown declaration head)
         ParseException e = assertThrows(ParseException.class,
                 () -> com.legend.testing.Platform.model("Persistence my::P ( )"));
-        assertTrue(String.valueOf(e.getMessage()).toLowerCase(java.util.Locale.ROOT).contains("unsupported"),
-                () -> "expected 'unsupported' in message, got: " + e.getMessage());
+        assertTrue(String.valueOf(e.getMessage()).contains("Unexpected token"),
+                () -> "expected the engine's refusal, got: " + e.getMessage());
         assertTrue(e.getMessage().contains("Persistence"),
                 () -> "error should name the offending text, got: " + e.getMessage());
     }

@@ -7,17 +7,20 @@
 // See docs/BAZEL_IMPLEMENTATION_PLAN.md §1.2 and §3.4.
 // ============================================================
 
-###Pure
-import refdata::*;
+// Imports are bound to their section, as legend-engine and legend-pure bind them: each section that names
+// refdata by a short name imports it itself, and ###Relational, which takes no imports in the engine, names it
+// in full (the protocol program's leg 8, 2026-10-10 -- this file relied on a ###Pure section's import reaching
+// the sections after it, which only lite's old parser allowed).
 
 ###Relational
 Database trading::TradingDB
 (
-    include RefDB                          // CROSS: short-name database include
+    include refdata::RefDB                 // CROSS: a database include, by its full name
     Table TRADE (ID VARCHAR(50) PRIMARY KEY, SECTOR_CODE VARCHAR(50), RATING VARCHAR(10), NOTIONAL DOUBLE)
 )
 
 ###Mapping
+import refdata::*;
 Mapping trading::TradingMapping
 (
     include RefMapping                     // CROSS: short-name mapping include

@@ -3,11 +3,12 @@
 
 package com.legend.parser;
 
-import com.legend.model.OpaqueElementDefinition;
-import com.legend.model.PackageableElement;
+import com.legend.protocol.Protocol;
 
 /**
- * THE ONLY legitimate producer of {@link OpaqueElementDefinition}.
+ * THE ONLY legitimate producer of an opaque element: {@code Protocol.POpaqueElement}, which the compiler's door
+ * ({@code ModelFromProtocol}) carries as {@code com.legend.model.OpaqueElementDefinition} (the parser's output is
+ * records only, docs/PROTOCOL_PROGRAM_2026_10_05.md leg 8).
  *
  * <p>The opaque carrier exists for one situation: a section owned by an
  * OVERLAY grammar (GRAMMAR_EXTENSIBILITY.md step 3), whose payload core
@@ -29,16 +30,16 @@ import com.legend.model.PackageableElement;
 final class OverlayElementSink implements com.legend.spi.ElementSink {
 
     private final String sectionName;
-    private final java.util.List<PackageableElement> out;
+    private final java.util.List<Protocol.Element> out;
 
-    OverlayElementSink(String sectionName, java.util.List<PackageableElement> out) {
+    OverlayElementSink(String sectionName, java.util.List<Protocol.Element> out) {
         this.sectionName = sectionName;
         this.out = out;
     }
 
     @Override
     public void accept(String qualifiedName, String protocolJson) {
-        out.add(new OpaqueElementDefinition(qualifiedName, sectionName,
-                protocolJson));
+        // the overlay grammar hands over JSON it owns, no position: the element is carried whole, never opened
+        out.add(new Protocol.POpaqueElement(qualifiedName, sectionName, protocolJson, null));
     }
 }

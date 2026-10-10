@@ -126,6 +126,13 @@ public final class ProtocolEmitter {
         return finish(b);
     }
 
+    /** One of legend-lite's own records (Protocol's lite-only elements), refused by name: legend-engine's protocol has
+     *  no element for it, so no JSON is written for one. */
+    static IllegalArgumentException liteOnly(String what, String qualifiedName) {
+        return new IllegalArgumentException(what + " (" + qualifiedName
+                + ") is legend-lite's own dialect: legend-engine's protocol has no element for it");
+    }
+
     /** Exhaustive over {@link Element}. No {@code default} arm — a new variant must land here. */
     private static void element(StringBuilder b, Element e) {
         switch (e) {
@@ -171,6 +178,10 @@ public final class ProtocolEmitter {
             case Protocol.PDiagram dg -> TailEmitter.diagram(b, dg);
             case Protocol.PMapping m -> MappingEmitter.mapping(b, m);
             case Protocol.PRelationalMapper rm -> relationalMapper(b, rm);
+            case Protocol.PNativeFunction n -> throw liteOnly("a native function declaration", n.qualifiedName());
+            case Protocol.PPrimitive p -> throw liteOnly("a Primitive declaration", p.qualifiedName());
+            case Protocol.POpaqueElement o -> throw liteOnly("an element of the foreign section '" + o.sectionName() + "'",
+                    o.qualifiedName());
             case Protocol.PDataElement de -> {
                 b.append("{\"_type\":\"dataElement\"");
                 if (de.body().value() != null) {

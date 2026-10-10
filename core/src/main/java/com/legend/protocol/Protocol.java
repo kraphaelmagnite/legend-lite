@@ -80,7 +80,8 @@ public final class Protocol {
             PDataQualityValidation, PDataQualityRelationValidation,
             PDataQualityRelationComparison, PSchemaSet, PBinding,
             PServiceStoreDefinition,
-            PMapping, PDataElement, PRelationalMapper {
+            PMapping, PDataElement, PRelationalMapper,
+            PNativeFunction, PPrimitive, POpaqueElement {
     }
 
     /** {@code ###Data Data [decorations] qn { <body> }} — {@code _type:
@@ -1831,6 +1832,46 @@ public final class Protocol {
         }
     }
 
+    // ---- legend-lite's own records: what its compiler parses that legend-engine's protocol has no element for. The
+    // ---- parser's only output is records (docs/PROTOCOL_PROGRAM_2026_10_05.md, leg 8), so these exist; no wire
+    // ---- carries them -- the emitter refuses each by name, and no JSON reads back into one.
+
+    /** A platform {@code native function} declaration (the platform dialect: the prelude, the system metamodel): its
+     *  signature, no body. */
+    public record PNativeFunction(String qualifiedName,
+                                  List<String> typeParams, List<String> multParams,
+                                  List<com.legend.protocol.ParameterDefinition> parameters,
+                                  com.legend.protocol.TypeExpression returnType,
+                                  com.legend.protocol.Multiplicity returnMultiplicity,
+                                  List<PStereotype> stereotypes, List<PTaggedValue> taggedValues,
+                                  @com.legend.base.Nullable com.legend.protocol.SourceInfo sourceInformation)
+            implements Element {
+        public PNativeFunction {
+            typeParams = List.copyOf(typeParams);
+            multParams = List.copyOf(multParams);
+            parameters = List.copyOf(parameters);
+            stereotypes = List.copyOf(stereotypes);
+            taggedValues = List.copyOf(taggedValues);
+        }
+    }
+
+    /** A {@code Primitive pkg::T<...> extends Base} declaration (lite's and the platform's dialects). */
+    public record PPrimitive(String qualifiedName, String baseTypeName,
+                             List<com.legend.protocol.ParameterDefinition> typeVariables,
+                             @com.legend.base.Nullable com.legend.protocol.SourceInfo sourceInformation)
+            implements Element {
+        public PPrimitive {
+            typeVariables = List.copyOf(typeVariables);
+        }
+    }
+
+    /** An element of a section a foreign grammar owns (an overlay, through the SPI): carried whole, its own JSON as the
+     *  grammar wrote it, never opened by lite. */
+    public record POpaqueElement(String qualifiedName, String sectionName, String protocolJson,
+                                 @com.legend.base.Nullable com.legend.protocol.SourceInfo sourceInformation)
+            implements Element {
+    }
+
     /** {@code ###Text} — {@code Text pkg::T { type: STRING; content: '...' }};
      *  type is optional (ZTailProbe "text"). */
     public record PText(String pkg, String name,
@@ -3365,6 +3406,64 @@ public final class Protocol {
             }
         }
         return last;
+    }
+
+    /**
+     * The path a section index lists an element under (the engine's {@code PackageableElement.getPath}): its package
+     * and name, a function's name with its signature ({@code PFunction.mangledName}) -- the one rule the parser writes
+     * a section index by and the compiler's door reads one by (docs/PROTOCOL_PROGRAM_2026_10_05.md, leg 8).
+     */
+    public static String pathOf(Element e) {
+        return switch (e) {
+            case PFunction f -> functionPath(f);
+            case PClass c -> c.qualifiedName();
+            case PAssociation a -> a.qualifiedName();
+            case PEnumeration en -> en.qualifiedName();
+            case PProfile p -> p.qualifiedName();
+            case PMeasure m -> m.qualifiedName();
+            case PRuntime r -> r.qualifiedName();
+            case PConnection c -> c.qualifiedName();
+            case PDatabase d -> d.qualifiedName();
+            case PMapping m -> m.qualifiedName();
+            case PService s -> s.qualifiedName();
+            case PExecutionEnvironment x -> x.qualifiedName();
+            case PDataSpace d -> d.qualifiedName();
+            case PPersistence p -> p.qualifiedName();
+            case PPersistenceContext p -> p.qualifiedName();
+            case PFunctionActivator a -> a.qualifiedName();
+            case PDataElement d -> d.qualifiedName();
+            case PDiagram d -> d.qualifiedName();
+            case PText t -> t.qualifiedName();
+            case PGenerationSpecification g -> g.qualifiedName();
+            case PFileGeneration f -> f.qualifiedName();
+            case PDeephavenDatabase d -> d.qualifiedName();
+            case PElasticsearch7Cluster s -> s.qualifiedName();
+            case PMongoDatabase m -> m.qualifiedName();
+            case PDataQualityValidation v -> v.qualifiedName();
+            case PDataQualityRelationValidation v -> v.qualifiedName();
+            case PDataQualityRelationComparison v -> v.qualifiedName();
+            case PSchemaSet s -> s.qualifiedName();
+            case PBinding b -> b.qualifiedName();
+            case PServiceStoreDefinition s -> s.qualifiedName();
+            case PRelationalMapper m -> m.qualifiedName();
+            case PNativeFunction n -> n.qualifiedName();
+            case PPrimitive p -> p.qualifiedName();
+            case POpaqueElement o -> o.qualifiedName();
+            case PSectionIndex i -> i.pkg().isEmpty() ? i.name() : i.pkg() + "::" + i.name();
+        };
+    }
+
+    /** A function's path: its name with its signature, as the engine names it; a signature the engine has no name for
+     *  (a multiplicity parameter: lite's and the platform's dialects only, never in the engine's JSON) by its qualified
+     *  name, which the parser and the compiler's door compute alike. */
+    private static String functionPath(PFunction f) {
+        String name;
+        try {
+            name = f.mangledName();
+        } catch (UnsupportedOperationException noEngineName) {
+            return f.qualifiedName();
+        }
+        return f.pkg().isEmpty() ? name : f.pkg() + "::" + name;
     }
 
     /** Public form for REFERENCE positions that also unquote (stereotype/tag
