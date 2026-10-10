@@ -837,9 +837,8 @@ public final class PmcdParser {
             }
             case 3 -> {
                 ElementParser p = at(ts, site, dialect);
-                Protocol.PAssociation a = p.parseAssociationDefinition();
-                el = a;
-                path = a.qualifiedName();
+                el = p.parseAssociationDefinition();
+                path = Protocol.pathOf(el);
                 endOut[0] = p.pos();
             }
             case 4 -> {

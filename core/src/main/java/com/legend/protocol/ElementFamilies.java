@@ -210,6 +210,8 @@ final class ElementFamilies {
             case Protocol.PPrimitive p -> throw ProtocolEmitter.liteOnly("a Primitive declaration", p.qualifiedName());
             case Protocol.POpaqueElement o -> throw ProtocolEmitter.liteOnly(
                     "an element of the foreign section '" + o.sectionName() + "'", o.qualifiedName());
+            case Protocol.PAssociationProjection a -> throw ProtocolEmitter.liteOnly("a projection association",
+                    a.qualifiedName());
         };
     }
 }

@@ -219,6 +219,8 @@ public final class ModelComposer {
             case Protocol.PPrimitive x -> throw ProtocolEmitter.liteOnly("a Primitive declaration", x.qualifiedName());
             case Protocol.POpaqueElement x -> throw ProtocolEmitter.liteOnly(
                     "an element of the foreign section '" + x.sectionName() + "'", x.qualifiedName());
+            case Protocol.PAssociationProjection x -> throw ProtocolEmitter.liteOnly("a projection association",
+                    x.qualifiedName());
         };
     }
 

@@ -182,6 +182,7 @@ public final class ProtocolEmitter {
             case Protocol.PPrimitive p -> throw liteOnly("a Primitive declaration", p.qualifiedName());
             case Protocol.POpaqueElement o -> throw liteOnly("an element of the foreign section '" + o.sectionName() + "'",
                     o.qualifiedName());
+            case Protocol.PAssociationProjection a -> throw liteOnly("a projection association", a.qualifiedName());
             case Protocol.PDataElement de -> {
                 b.append("{\"_type\":\"dataElement\"");
                 if (de.body().value() != null) {

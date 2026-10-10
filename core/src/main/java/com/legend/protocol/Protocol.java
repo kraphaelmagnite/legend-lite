@@ -81,7 +81,7 @@ public final class Protocol {
             PDataQualityRelationComparison, PSchemaSet, PBinding,
             PServiceStoreDefinition,
             PMapping, PDataElement, PRelationalMapper,
-            PNativeFunction, PPrimitive, POpaqueElement {
+            PNativeFunction, PPrimitive, POpaqueElement, PAssociationProjection {
     }
 
     /** {@code ###Data Data [decorations] qn { <body> }} — {@code _type:
@@ -1865,6 +1865,13 @@ public final class Protocol {
         }
     }
 
+    /** A projection association ({@code Association X projects Y<A, B>}, the platform dialect only): registered by its
+     *  name alone, its projected navigation not modelled (it stays loud downstream). */
+    public record PAssociationProjection(String qualifiedName,
+                                         @com.legend.base.Nullable com.legend.protocol.SourceInfo sourceInformation)
+            implements Element {
+    }
+
     /** An element of a section a foreign grammar owns (an overlay, through the SPI): carried whole, its own JSON as the
      *  grammar wrote it, never opened by lite. */
     public record POpaqueElement(String qualifiedName, String sectionName, String protocolJson,
@@ -3449,6 +3456,7 @@ public final class Protocol {
             case PNativeFunction n -> n.qualifiedName();
             case PPrimitive p -> p.qualifiedName();
             case POpaqueElement o -> o.qualifiedName();
+            case PAssociationProjection a -> a.qualifiedName();
             case PSectionIndex i -> i.pkg().isEmpty() ? i.name() : i.pkg() + "::" + i.name();
         };
     }

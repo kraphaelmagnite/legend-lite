@@ -1135,28 +1135,29 @@ public final class ElementParser implements TokenStreamCursor {
     // Association
     // ============================================================
 
-    /** {@code Association <<stereos>> {tags} qualifiedName { end1; end2; }} */
+    /** {@code Association <<stereos>> {tags} qualifiedName { end1; end2; }}: the record
+     *  ({@link #parseAssociationDefinition}, a projection's own at the platform dialect), through the door. */
     /** PROTOCOL-FIRST. */
     private PackageableElement associationElement() {
+        return com.legend.model.ModelFromProtocol.element(parseAssociationDefinition());
+    }
+
+    /** Parses one non-projection {@code Association} at the cursor into its protocol
+     *  record — the per-element protocol entry point (see {@link #at}). */
+    public com.legend.protocol.Protocol.Element parseAssociationDefinition() {
         int declStart = pos;
         Documentation doc = parseDocumentation();
         expect(TokenType.ASSOCIATION);
-        // CAPTURED, not dropped: the wire carries association annotations
-        // (ProbeWireShapes "association").
         List<com.legend.protocol.Protocol.PStereotype> stereotypes = parseStereotypes();
         List<com.legend.protocol.Protocol.PTaggedValue> taggedValues =
                 taggedValuesWithDocumentation(doc, parseTaggedValues());
         String qualifiedName = parseQualifiedName();
-        // PROJECTION association: `Association X projects Y<A, B>` — a
-        // nominal registration only (like projection classes); the
-        // projected navigation semantics stay loud downstream.
         if (peek() == TokenType.VALID_STRING && "projects".equals(safeText())) {
             if (dialect.refusesPlatformDialect()) {
-                // align with parseAssociationDefinition (the protocol path
-                // already refused; this model path accepted and returned
-                // the WRONG element kind — adversarial audit EP finding 3)
-                throw error("association projections are not supported by the engine");
+                throw error("projection associations are a legend-lite-local form with no"
+                        + " protocol shape (engine rejects 'projects')");
             }
+            // the platform dialect: a projection registers its name only (its projected navigation is not modelled)
             advance();
             parseQualifiedName();
             if (peek() == TokenType.LESS_THAN) {
@@ -1169,27 +1170,7 @@ public final class ElementParser implements TokenStreamCursor {
                     advance();
                 }
             }
-            return new ClassDefinition(qualifiedName, List.of(), List.of(),
-                    List.of(), List.of(), List.of(), List.of(), List.of(),
-                    false);
-        }
-        return com.legend.model.FromProtocol.toAssociationDefinition(
-                parseAssociationBody(declStart, stereotypes, taggedValues, qualifiedName));
-    }
-
-    /** Parses one non-projection {@code Association} at the cursor into its protocol
-     *  record — the per-element protocol entry point (see {@link #at}). */
-    public com.legend.protocol.Protocol.PAssociation parseAssociationDefinition() {
-        int declStart = pos;
-        Documentation doc = parseDocumentation();
-        expect(TokenType.ASSOCIATION);
-        List<com.legend.protocol.Protocol.PStereotype> stereotypes = parseStereotypes();
-        List<com.legend.protocol.Protocol.PTaggedValue> taggedValues =
-                taggedValuesWithDocumentation(doc, parseTaggedValues());
-        String qualifiedName = parseQualifiedName();
-        if (peek() == TokenType.VALID_STRING && "projects".equals(safeText())) {
-            throw error("projection associations are a legend-lite-local form with no"
-                    + " protocol shape (engine rejects 'projects')");
+            return new Protocol.PAssociationProjection(qualifiedName, spanOf(declStart, pos - 1));
         }
         return parseAssociationBody(declStart, stereotypes, taggedValues, qualifiedName);
     }

@@ -208,6 +208,9 @@ public final class ModelFromProtocol {
                     p.typeVariables());
             case Protocol.POpaqueElement o -> new OpaqueElementDefinition(o.qualifiedName(), o.sectionName(),
                     o.protocolJson());
+            // a projection association registers its name only, as an empty class (as lite's compiler always has)
+            case Protocol.PAssociationProjection a -> new ClassDefinition(a.qualifiedName(), List.of(), List.of(),
+                    List.of(), List.of(), List.of(), List.of(), List.of(), false);
             case Protocol.PSectionIndex i ->
                     throw new IllegalArgumentException("a section index is not an element: its sections are read by of");
         };
@@ -275,6 +278,7 @@ public final class ModelFromProtocol {
             case Protocol.PNativeFunction n -> n.sourceInformation();
             case Protocol.PPrimitive p -> p.sourceInformation();
             case Protocol.POpaqueElement o -> o.sourceInformation();
+            case Protocol.PAssociationProjection a -> a.sourceInformation();
             case Protocol.PSectionIndex i -> null;
         };
     }
