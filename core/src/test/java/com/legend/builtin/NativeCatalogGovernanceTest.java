@@ -149,7 +149,7 @@ class NativeCatalogGovernanceTest {
         // their real overloads and lose only the lite-package ones.
         var leaks = new TreeSet<String>();
         for (String bare : union(Pure.INTERNAL_DESUGAR, Pure.ENGINE_VOCAB_SHIMS)) {
-            for (var def : com.legend.compiler.BareNames.catalog(bare)) {
+            for (var def : catalog(bare)) {
                 if (def.qualifiedName().startsWith(Pure.Lite.PKG)) {
                     leaks.add(def.qualifiedName());
                 }
@@ -159,10 +159,23 @@ class NativeCatalogGovernanceTest {
                 "lite-internal natives reachable from user bare-name text");
     }
 
+    /** The catalog natives a bare name may denote, every tier's (the product's own flattening of it,
+     *  {@code BareNames.catalog}, went with the ledger's PARK-5, L7 2026-10-10). */
+    private static java.util.List<com.legend.model.NativeFunctionDefinition> catalog(String name) {
+        java.util.List<com.legend.model.NativeFunctionDefinition> out = new java.util.ArrayList<>();
+        java.util.Set<String> seen = new java.util.HashSet<>();
+        for (var tier : com.legend.compiler.BareNames.catalogTiered(name)) {
+            if (seen.add(tier.getKey().fqn())) {
+                out.addAll(tier.getValue());
+            }
+        }
+        return out;
+    }
+
     @Test
     void liteSurfaceStaysResolvable() {
         for (String bare : Pure.LITE_SURFACE) {
-            assertTrue(!com.legend.compiler.BareNames.catalog(bare).isEmpty(),
+            assertTrue(!catalog(bare).isEmpty(),
                     bare + " is user-facing lite product surface"
                             + " — it must stay bare-name resolvable");
         }

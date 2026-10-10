@@ -58,7 +58,7 @@ final class FlattenChecker {
         // (serialize's pattern). The colspec parameter and the OUTPUT SCHEMA
         // are the documented divergences (engine-lite widens in place; real
         // Pure yields the single flattened column).
-        var sig = t.model().findFunction(CoreFn.FLATTEN.parseName()).stream()
+        var sig = t.functionCandidates(af).stream()
                 .filter(f -> f.parameters().size() == af.parameters().size())
                 .findFirst()
                 .orElseThrow(() -> new TypeInferenceException(

@@ -48,7 +48,7 @@ final class NavigateChecker {
         if (arity == 3) {
             return legacyRoutes(t, af, env);
         }
-        TypedFunction sig = t.model().findFunction(af.function()).stream()
+        TypedFunction sig = t.functionCandidates(af).stream()
                 .filter(c -> c.parameters().size() == arity)
                 .findFirst()
                 .orElseThrow(() -> new TypeInferenceException(
@@ -114,7 +114,7 @@ final class NavigateChecker {
      * The node's predicate is that OR over (source row, union row).
      */
     static TypedSpec legacyRoutes(Typer t, AppliedFunction af, Env env) {
-        TypedFunction sig = t.model().findFunction(af.function()).stream()
+        TypedFunction sig = t.functionCandidates(af).stream()
                 .filter(c -> c.parameters().size() == 3)
                 .findFirst()
                 .orElseThrow(() -> new TypeInferenceException(
@@ -501,7 +501,7 @@ final class NavigateChecker {
      */
     private static TypedFunction overload(Typer t, AppliedFunction af,
             java.util.function.Predicate<com.legend.compiler.element.TypedParameter> sourceParam) {
-        return t.model().findFunction(af.function()).stream()
+        return t.functionCandidates(af).stream()
                 .filter(c -> c.parameters().size() == 3 && sourceParam.test(c.parameters().get(0)))
                 .findFirst()
                 .orElseThrow(() -> new TypeInferenceException(

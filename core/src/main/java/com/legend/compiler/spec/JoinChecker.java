@@ -50,7 +50,7 @@ final class JoinChecker {
         // ProjectChecker lesson): rebuilds and generic resolution key on
         // the name, and an FQN finds only its own narrow catalog entry.
         if (af.function().contains("::")) {
-            af = new AppliedFunction("join", af.parameters());
+            af = Calls.platform("join", af.parameters());
         }
         af = resolveLetBoundArgs(af, env);
         TypedSpec shared = sharedKeyLegacyJoin(t, af, env);
@@ -226,10 +226,10 @@ final class JoinChecker {
             Variable b = new Variable("b");
             ValueSpecification cond = null;
             for (int i = 0; i < lhsCols.size(); i++) {
-                ValueSpecification eq = new AppliedFunction("equal", List.of(
+                ValueSpecification eq = Calls.platform("equal", List.of(
                         new AppliedProperty(a, lhsCols.get(i)),
                         new AppliedProperty(b, rhsCols.get(i))));
-                cond = cond == null ? eq : new AppliedFunction("and", List.of(cond, eq));
+                cond = cond == null ? eq : Calls.platform("and", List.of(cond, eq));
             }
             LambdaFunction condLam = new LambdaFunction(List.of(a, b), List.of(cond));
             return af.withParameters(List.of(ps.get(0), ps.get(1), joinKind, condLam));
@@ -279,11 +279,11 @@ final class JoinChecker {
         Variable b = new Variable("b");
         ValueSpecification cond = null;
         for (String k : keys) {
-            ValueSpecification eq = new AppliedFunction("equal", List.of(
+            ValueSpecification eq = Calls.platform("equal", List.of(
                     new AppliedProperty(a, k), new AppliedProperty(b, k)));
-            cond = cond == null ? eq : new AppliedFunction("and", List.of(cond, eq));
+            cond = cond == null ? eq : Calls.platform("and", List.of(cond, eq));
         }
-        AppliedFunction modern = new AppliedFunction("join", List.of(
+        AppliedFunction modern = Calls.platform("join", List.of(
                 ps.get(0), ps.get(1),
                 new EnumValue("meta::pure::functions::relation::JoinKind",
                         joinKindNameOf(kind)),

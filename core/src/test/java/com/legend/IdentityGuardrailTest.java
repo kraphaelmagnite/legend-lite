@@ -72,7 +72,7 @@ class IdentityGuardrailTest {
         SHAPES.put("CATALOG_LOOKUP_BY_NAME", Pattern.compile("\\bnative(Keys|Functions)At\\("));
         // the compiler minting a call by a bare (or any literal) name — step 5
         // spells these by the declaration (untangle 4b.0, 2026-09-25)
-        SHAPES.put("MINT_BY_NAME", Pattern.compile("new AppliedFunction\\(\\s*\""));
+        SHAPES.put("MINT_BY_NAME", Pattern.compile("(new AppliedFunction|Calls\\.(platform|exact|carrier|renamed|among|infixRun|infixRunAmong))\\(\\s*\""));
         // a language form dispatched on a spelled name — 4d dispatches by the
         // form's owned declarations
         SHAPES.put("FORM_DISPATCH_BY_NAME", Pattern.compile("\\bCoreFn\\.of\\("));
@@ -137,16 +137,22 @@ class IdentityGuardrailTest {
             // written on a local variable the pattern never saw; the tiers are data
             // now (TierFqn) and the same test reads fqn(), so the pattern sees it.
             // Retired when the surface is a declaration fact (step 3, Bindings).
-            Map.entry("NAME_COMPARE", 205),   // 208 -> 205 (2026-10-06, build rebuild Phase 3: measured when the table became the one authority)
-            Map.entry("NAME_COMPARE_REVERSED", 81),
+            Map.entry("NAME_COMPARE", 202),   // 205 -> 202 (2026-10-10, L7 "resolve once" steps 3-4: readers read the record)
+            // 208 -> 205 (2026-10-06, build rebuild Phase 3: measured when the table became the one authority)
+            Map.entry("NAME_COMPARE_REVERSED", 79), // 81 -> 79 (2026-10-10, L7 "resolve once" steps 3-4: readers read the record)
             Map.entry("LITERAL_NAME_COMPARE", 65),   // 64 -> 65 (2026-09-27, T4a): protocol/ProtocolUpgrade, upstream's protocol converter for a Result variable ("meta::pure::mapping::Result" on the WIRE, before any resolution)
             Map.entry("NAME_AFFIX_TEST", 51),
-            Map.entry("NAME_CUTTING", 106),   // 105 -> 106 (2026-10-09, Phase 3 rebased onto main: protocol leg 2 step 3's PersistenceReader.kindOf splits a wire-type KEY at ':' (76ed304bf), not a function name; the pin follows the count); 106 -> 105 (2026-10-06, build rebuild Phase 3: measured); 104 -> 106 (2026-09-27, T4a): protocol/PureComposer prints as upstream's printer does -- it strips a wire function name's package to match its special forms and splits a path to quote each segment; 105 -> 104 (2026-09-26, step 2: the unroller's bare-name cut retired with its by-name fold test)
-            Map.entry("SIGNATURE_ID_CUTTING", 1),
+            Map.entry("NAME_CUTTING", 107),   // 105 -> 106 (2026-10-09, Phase 3 rebased onto main: protocol leg 2 step 3's PersistenceReader.kindOf splits a wire-type KEY at ':' (76ed304bf), not a function name; the pin follows the count); 106 -> 105 (2026-10-06, build rebuild Phase 3: measured); 104 -> 106 (2026-09-27, T4a): protocol/PureComposer prints as upstream's printer does -- it strips a wire function name's package to match its special forms and splits a path to quote each segment; 105 -> 104 (2026-09-26, step 2: the unroller's bare-name cut retired with its by-name fold test)
+            // 106 -> 107 (2026-10-10, L7 step 4: a bare signature-id reference is qualified by its base in the resolver's
+            // pointer arm (qualifyIdByBase), once, where the typer walked the tiers from the bare base at every read)
+            Map.entry("SIGNATURE_ID_CUTTING", 2),
+            // 1 -> 2 (2026-10-10, L7 step 4: the resolver's pointer arm cuts a bare id to its base once; the typer's site
+            // keeps resolving a qualified id)
             Map.entry("CATALOG_LOOKUP_BY_NAME", 9),   // 10 -> 9 (2026-10-06, build rebuild Phase 3: candidates merge by function id; StatementInline still leaves a call to overload resolution when a function it names has a built-in); 170 -> 10 (2026-09-26, execution plan step 2: every rule table registers the catalog's generated overload groups and is keyed by FunctionId; nativeKeysAt/nativeNamed/registeredAt and the bare index are deleted; the 10 left are QUALIFIED lookups, nativeFunctionsAt(fqn), which step 3 turns into declaration-table reads)
             Map.entry("FAMILY_LOOKUP_BY_NAME", 13),   // 33 -> 13 (2026-10-06, build rebuild Phase 3: a form is read off the names a call resolves to, ResolvedNames.form); 87 -> 33 (2026-09-26, execution plan step 2: every implementer family is asked by the callee's FunctionId — 54 sites — and the by-name lookups those sites used are deleted from NativeFn; the 33 left are CoreFn.of(spelling) and RowGetter.of(spelling) in the typer, step 3/5)
             Map.entry("FUNCTION_CATEGORY_CHECK", 9),   // 14 -> 9 (2026-10-06, build rebuild Phase 3: the PCT rule and the platform-owned and assert-family lists are gone); 13 -> 14 (2026-09-26, step 2): not a new site — StatementInline's statement-only check was spelled as a method reference the pattern missed; the pattern now sees both spellings and the count is the true 14
-            Map.entry("MINT_BY_NAME", 142),   // 143 -> 142 (2026-09-27: the #>{}# island's record is built by ONE factory, AppliedFunction.tableReference, for the parser and the protocol reader; the parser's two mints went into it)
+            Map.entry("MINT_BY_NAME", 152),   // 142 -> 18 (2026-10-10, L7 "resolve once" steps 3-4: every call built after the resolver is built by Calls, with its record)
+            // 143 -> 142 (2026-09-27: the #>{}# island's record is built by ONE factory, AppliedFunction.tableReference, for the parser and the protocol reader; the parser's two mints went into it)
             Map.entry("FORM_DISPATCH_BY_NAME", 1),   // 21 -> 1 (2026-10-06, build rebuild Phase 3: ResolvedNames.form)
             Map.entry("LOCAL_NAME_COMPARE", 85),   // 87 -> 85 (2026-10-06, build rebuild Phase 3: measured); 90 -> 87 (2026-09-26, step 2: three local-name compares in the rule tables left with the bare names)
             Map.entry("CASE_NAME_LABEL", 4),

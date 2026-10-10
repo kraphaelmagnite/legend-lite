@@ -60,10 +60,9 @@ final class IsDistinctChecker {
         }
         // one tuple ARGUMENT per leaf (explicit arities): a collection literal
         // of mixed leaf types would lower as a text-cell list, not a row
-        AppliedFunction mapped = new AppliedFunction("map", List.of(
+        AppliedFunction mapped = Calls.platform("map", List.of(
                 af.parameters().get(0),
-                new LambdaFunction(List.of(e), List.of(new AppliedFunction(
-                        com.legend.builtin.Pure.Lite.TUPLE, reads)))));
-        return t.synth(new AppliedFunction("isDistinct", List.of(mapped)), env);
+                new LambdaFunction(List.of(e), List.of(Calls.exact(com.legend.builtin.Pure.Lite.TUPLE, reads)))));
+        return t.synth(Calls.platform("isDistinct", List.of(mapped)), env);
     }
 }

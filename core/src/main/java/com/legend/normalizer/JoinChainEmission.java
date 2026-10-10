@@ -2,6 +2,7 @@
 
 package com.legend.normalizer;
 
+import com.legend.compiler.spec.Calls;
 import com.legend.builtin.Pure;
 import com.legend.compiler.ModelBuilder;
 import com.legend.error.LegendCompileException;
@@ -394,8 +395,7 @@ final class JoinChainEmission {
 
             if (emitNavigate) {
                 ColSpec slot = new ColSpec(Objects.requireNonNull(slotAlias, "slotAlias"),
-                        new LambdaFunction(List.of(), List.of(new AppliedFunction(
-                                "getAll", List.of(new PackageableElementPtr(Objects
+                        new LambdaFunction(List.of(), List.of(Calls.platform("getAll", List.of(new PackageableElementPtr(Objects
                                         .requireNonNull(targetClassFqn)))))), null);
                 // The condition speaks TABLE-row scope while the slot's
                 // thunk is the CLASS extent — spell the target's table row
@@ -406,8 +406,7 @@ final class JoinChainEmission {
                 // are subselects, joins accept Table OR View)
                 ValueSpecification targetRows = viewTarget != null
                         ? p.views.body(model.findView(hopDb, viewTarget).orElseThrow())
-                        : new AppliedFunction(
-                                "tableReference", List.of(
+                        : Calls.platform("tableReference", List.of(
                                         new PackageableElementPtr(hopDb),
                                         new CString(targetTable)));
                 // ROUTED union navigation: ONE navigate carries the OR over
@@ -424,26 +423,26 @@ final class JoinChainEmission {
                     // SET'S OWN FUNCTION, its rows (a per-arm chain's mids
                     // joined inside the route) and its join as written. The
                     // union publishes nothing; the navigator composed it.
-                    p.expr = new AppliedFunction(Pure.Lite.LEGACY_NAVIGATE,
+                    p.expr = Calls.exact(Pure.Lite.LEGACY_NAVIGATE,
                             List.of(p.expr, slot, new PureCollection(routeList(p, routes,
                                     propName, prevTable, prevAlias, mainTable, s, t, model,
                                     Objects.requireNonNull(owner)))));
                 } else {
-                    p.expr = new AppliedFunction(Pure.Lite.LEGACY_NAVIGATE,
+                    p.expr = Calls.exact(Pure.Lite.LEGACY_NAVIGATE,
                             List.of(p.expr, slot, targetRows, navCond));
                 }
                 p.classSlots.add(slotAlias);
             } else {
                 ValueSpecification targetRel = viewTarget != null
                         ? p.views.body(model.findView(hopDb, viewTarget).orElseThrow())
-                        : new AppliedFunction("tableReference",
+                        : Calls.platform("tableReference",
                                 List.of(new PackageableElementPtr(hopDb), new CString(targetTable)));
                 // a VIEW hop carries the frame identity in the spare
                 // alias channel — the checker lifts it onto the slot
                 ColSpec slot = new ColSpec(java.util.Objects.requireNonNull(slotAlias, "slotAlias"),
                         new LambdaFunction(List.of(), List.of(targetRel)),
                         null, viewTarget);
-                p.expr = new AppliedFunction(Pure.Lite.JOIN_SLOT,
+                p.expr = Calls.exact(Pure.Lite.JOIN_SLOT,
                         List.of(p.expr, slot, condLambda));
             }
             p.aliasToTargetTable.put(slotAlias, targetTable);
@@ -475,7 +474,7 @@ final class JoinChainEmission {
             ResolvedMapping md) {
         return model.findView(db, name).isPresent()
                 ? md.views().body(model.findView(db, name).orElseThrow())
-                : new AppliedFunction("tableReference", List.of(
+                : Calls.platform("tableReference", List.of(
                         new PackageableElementPtr(db), new CString(name)));
     }
 
@@ -542,7 +541,7 @@ final class JoinChainEmission {
                         j, java.util.Objects.requireNonNull(propName), mm.table(), md, model);
                 rows = relationRef(mm.database(), mm.table(), model, md);
                 for (UnionSynthesis.LiftMidStep st : steps) {
-                    rows = new AppliedFunction(Pure.Lite.JOIN_SLOT, List.of(rows,
+                    rows = Calls.exact(Pure.Lite.JOIN_SLOT, List.of(rows,
                             new ColSpec(st.alias(), new LambdaFunction(List.of(),
                                     List.of(relationRef(st.db(), st.table(), model, md))), null),
                             st.cond()));
@@ -567,7 +566,7 @@ final class JoinChainEmission {
                         ? MappingNormalizer.relationFunctionPipeline(rfMember, model)
                         : model.findView(db, tgt).isPresent()
                         ? md.views().body(model.findView(db, tgt).orElseThrow())
-                        : new AppliedFunction("tableReference", List.of(
+                        : Calls.platform("tableReference", List.of(
                                 new PackageableElementPtr(db), new CString(tgt)));
                 Map<String, ValueSpecification> scope = new LinkedHashMap<>();
                 scope.put(rPrev, prevAlias == null ? s : new AppliedProperty(s, prevAlias));
@@ -580,10 +579,10 @@ final class JoinChainEmission {
             }
             // a ROOT route beside others names the root set's own function
             // (its class-level function); the queried mapping resolves it
-            ValueSpecification target = new AppliedFunction(
+            ValueSpecification target = Calls.exact(
                     UnionSynthesis.memberFunction(java.util.Objects.requireNonNull(pin)),
                     List.of());
-            out.add(new AppliedFunction(Pure.Lite.ROUTE, List.of(target, rows,
+            out.add(Calls.exact(Pure.Lite.ROUTE, List.of(target, rows,
                     new LambdaFunction(List.of(s, t), List.of(cond)))));
         }
         return out;
@@ -970,7 +969,7 @@ final class JoinChainEmission {
         ValueSpecification cond = RelOpTranslator.translate(
                 ViewRelation.frameRewriteIfView(fd.condition(), mainDb, mainTable, md, model),
                 scope, terminalRow, r, p.view());
-        ValueSpecification src = new AppliedFunction("filter", List.of(p.expr,
+        ValueSpecification src = Calls.platform("filter", List.of(p.expr,
                 new LambdaFunction(List.of(r), List.of(cond))));
         // every base column under its original name: a table's columns, or
         // a view's declared columns (the frame's row)
@@ -997,7 +996,7 @@ final class JoinChainEmission {
             baseCols.add(new ColSpec(name,
                     new LambdaFunction(List.of(vd), List.of(new AppliedProperty(vd, name))), null));
         }
-        return new AppliedFunction("project", List.of(src,
+        return Calls.platform("project", List.of(src,
                 new ColSpecArray(baseCols)));
     }
 

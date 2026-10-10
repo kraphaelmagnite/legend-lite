@@ -11,12 +11,13 @@ import java.util.List;
 /**
  * The full names a RESOLVED call names — the one reading of the resolver's
  * output every front-door pass shares: an exact FQN names itself; a bare
- * call carries the resolver's record ({@code AppliedFunction.referents}):
- * the program's functions and the platform's at the call's arity, worked
- * out ONCE by the resolver (L7 "resolve once", step 2; the ledger's PARK-5:
- * until then this class re-derived the platform's names from the spelling,
- * through {@code BareNames.catalog}, at every read). No pass matches a
- * spelling or reads imports on its own.
+ * call carries its record ({@code AppliedFunction.referents}): the program's
+ * functions and the platform's, worked out ONCE — by the resolver for a parsed
+ * call, by {@code compiler.spec.Calls} for a built one (L7 "resolve once",
+ * 2026-10-10; the ledger's PARK-5: until then this class re-derived the
+ * platform's names from the spelling, through the bare-name rule, at every
+ * read). An empty record on a bare spelling is a call nothing declares. No
+ * pass matches a spelling or reads imports on its own.
  */
 public final class ResolvedNames {
 
@@ -24,21 +25,7 @@ public final class ResolvedNames {
     }
 
     public static List<String> referents(AppliedFunction af) {
-        if (af.function().contains("::")) {
-            return List.of(af.function());
-        }
-        if (!af.referents().isEmpty()) {
-            return af.referents();
-        }
-        // NO RECORD: a call built after the resolver (L7 step 3 makes every such call born resolved and deletes
-        // this), or a parsed name the resolver found nothing for (then the rule finds nothing either)
-        List<String> out = new ArrayList<>();
-        for (com.legend.model.NativeFunctionDefinition n : BareNames.catalog(af.function())) {
-            if (n.parameters().size() == af.parameters().size() && !out.contains(n.qualifiedName())) {
-                out.add(n.qualifiedName());
-            }
-        }
-        return out;
+        return af.function().contains("::") ? List.of(af.function()) : af.referents();
     }
 
     /** The catalog natives among the call's referents — empty when the call

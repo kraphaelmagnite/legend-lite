@@ -1229,7 +1229,15 @@ final class ArchitectureTest {
                 // connection, once; this keys that fact on the session itself
                 // (WeakHashMap — the fact lives exactly as long as the
                 // connection) and re-seeds after a writing statement
-                "com.legend.StatementExecutor.ESTABLISHED");
+                "com.legend.StatementExecutor.ESTABLISHED",
+                // the bare-name rule's table (L7 "resolve once", step 3, 2026-10-10): the names a bare
+                // call may mean at an arity, computed from static tables (the engine surface, the core
+                // import group, the forms, the catalog) and kept per (name, arity) once computed; never
+                // cleared, never keyed by anything but those inputs
+                "com.legend.compiler.BareNames.REFERENTS",
+                // the resolver's answers for built calls (L7 step 3, 2026-10-10): per (name, arity) under the
+                // sectionless-query scope, from the same static inputs; never cleared
+                "com.legend.compiler.NameResolver.BUILT");
         java.util.List<String> violations = new java.util.ArrayList<>();
         for (com.tngtech.archunit.core.domain.JavaClass jc : CORE_PROD_CLASSES) {
             if (jc.getPackageName().startsWith("com.legend.cache")) {
@@ -1397,46 +1405,78 @@ final class ArchitectureTest {
                     // the normalizer, and its row goes to 0 in that commit. The
                     // driver's own hand-built view accessor (StatementExecutor, 4)
                     // was deleted the day this was pinned — it is not a row.
+                    // RE-PINNED 2026-10-10 (L7 "resolve once" step 3): every AppliedFunction construction in
+                    // compiler/, validation/ moved into Calls (179 by script, 25 by hand; the design note's
+                    // §11); the rows below are the other protocol nodes those classes still build (lambdas,
+                    // variables, column specs, collections) at the measured counts, shrink-only as before
                     java.util.Map.entry("com.legend.Compiler", 2),
                     java.util.Map.entry("com.legend.compiler.DerivedProps", 3),
                     java.util.Map.entry("com.legend.compiler.LiteralMapUnroll", 2),
                     java.util.Map.entry("com.legend.compiler.NameResolver", 30),
-                    java.util.Map.entry("com.legend.compiler.StatementInline", 6),
+                    java.util.Map.entry("com.legend.compiler.StatementInline", 5),
                     java.util.Map.entry("com.legend.compiler.element.TypeClassifier", 1),
                     java.util.Map.entry("com.legend.compiler.spec.AlphaRename", 7),
-                    java.util.Map.entry("com.legend.compiler.spec.CallShapes", 9),
-                    java.util.Map.entry("com.legend.compiler.spec.DistinctChecker", 2),
-                    java.util.Map.entry("com.legend.compiler.spec.EvalChecker", 2),
-                    java.util.Map.entry("com.legend.compiler.spec.ExtendChecker", 5),
-                    java.util.Map.entry("com.legend.compiler.spec.FoldChecker", 4),
+                    java.util.Map.entry("com.legend.compiler.spec.CallShapes", 4),
+                    java.util.Map.entry("com.legend.compiler.spec.DistinctChecker", 1),
+                    java.util.Map.entry("com.legend.compiler.spec.EvalChecker", 1),
+                    java.util.Map.entry("com.legend.compiler.spec.ExtendChecker", 4),
+                    java.util.Map.entry("com.legend.compiler.spec.FoldChecker", 3),
                     java.util.Map.entry("com.legend.compiler.spec.FromChecker", 2),
-                    java.util.Map.entry("com.legend.compiler.spec.GroupByChecker", 21),
-                    java.util.Map.entry("com.legend.compiler.spec.GroupLambdaAggs", 16),
+                    java.util.Map.entry("com.legend.compiler.spec.GroupByChecker", 18),
+                    java.util.Map.entry("com.legend.compiler.spec.GroupLambdaAggs", 14),
                     java.util.Map.entry("com.legend.compiler.spec.IfChecker", 1),
-                    java.util.Map.entry("com.legend.compiler.spec.IsDistinctChecker", 6),
-                    java.util.Map.entry("com.legend.compiler.spec.JoinChecker", 22),
-                    java.util.Map.entry("com.legend.compiler.spec.JsonChecker", 16),
-                    java.util.Map.entry("com.legend.compiler.spec.LambdaBodies", 10),
-                    java.util.Map.entry("com.legend.compiler.spec.NewChecker", 2),
-                    java.util.Map.entry("com.legend.compiler.spec.ProjectChecker", 16),
-                    java.util.Map.entry("com.legend.compiler.spec.RenameChecker", 1),
-                    java.util.Map.entry("com.legend.compiler.spec.SortChecker", 13),
+                    java.util.Map.entry("com.legend.compiler.spec.IsDistinctChecker", 3),
+                    java.util.Map.entry("com.legend.compiler.spec.JoinChecker", 16),
+                    java.util.Map.entry("com.legend.compiler.spec.JsonChecker", 11),
+                    java.util.Map.entry("com.legend.compiler.spec.LambdaBodies", 3),
+                    java.util.Map.entry("com.legend.compiler.spec.NewChecker", 1),
+                    java.util.Map.entry("com.legend.compiler.spec.Overloads", 2),
+                    java.util.Map.entry("com.legend.compiler.spec.ProjectChecker", 15),
+                    java.util.Map.entry("com.legend.compiler.spec.SortChecker", 8),
                     java.util.Map.entry("com.legend.compiler.spec.SourceSubst", 10),
-                    java.util.Map.entry("com.legend.compiler.spec.StaticFold", 13),
+                    java.util.Map.entry("com.legend.compiler.spec.StaticFold", 12),
+                    java.util.Map.entry("com.legend.compiler.spec.TdsDesugars", 58),
                     java.util.Map.entry("com.legend.compiler.spec.TdsNullForms", 1),
                     java.util.Map.entry("com.legend.compiler.spec.TypeAnnotations", 1),
-                    // 127 -> 126 (audit burn 2026-09-25): aliasNormalized's respelling mint deleted
-                    // 126 -> 33 (2026-09-29, plan W1.6): the typer split moved 89 to TdsDesugars and
-                    // 4 to Overloads, unchanged: the total is the same 126
-                    java.util.Map.entry("com.legend.compiler.spec.Typer", 33),
-                    java.util.Map.entry("com.legend.compiler.spec.TdsDesugars", 89),
-                    java.util.Map.entry("com.legend.compiler.spec.Overloads", 4),
+                    java.util.Map.entry("com.legend.compiler.spec.Typer", 17),
                     java.util.Map.entry("com.legend.lineage.ScanRelations", 2),
                     java.util.Map.entry("com.legend.model.MappingFromProtocol", 4),
                     java.util.Map.entry("com.legend.test.PureTestRunner", 2),
                     java.util.Map.entry("com.legend.test.ServiceTestRunner", 2),
-                    java.util.Map.entry("com.legend.validation.ValidateDesugar", 27)
+                    java.util.Map.entry("com.legend.validation.ValidateDesugar", 22)
             ));
+
+    /**
+     * <strong>L7 "resolve once", step 3 (2026-10-10).</strong> A call built after the name resolver is born with
+     * its record, so no reader works a name out from a spelling: the typer, its checkers and desugars, the
+     * normalizer, validation, lineage and test-data generation construct an {@code AppliedFunction} only through
+     * {@code Calls} (the parser and the protocol readers build calls before resolution; the resolver records).
+     */
+    @Test
+    void callsAreBuiltOnlyByTheBuilder() {
+        noClasses()
+            .that().resideInAPackage("com.legend..")
+            // the parser and the protocol readers build calls before resolution; the test runners spell a test
+            // call before resolveQuery; the resolver records; the builder is the one place after the resolver
+            .and().resideOutsideOfPackages("com.legend.parser..", "com.legend.protocol..", "com.legend.test..")
+            .and().haveNameNotMatching("com\\.legend\\.compiler\\.(spec\\.Calls|NameResolver)(\\$.*)?")
+            .should().callConstructorWhere(com.tngtech.archunit.core.domain.JavaCall.Predicates.target(
+                    com.tngtech.archunit.core.domain.properties.HasOwner.Predicates.With.owner(
+                            com.tngtech.archunit.core.domain.properties.HasName.Predicates
+                                    .name("com.legend.protocol.spec.AppliedFunction"))))
+            .orShould().callMethodWhere(com.tngtech.archunit.core.domain.JavaCall.Predicates.target(
+                    com.tngtech.archunit.core.domain.properties.HasOwner.Predicates.With.owner(
+                            com.tngtech.archunit.core.domain.properties.HasName.Predicates
+                                    .name("com.legend.protocol.spec.AppliedFunction")))
+                    .and(com.tngtech.archunit.core.domain.JavaCall.Predicates.target(
+                            com.tngtech.archunit.core.domain.properties.HasName.Predicates
+                                    .nameMatching("infixRun|list|tableReference"))))
+            .as("L7 step 3: a call built after the resolver is built by com.legend.compiler.spec.Calls, with its"
+                    + " record; no other class constructs an AppliedFunction or calls its parser-side factories"
+                    + " (infixRun, list, tableReference), the parser, the protocol readers and the test runners"
+                    + " excepted (they build before resolution) and the resolver excepted (it records)")
+            .check(CORE_PROD_CLASSES);
+    }
 
     @Test
     void protocolNodesAreConstructedOnlyByTheParserAndTheNormalizer() {
@@ -1445,7 +1485,10 @@ final class ArchitectureTest {
             String pkg = c.getPackageName();
             if (pkg.equals("com.legend.parser") || pkg.startsWith("com.legend.parser.")
                     || pkg.equals("com.legend.normalizer") || pkg.startsWith("com.legend.normalizer.")
-                    || pkg.equals("com.legend.protocol") || pkg.startsWith("com.legend.protocol.")) {
+                    || pkg.equals("com.legend.protocol") || pkg.startsWith("com.legend.protocol.")
+                    // the one builder of calls after the resolver (L7 "resolve once" step 3, 2026-10-10;
+                    // callsAreBuiltOnlyByTheBuilder keeps every other constructor call of a call out)
+                    || c.getName().equals("com.legend.compiler.spec.Calls")) {
                 continue;
             }
             int n = 0;

@@ -43,7 +43,7 @@ final class ExtendChecker {
         // ProjectChecker lesson): rebuilds and generic resolution key on
         // the name, and an FQN finds only its own narrow catalog entry.
         if (af.function().contains("::")) {
-            af = new AppliedFunction("extend", af.parameters());
+            af = Calls.platform("extend", af.parameters());
         }
         af = normalizeLegacyCols(af);
         if (af.parameters().size() == 3) {

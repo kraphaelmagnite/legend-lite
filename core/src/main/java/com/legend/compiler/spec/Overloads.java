@@ -181,11 +181,11 @@ final class Overloads {
                 && rb1.lower() == 1)) {
             // the same [0..1]-runs-like-[1] conformance spelling as the
             // main derived route (ledger cluster 48)
-            qargs.set(0, new AppliedFunction(com.legend.builtin.Pure.Lite.TRUST_ONE,
+            qargs.set(0, Calls.exact(com.legend.builtin.Pure.Lite.TRUST_ONE,
                     List.of(qargs.get(0))));
         }
         com.legend.builtin.DecisionProbe.lifted(af.propertyCall() ? "qp-owned:dot" : "qp-owned:call", simple, d.bodyFunctionFqn(), ctx.findFunction(d.bodyFunctionFqn()).size());
-        return applyGeneric(new AppliedFunction(d.bodyFunctionFqn(), qargs), env);
+        return applyGeneric(Calls.exact(d.bodyFunctionFqn(), qargs), env);
     }
 
     /** Phase 1c (One-Platform Plan): {@code executeInDb} with a LITERAL
@@ -476,6 +476,12 @@ final class Overloads {
         List<TypedFunction> candidates = functionCandidates(af);
         if (candidates.isEmpty()) {
             com.legend.builtin.DecisionProbe.unknownFunction(af.function(), af.propertyCall(), "generic");
+            if (!com.legend.compiler.BareNames.catalogTiered(af.function()).stream()
+                    .allMatch(tier -> tier.getValue().isEmpty())) {
+                // the name exists at another arity (the record is at the call's): an arity error, as before
+                throw new TypeInferenceException("no overload of '" + af.function() + "' accepts "
+                        + args.size() + " argument(s)");
+            }
             // C0.5a: zero candidates = the name is NOT IN THE CATALOG (an
             // unported platform function, usually) — say so plainly
             throw new TypeInferenceException("unknown function '"
@@ -1179,22 +1185,21 @@ final class Overloads {
     List<TypedFunction> functionCandidates(AppliedFunction af) {
         List<TypedFunction> found = candidatesOf(af);
         if (com.legend.builtin.DecisionProbe.INSTALLED != null) {
-            com.legend.builtin.DecisionProbe.candidates(af.function(),
-                    af.referents().isEmpty() ? "bare" : "node", found.stream().map(TypedFunction::definition));
+            com.legend.builtin.DecisionProbe.candidates(af.function(), "record",
+                    found.stream().map(TypedFunction::definition));
         }
         return found;
     }
 
     private List<TypedFunction> candidatesOf(AppliedFunction af) {
-        if (af.referents().isEmpty()) {
-            com.legend.builtin.DecisionProbe.bareCall(af.function(), af.pos() != null, af.propertyCall(), af.infix());
-            return functionCandidates(af.function());
-        }
+        // THE RECORD IS THE ONLY SOURCE (L7 "resolve once"): a full name is its own referent, a bare call carries
+        // the names the resolver or the builder recorded; a bare call with no record is one nothing declares, and
+        // the caller reports it so. No lookup from the spelling.
         List<TypedFunction> union = new ArrayList<>();
         RuntimeException firstBroken = null;
-        for (String fqn : af.referents()) {
+        for (String fqn : com.legend.compiler.ResolvedNames.referents(af)) {
             try {
-                union.addAll(ctx.findFunction(fqn));
+                union.addAll(functionCandidates(fqn));
             } catch (RuntimeException e) {
                 // an import candidate whose overloads are ALL signature-
                 // broken (tolerant module): it cannot be meant — the

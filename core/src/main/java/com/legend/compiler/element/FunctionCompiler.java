@@ -33,34 +33,10 @@ final class FunctionCompiler {
     /** THE native+user overload merge — every "functions at this FQN" question routes here. */
     List<Function> functionsAt(String fqn) {
         if (!fqn.contains("::")) {
-            // A BARE name the resolver could not qualify: THE RULE (BareNames,
-            // untangle 4b.2) names the declarations it may denote — engine
-            // surface, core group, the form's own — and each is looked up
-            // exactly like a qualified call, natives and model alike, under
-            // the same platform-owned gate. No bare index, no courtesy list.
-            List<Function> all = new ArrayList<>();
-            // one merge per distinct FQN (a name two tiers spell is looked up
-            // once; the probe still names each tier that spells it)
-            java.util.Map<String, List<Function>> at = new java.util.HashMap<>();
-            for (var tier : com.legend.compiler.BareNames.tiered(fqn)) {
-                List<Function> found = at.get(tier.fqn());
-                if (found == null) {
-                    found = functionsAt(tier.fqn());
-                    at.put(tier.fqn(), found);
-                }
-                if (!found.isEmpty() && com.legend.builtin.DecisionProbe.INSTALLED != null) {
-                    com.legend.builtin.DecisionProbe.bareTier(fqn, tier.fqn(), tier.tier(), "merge");
-                }
-                for (Function f : found) {
-                    if (!all.contains(f)) {
-                        all.add(f);
-                    }
-                }
-            }
-            if (com.legend.builtin.DecisionProbe.INSTALLED != null) {
-                com.legend.builtin.DecisionProbe.overloads(fqn, all, model, model.functions());
-            }
-            return all;
+            // A BARE name is not a declaration: a call's names are on its record (the resolver's or the
+            // builder's; L7 "resolve once", 2026-10-10) and a reader looks up each recorded full name here. The
+            // tier walk that stood here (BareNames.tiered per lookup) is gone with the ledger's PARK-5.
+            return List.of();
         }
         // EVERY declaration at the FQN is a candidate, the catalog's and the model's, merged by function
         // id (build rebuild Phase 3): a model declaration with exactly a catalog native's id IS that

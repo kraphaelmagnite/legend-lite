@@ -69,6 +69,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * omitted here.
  */
 class TypeCheckerTest {
+    // every query is RESOLVED before it is typed, as every product entry does (Compiler.typeQuery,
+    // resolveQuery): since L7 "resolve once" (2026-10-10) the typer reads a call's record and looks nothing up
+    // from a spelling
 
     /** Engine's PERSON_TABLE, declared in core's {@code Database} grammar (FQN-resolved). */
     private static final String DB_MODEL = """
@@ -124,7 +127,7 @@ class TypeCheckerTest {
 
     private static TypedSpec typeQuery(String query) {
         ModelContext ctx = Compiler.compileModel(DB_MODEL);
-        return new SpecCompiler(ctx).typeBody(com.legend.testing.Own.spec(query), Env.empty(), Expected.infer());
+        return new SpecCompiler(ctx).typeBody(com.legend.compiler.NameResolver.resolveQuery(com.legend.testing.Own.spec(query)), Env.empty(), Expected.infer());
     }
 
     private static Type.RelationType schemaOf(TypedSpec node) {
@@ -1257,8 +1260,7 @@ class TypeCheckerTest {
         // absent there, it resolves as the USER function it is.
         String model = "function meta::pure::custom::map(x: Integer[1]): Integer[1] { $x + 1 }";
         ModelContext ctx = Compiler.compileModel(model);
-        TypedSpec t = new SpecCompiler(ctx).typeBody(
-                com.legend.testing.Own.spec("meta::pure::custom::map(41)"),
+        TypedSpec t = new SpecCompiler(ctx).typeBody(com.legend.compiler.NameResolver.resolveQuery(com.legend.testing.Own.spec("meta::pure::custom::map(41)")),
                 Env.empty(), Expected.infer());
         assertEquals(Type.Primitive.INTEGER, t.info().type());
     }
@@ -1307,13 +1309,11 @@ class TypeCheckerTest {
                 }
                 """;
         ModelContext ctx = Compiler.compileModel(model);
-        TypedSpec t = new SpecCompiler(ctx).typeBody(
-                com.legend.testing.Own.spec("test::P.all()->map(p | $p.employer.legal)"),
+        TypedSpec t = new SpecCompiler(ctx).typeBody(com.legend.compiler.NameResolver.resolveQuery(com.legend.testing.Own.spec("test::P.all()->map(p | $p.employer.legal)")),
                 Env.empty(), Expected.infer());
         assertEquals(Type.Primitive.STRING, t.info().type());
         // And the reverse end, with the association's declared multiplicity:
-        TypedSpec back = new SpecCompiler(ctx).typeBody(
-                com.legend.testing.Own.spec("test::F.all()->map(f | $f.staff)"),
+        TypedSpec back = new SpecCompiler(ctx).typeBody(com.legend.compiler.NameResolver.resolveQuery(com.legend.testing.Own.spec("test::F.all()->map(f | $f.staff)")),
                 Env.empty(), Expected.infer());
         assertEquals("test::P", ((Type.ClassType) back.info().type()).fqn());
     }
@@ -1374,7 +1374,7 @@ class TypeCheckerTest {
 
     private static TypedSpec typeInModel(String extraModel, String query) {
         ModelContext ctx = Compiler.compileModel(DB_MODEL + "\n" + extraModel);
-        return new SpecCompiler(ctx).typeBody(com.legend.testing.Own.spec(query), Env.empty(), Expected.infer());
+        return new SpecCompiler(ctx).typeBody(com.legend.compiler.NameResolver.resolveQuery(com.legend.testing.Own.spec(query)), Env.empty(), Expected.infer());
     }
 
     @Test

@@ -201,6 +201,13 @@ public record AppliedFunction(
                 true, infix, island, fControl, ownerClass);
     }
 
+    /** A copy that is a PLAIN call (not a dot call), everything else kept: a rewriter binding the receiver to a
+     *  variable spells the call plainly (L7 step 3, 2026-10-10; {@code CallShapes}). */
+    public AppliedFunction asPlainCall() {
+        return new AppliedFunction(function, parameters, referents, pos, false, grouped, infix, island, fControl,
+                ownerClass);
+    }
+
     /** Position, the written-form markers (propertyCall, grouped, infix, island) and older JSON's written details
      *  (fControl, ownerClass) are excluded from equality — see
      *  {@code ValueSpecEqualityTest}. {@code propertyCall} records that the source spelled

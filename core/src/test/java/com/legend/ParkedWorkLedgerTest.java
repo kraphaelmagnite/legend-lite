@@ -79,16 +79,14 @@ class ParkedWorkLedgerTest {
             // PARK-5 to PARK-14: the build rebuild's debts (2026-10-07, the user: fixed correctly after the program
             // lands, never worked around meanwhile). PARK-5: a platform call's names are worked out again at every
             // check, from the spelling.
-            // (L7 step 2, 2026-10-10: parsed calls carry their record; the rule runs only for built calls, step 3's)
-            Map.entry("PARK-5 a platform call is never resolved once",
-                            new Anchor("BareNames\\.catalog\\(", List.of("ResolvedNames.java"))),
+            // (PARK-5 closed by L7 "resolve once", 2026-10-10: every call carries its record; no rule at a read)
             // PARK-6: a receiver typed to choose a route, then typed again by the route (the dot-call branch, the
             // auto-map probe, the legacy-TDS receiver checks)
             Map.entry("PARK-6 arguments typed more than once",
                             new Anchor("recv = (t\\.)?synth\\(af\\.parameters\\(\\)\\.get\\(0\\), env\\)",
                                     List.of("CallShapes.java", "TdsDesugars.java", "Typer.java"))),
             Map.entry("PARK-6 arguments typed more than once (the property's body call re-applied)",
-                            new Anchor("applyGeneric\\(new AppliedFunction\\(d\\.bodyFunctionFqn\\(\\), qargs\\), env\\)",
+                            new Anchor("applyGeneric\\(Calls\\.exact\\(d\\.bodyFunctionFqn\\(\\), qargs\\), env\\)",
                                     List.of("Overloads.java", "Typer.java"))),
             Map.entry("PARK-6 arguments typed more than once (the receiver-owned check)",
                             new Anchor("Type rt = t\\.synth\\(recv, env\\)", List.of("ReceiverOwnedFunctions.java"))),

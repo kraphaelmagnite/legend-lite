@@ -109,12 +109,12 @@ final class LambdaBodies {
         List<ValueSpecification> condIn = af.parameters().subList(0, condArgs);
         ValueSpecification condVs = switch (fqn.substring(fqn.lastIndexOf(':') + 1)) {
             case "assert", "assertTrue" -> condIn.get(0);
-            case "assertFalse" -> new AppliedFunction("not", condIn);
-            case "assertEquals" -> new AppliedFunction("equal", condIn);
-            case "assertNotEquals" -> new AppliedFunction("not",
-                    List.of(new AppliedFunction("equal", condIn)));
-            case "assertEmpty" -> new AppliedFunction("isEmpty", condIn);
-            case "assertNotEmpty" -> new AppliedFunction("isNotEmpty", condIn);
+            case "assertFalse" -> Calls.platform("not", condIn);
+            case "assertEquals" -> Calls.platform("equal", condIn);
+            case "assertNotEquals" -> Calls.platform("not",
+                    List.of(Calls.platform("equal", condIn)));
+            case "assertEmpty" -> Calls.platform("isEmpty", condIn);
+            case "assertNotEmpty" -> Calls.platform("isNotEmpty", condIn);
             default -> throw new IllegalStateException(fqn);
         };
         TypedSpec cond = t.synth(condVs, scope);
@@ -130,7 +130,7 @@ final class LambdaBodies {
             message = t.synth(msgArgs.get(0), scope);
         } else {
             // assert(cond, format, args) — the formatted message
-            message = t.synth(new AppliedFunction("format", msgArgs), scope);
+            message = t.synth(Calls.platform("format", msgArgs), scope);
         }
         TypedSpec rest = synthBody(t, new LambdaFunction(lam.parameters(),
                 lam.body().subList(1, lam.body().size())), scope);

@@ -101,16 +101,16 @@ final class SortChecker {
                                 + dir.value() + "' of " + dir.fullPath());
             };
             return af.withParameters(List.of(ps.get(0),
-                    new AppliedFunction(fn, List.of(new ColSpec(col.value())))));
+                    Calls.platform(fn, List.of(new ColSpec(col.value())))));
         }
         if (ps.size() == 2 && ps.get(1) instanceof CString col) {
             return af.withParameters(List.of(ps.get(0),
-                    new AppliedFunction(CoreFn.ASC.parseName(), List.of(new ColSpec(col.value())))));
+                    Calls.form(CoreFn.ASC, List.of(new ColSpec(col.value())))));
         }
         if (ps.size() == 2 && ps.get(1) instanceof PureCollection c && !c.values().isEmpty()
                 && c.values().stream().allMatch(v -> v instanceof CString)) {
             List<ValueSpecification> keys = c.values().stream()
-                    .<ValueSpecification>map(v -> new AppliedFunction(CoreFn.ASC.parseName(),
+                    .<ValueSpecification>map(v -> Calls.form(CoreFn.ASC,
                             List.of(new ColSpec(((CString) v).value()))))
                     .toList();
             return af.withParameters(List.of(ps.get(0), new PureCollection(keys)));
@@ -180,9 +180,8 @@ final class SortChecker {
         // -> the relation sort key under upstream's MODERN name, ascending(~COL) /
         // descending(~COL) — the ColSpec overload lives only there (batch 5 leg 5c)
         if (af.parameters().size() == 1 && af.parameters().get(0) instanceof CString c) {
-            af = new AppliedFunction((ascending ? CoreFn.ASC : CoreFn.DESC).parseName(),
-                    List.of(new ColSpec(c.value())), af.referents(), af.pos(),
-                    af.propertyCall(), af.grouped(), af.infix());
+            af = Calls.renamed(af, (ascending ? CoreFn.ASC : CoreFn.DESC).parseName(),
+                    List.of(new ColSpec(c.value())));
         }
         Application a = t.checkGeneric(af, env);
         // ascending(~col, NullOrder.FIRST|LAST) — the two-argument overload
@@ -300,7 +299,7 @@ final class SortChecker {
     }
 
     private static ValueSpecification ascIfBare(ValueSpecification vs) {
-        return vs instanceof ColSpec cs ? new AppliedFunction(CoreFn.ASC.parseName(), List.of(cs)) : vs;
+        return vs instanceof ColSpec cs ? Calls.form(CoreFn.ASC, List.of(cs)) : vs;
     }
 
     /** Flatten the checked sort-key argument ({@code SortInfo} value(s)) into lowering-ready keys. */

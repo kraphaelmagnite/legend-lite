@@ -1,5 +1,6 @@
 package com.legend.normalizer;
 
+import com.legend.compiler.spec.Calls;
 
 import com.legend.builtin.Pure;
 import com.legend.compiler.ModelBuilder;
@@ -61,7 +62,7 @@ final class ViewRelation {
                 model.findView(ref.database(), table).orElseGet(MissProbe::miss);
         return view != null
                 ? md.views().body(view)
-                : new AppliedFunction("tableReference", List.of(
+                : Calls.platform("tableReference", List.of(
                         new PackageableElementPtr(ref.database()),
                         new CString(table)));
     }
@@ -108,7 +109,7 @@ final class ViewRelation {
                 model.findView(db, phys).orElseGet(MissProbe::miss);
         ValueSpecification source = innerView != null
                 ? views.body(innerView)
-                : new AppliedFunction("tableReference",
+                : Calls.platform("tableReference",
                         List.of(new PackageableElementPtr(db), new CString(phys)));
         // JOIN-NAVIGATING view columns (orderPnl: @Join | T.COL) hoist as
         // slots on a real Pipeline — the same pass-2 machinery PM bodies
@@ -174,7 +175,7 @@ final class ViewRelation {
         if (viewFilterDef != null) {
             ValueSpecification cond = RelOpTranslator.translate(
                     viewFilterDef.condition(), scope, null, r, vp.view());
-            src = new AppliedFunction("filter", List.of(src,
+            src = Calls.platform("filter", List.of(src,
                     new LambdaFunction(List.of(r), List.of(cond))));
         }
         boolean syntheticKeyCols = false;
@@ -193,7 +194,7 @@ final class ViewRelation {
                     aggCols.add(new ColSpec(vc.name(),
                             new LambdaFunction(List.of(r), List.of(selector)),
                             new LambdaFunction(List.of(vals),
-                                    List.of(declaredOne(ones, vc.name(), new AppliedFunction(
+                                    List.of(declaredOne(ones, vc.name(), Calls.platform(
                                             RelOpTranslator.dynaFnName(fc),
                                             List.of(vals)))))));
                     continue;
@@ -219,7 +220,7 @@ final class ViewRelation {
                             new LambdaFunction(List.of(r), List.of(wSel)),
                             new LambdaFunction(List.of(wVals),
                                     List.of(declaredOne(ones, vc.name(),
-                                            new AppliedFunction("first", List.of(wVals)))))));
+                                            Calls.platform("first", List.of(wVals)))))));
                     continue;
                 }
                 claimed[match] = true;
@@ -241,7 +242,7 @@ final class ViewRelation {
             }
             // the view's rows grouped by key EXPRESSIONS: the internal-desugar
             // identity (Pure.Lite.GROUP_BY_COMPUTED_KEYS, batch 5 leg 5d)
-            src = new AppliedFunction(com.legend.builtin.Pure.Lite.GROUP_BY_COMPUTED_KEYS, List.of(src,
+            src = Calls.exact(com.legend.builtin.Pure.Lite.GROUP_BY_COMPUTED_KEYS, List.of(src,
                     new ColSpecArray(keyCols), new ColSpecArray(aggCols)));
         } else {
             List<ColSpec> cols = new ArrayList<>(view.columnMappings().size());
@@ -252,7 +253,7 @@ final class ViewRelation {
                         new LambdaFunction(List.of(r), List.of(declaredOne(ones, vc.name(), val))),
                         null));
             }
-            src = new AppliedFunction("project", List.of(src, new ColSpecArray(cols)));
+            src = Calls.platform("project", List.of(src, new ColSpecArray(cols)));
         }
         if (view.distinct()) {
             // ~distinct is over the view's DECLARED columns (the engine
@@ -271,10 +272,10 @@ final class ViewRelation {
                             new LambdaFunction(List.of(vd),
                                     List.of(new AppliedProperty(vd, vc.name()))), null));
                 }
-                src = new AppliedFunction("project",
+                src = Calls.platform("project",
                         List.of(src, new ColSpecArray(declared)));
             }
-            src = new AppliedFunction("distinct", List.of(src));
+            src = Calls.platform("distinct", List.of(src));
         }
         return src;
     }
@@ -285,7 +286,7 @@ final class ViewRelation {
     private static ValueSpecification declaredOne(java.util.Set<String> ones, String column,
             ValueSpecification value) {
         return ones.contains(column)
-                ? new AppliedFunction(com.legend.builtin.Pure.Lite.TRUST_ONE, List.of(value))
+                ? Calls.exact(com.legend.builtin.Pure.Lite.TRUST_ONE, List.of(value))
                 : value;
     }
 

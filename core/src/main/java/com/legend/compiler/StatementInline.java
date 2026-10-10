@@ -3,6 +3,7 @@
 
 package com.legend.compiler;
 
+import com.legend.compiler.spec.Calls;
 import com.legend.compiler.element.ModelContext;
 import com.legend.compiler.element.type.PlatformTypes;
 import com.legend.compiler.spec.SourceSubst;
@@ -168,7 +169,7 @@ public final class StatementInline {
             if (inner instanceof AppliedFunction af && SourceSubst.letName(af) == null
                     && programCallee(af) != null) {
                 String name = freshName("hoisted");
-                out.add(new AppliedFunction("letFunction",
+                out.add(Calls.platform("letFunction",
                         List.of(new CString(name), inner)));
                 return new Variable(name);
             }

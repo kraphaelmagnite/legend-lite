@@ -125,7 +125,7 @@ final class GroupByChecker {
         for (String i : subAggIds) {
             newIds.add(new CString(i));
         }
-        return check(t, new AppliedFunction("groupBy", List.of(ps.get(0),
+        return check(t, Calls.platform("groupBy", List.of(ps.get(0),
                 new PureCollection(newFunctions), new PureCollection(newAggs),
                 new PureCollection(newIds))), env);
     }
@@ -196,9 +196,9 @@ final class GroupByChecker {
         // (same reason as tdsLegacyToModern); a CLASS source lands on the
         // internal-desugar identity — upstream declares no colspec groupBy over
         // instances (batch 5 leg 5d), and a user's bare `groupBy` never reaches it
-        return new AppliedFunction(classSource
-                ? com.legend.builtin.Pure.Lite.GROUP_BY_OVER_INSTANCES : "groupBy",
-                List.of(ps.get(0), new ColSpecArray(keyCols), new ColSpecArray(aggCols)));
+        List<ValueSpecification> args = List.of(ps.get(0), new ColSpecArray(keyCols), new ColSpecArray(aggCols));
+        return classSource ? Calls.exact(com.legend.builtin.Pure.Lite.GROUP_BY_OVER_INSTANCES, args)
+                : Calls.platform("groupBy", args);
     }
 
     /**
@@ -265,7 +265,7 @@ final class GroupByChecker {
         // construct — an FQN spelling (meta::pure::tds::groupBy) would
         // resolve against only the FQN-registered overloads, whose keys are
         // FuncColSpecArray, and miss the plain-key relation overloads.
-        return new AppliedFunction("groupBy", List.of(ps.get(0),
+        return Calls.platform("groupBy", List.of(ps.get(0),
                 new ColSpecArray(keyCols), new ColSpecArray(aggCols)));
     }
 

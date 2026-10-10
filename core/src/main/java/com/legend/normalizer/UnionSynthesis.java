@@ -2,6 +2,7 @@
 
 package com.legend.normalizer;
 
+import com.legend.compiler.spec.Calls;
 import com.legend.builtin.Pure;
 import com.legend.compiler.ModelBuilder;
 import com.legend.compiler.SynthFqn;
@@ -148,8 +149,8 @@ final class UnionSynthesis {
         ValueSpecification out = null;
         List<String> ids = new ArrayList<>(members.size());
         for (ClassMapping m : members) {
-            ValueSpecification call = new AppliedFunction(memberFunction(md, m), List.of());
-            out = out == null ? call : new AppliedFunction("concatenate", List.of(out, call));
+            ValueSpecification call = Calls.exact(memberFunction(md, m), List.of());
+            out = out == null ? call : Calls.platform("concatenate", List.of(out, call));
             ids.add(ResolvedMapping.idOf(m));
         }
         // the arms as a FACT beside the body (the binding's memberSetIds)

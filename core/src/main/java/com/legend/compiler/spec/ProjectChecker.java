@@ -42,7 +42,7 @@ final class ProjectChecker {
         // the MODERN project signatures, and an FQN-keyed rebuild finds
         // only the legacy /3 candidate at that name.
         if (af.function().contains("::")) {
-            af = new AppliedFunction("project", af.parameters());
+            af = Calls.platform("project", af.parameters());
         }
         // a spec-BUILDING helper call in columns position expands RAW
         // (project(getCols()) — its col() literals feed the same shape

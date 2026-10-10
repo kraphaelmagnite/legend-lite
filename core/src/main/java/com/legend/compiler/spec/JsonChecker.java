@@ -42,7 +42,7 @@ final class JsonChecker {
         Multiplicity m = source.info().multiplicity();
         if (m.isMany()) {
             // real pure: the . operator over a many receiver IS a map
-            return t.synth(new AppliedFunction("map", List.of(ap.receiver(),
+            return t.synth(Calls.platform("map", List.of(ap.receiver(),
                     new LambdaFunction(List.of(new Variable("_jm")),
                             List.of(new AppliedProperty(new Variable("_jm"),
                                     ap.property()))))), env);
@@ -119,9 +119,9 @@ final class JsonChecker {
         if (recv.info().multiplicity().isMany()) {
             // objects[*].keyValuePairs->filter(key): the member of EACH
             // object (real pure's map-on-dot over the many receiver)
-            return t.synth(new AppliedFunction("map", List.of(kvs.receiver(),
+            return t.synth(Calls.platform("map", List.of(kvs.receiver(),
                     new LambdaFunction(List.of(new Variable("_jo")),
-                            List.of(new AppliedFunction(af.function(), List.of(
+                            List.of(Calls.like(af, List.of(
                                     new AppliedProperty(new Variable("_jo"),
                                             "keyValuePairs"),
                                     lf)))))), env);
@@ -151,8 +151,8 @@ final class JsonChecker {
         ValueSpecification elements = values == null
                 ? new com.legend.protocol.spec.PureCollection(List.of())
                 : values.value();
-        return t.synth(new AppliedFunction("cast", List.of(
-                new AppliedFunction("meta::pure::functions::variant::convert::toVariant",
+        return t.synth(Calls.platform("cast", List.of(
+                Calls.exact("meta::pure::functions::variant::convert::toVariant",
                         List.of(elements)),
                 new com.legend.protocol.spec.TypeAnnotation.Named(
                         new com.legend.protocol.TypeExpression.NameRef(
@@ -171,7 +171,6 @@ final class JsonChecker {
      * parser's {@code ==} desugar) — catalog identity, not a spelling. */
     private static boolean isEqual(Typer t, AppliedFunction eq) {
         String equalFqn = com.legend.builtin.Pure.EQUAL__ANY_MANY__ANY_MANY.qualifiedName();
-        return t.model().findFunction(eq.function()).stream()
-                .anyMatch(f -> f.qualifiedName().equals(equalFqn));
+        return com.legend.compiler.ResolvedNames.names(eq, equalFqn);
     }
 }

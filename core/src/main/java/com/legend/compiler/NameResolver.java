@@ -324,6 +324,14 @@ public final class NameResolver {
                 || scope.typeParams().contains(name)) {
             return resolveNameMulti(name, scope, "call");
         }
+        List<String> out = callTierMatches(name, scope);
+        return out.isEmpty() ? resolveNameMulti(name, scope, "call") : out;
+    }
+
+    /** The call tiers' matches for a bare name (the wildcards, the own package, the core import group over the
+     *  scope's universe), EMPTY when none: what {@link #resolveCallCandidates} falls back from, and what the pointer
+     *  arm asks for a signature id's base. A qualified spelling matches no tier. */
+    private static List<String> callTierMatches(String name, Scope scope) {
         List<String> out = new ArrayList<>(2);
         for (String pkg : scope.imports().wildcards()) {
             addKnown(out, pkg + "::" + name, scope);
@@ -345,7 +353,7 @@ public final class NameResolver {
                             : "with:" + String.join(",", out.subList(0, afterWildcards))
                                     + "|" + String.join(",", out.subList(afterOwn, out.size())));
         }
-        return out.isEmpty() ? resolveNameMulti(name, scope, "call") : out;
+        return out;
     }
 
     private static void addKnown(List<String> out, String candidate, Scope scope) {
@@ -517,8 +525,96 @@ public final class NameResolver {
         return Objects.requireNonNull(resolveVs(query, Scope.preludeOf(imports, universe)));
     }
 
+    /** A bare signature-id reference whose exact id the tiers do not know, qualified under the package of the
+     *  first tier that knows its base name (cut from the right, as {@code SignatureMangle.resolve} cuts); the
+     *  spelling itself when no cut names a known function. */
+    private static String qualifyIdByBase(String id, Scope scope) {
+        var res = com.legend.model.SignatureMangle.resolve(id, base -> callTierMatches(base, scope), fqn -> null);
+        if (res.base().isEmpty()) {
+            return id;
+        }
+        String first = res.base().get(0);
+        return first.substring(0, first.lastIndexOf("::") + 2) + id;
+    }
+
     /** The sectionless-query scope: prelude imports only; the native FQN universe. */
     private static final Scope QUERY_SCOPE = querycope();
+
+    /** A call's names as the resolver decides them: the spelling it leaves (bare, or qualified to the one function
+     *  found) and the record ({@link AppliedFunction#referents}). */
+    public record CallNames(String function, List<String> referents, boolean found) {
+        public CallNames(String function, List<String> referents) {
+            this(function, referents, true);
+        }
+    }
+
+    /** THE DECISION for a call name (one place; the call arm and {@link #builtCallNames} share it). CALL position:
+     *  several imported packages defining the name is NOT an error — the candidates travel on the node and the
+     *  Typer unions their overloads (real pure's function matching collects across imports; signature picks). The
+     *  platform prelude JOINS the union rather than being shadowed: real pure has no user/platform tiering for
+     *  function matching — legend-pure's platform schema(db, name) coexists with core_relational's relation::
+     *  schema(rel) and the call's shape picks (the global corpus compile made both visible at once). THE RECORD
+     *  (L7 "resolve once", step 2; the ledger's PARK-5): for a bare call the tiers left bare, the platform's names
+     *  at the call's arity are recorded, once ({@code ResolvedNames.referents} computed exactly this list at every
+     *  read before); an ambiguous call's record already holds the platform's names through the merge; a bare name
+     *  the tiers qualified to ONE function keeps that name. */
+    private static CallNames decide(String name, List<String> matches, boolean prelude, int arity) {
+        boolean captured = !(matches.size() == 1 && matches.get(0).equals(name));
+        boolean bare = !name.contains("::");
+        if (captured && prelude && bare) {
+            List<String> merged = null;
+            for (var tier : BareNames.catalogTiered(name)) {
+                // the probe records what the tier ADDS: an FQN the resolver's own tiers (imports, own package,
+                // core group) already put on the node is theirs, not this one's
+                if (!tier.getValue().isEmpty() && !matches.contains(tier.getKey().fqn())
+                        && com.legend.builtin.DecisionProbe.INSTALLED != null) {
+                    com.legend.builtin.DecisionProbe.bareTier(name, tier.getKey().fqn(), tier.getKey().tier(),
+                            "resolver-added");
+                }
+                for (var nf : tier.getValue()) {
+                    String nfq = nf.qualifiedName();
+                    if (!matches.contains(nfq) && (merged == null || !merged.contains(nfq))) {
+                        if (merged == null) {
+                            merged = new ArrayList<>(matches);
+                        }
+                        merged.add(nfq);
+                    }
+                }
+            }
+            if (merged != null) {
+                matches = merged;
+            }
+        }
+        boolean nothingFound = matches.size() == 1 && matches.get(0).equals(name);
+        List<String> platform = prelude && bare && nothingFound ? BareNames.referents(name, arity) : List.of();
+        List<String> all = platform.isEmpty() ? matches : platform;
+        String fn = !nothingFound && all.size() == 1 ? all.get(0) : name;
+        List<String> candidates = nothingFound ? platform : (all.size() > 1 ? all : List.<String>of());
+        return new CallNames(fn, candidates, !nothingFound || !platform.isEmpty());
+    }
+
+    /** A BUILT call's names (L7 "resolve once", step 3; {@code com.legend.compiler.spec.Calls}): what the resolver
+     *  decides for the bare {@code name} at {@code arity} under the prelude alone (no imports, no own package: the
+     *  sectionless-query scope), so a call the typer, a desugar or the normalizer builds is the same call the parser
+     *  and the resolver would have made of the same spelling. One table per process, filled on demand: its inputs
+     *  are the platform's static tables. */
+    public static CallNames builtCallNames(String name, int arity) {
+        String key = name + '/' + arity;
+        CallNames hit = BUILT.get(key);
+        if (hit != null) {
+            return hit;
+        }
+        CallNames made = decide(name, resolveCallCandidates(name, QUERY_SCOPE), true, arity);
+        if (made.found()) {
+            // a trivial answer (a full name, or a bare name nothing declares) is not kept: the table holds only
+            // what the platform's tables say, and a long-lived process cannot grow it with spellings
+            BUILT.putIfAbsent(key, made);
+        }
+        return made;
+    }
+
+    private static final java.util.concurrent.ConcurrentHashMap<String, CallNames> BUILT =
+            new java.util.concurrent.ConcurrentHashMap<>();
 
     private static Scope querycope() {
         Set<String> known = new HashSet<>(PLATFORM_FQNS);
@@ -1692,7 +1788,12 @@ public final class NameResolver {
                 // universe, so the import tiers find the one package whose
                 // declaration spells exactly this id (the Typer then takes
                 // that declaration — SignatureMangle)
-                String r = resolveName(ptr.fullPath(), scope);
+                // an id whose exact overload nobody declares (upstream's isEval names eval's seven-argument
+                // overload) still names its BASE function: the tiers that know the base qualify the id under its
+                // package, once, here; the typer then reads an opaque reference to the base (L7 step 4,
+                // 2026-10-10; before, the typer walked the tiers from the bare base at every read). A resolved
+                // or qualified spelling matches no tier and comes back as it is.
+                String r = qualifyIdByBase(resolveName(ptr.fullPath(), scope), scope);
                 yield r.equals(ptr.fullPath()) ? ptr : new PackageableElementPtr(r);
             }
             case EnumValue ev -> {
@@ -1707,75 +1808,10 @@ public final class NameResolver {
                     List<ValueSpecification> again = resolveVsList(af.parameters(), scope);
                     yield again == af.parameters() ? af : af.withParameters(again);
                 }
-                List<String> matches = resolveCallCandidates(af.function(), scope);
-                // CALL position: several imported packages defining the name
-                // is NOT an error — the candidates travel on the node and
-                // the Typer unions their overloads (real pure's function
-                // matching collects across imports; signature picks).
-                // The platform prelude JOINS the union rather than being
-                // shadowed: real pure has no user/platform tiering for
-                // function matching — legend-pure's platform schema(db,
-                // name) coexists with core_relational's relation::
-                // schema(rel) and the call's shape picks (the global
-                // corpus compile made both visible at once).
-                boolean captured = !(matches.size() == 1
-                        && matches.get(0).equals(af.function()));
-                boolean bare = !af.function().contains("::");
-                if (captured && scope.prelude() && bare) {
-                    List<String> merged = null;
-                    for (var tier : BareNames.catalogTiered(af.function())) {
-                        // the probe records what the tier ADDS: an FQN the
-                        // resolver's own tiers (imports, own package, core
-                        // group) already put on the node is theirs, not this one's
-                        if (!tier.getValue().isEmpty()
-                                && !matches.contains(tier.getKey().fqn())
-                                && com.legend.builtin.DecisionProbe.INSTALLED != null) {
-                            com.legend.builtin.DecisionProbe.bareTier(af.function(),
-                                    tier.getKey().fqn(), tier.getKey().tier(), "resolver-added");
-                        }
-                        for (var nf : tier.getValue()) {
-                            String nfq = nf.qualifiedName();
-                            if (!matches.contains(nfq)
-                                    && (merged == null || !merged.contains(nfq))) {
-                                if (merged == null) {
-                                    merged = new ArrayList<>(matches);
-                                }
-                                merged.add(nfq);
-                            }
-                        }
-                    }
-                    if (merged != null) {
-                        matches = merged;
-                    }
-                }
-                // THE RECORD (L7 "resolve once", step 2; the ledger's PARK-5): for a bare call the tiers above left
-                // bare, the platform's names at the call's arity are recorded here, once (ResolvedNames.referents
-                // computed exactly this list at every read, through BareNames.catalog); an ambiguous call's record
-                // already holds the platform's names through the merge above; a bare name the tiers qualified to
-                // ONE function keeps that name, as before
-                boolean nothingFound = matches.size() == 1 && matches.get(0).equals(af.function());
-                List<String> platform = List.of();
-                if (scope.prelude() && bare && nothingFound) {
-                    List<String> found = null;
-                    for (var tier : BareNames.catalogTiered(af.function())) {
-                        for (var nf : tier.getValue()) {
-                            String nfq = nf.qualifiedName();
-                            if (nf.parameters().size() == af.parameters().size() && !matches.contains(nfq)
-                                    && (found == null || !found.contains(nfq))) {
-                                if (found == null) {
-                                    found = new ArrayList<>(2);
-                                }
-                                found.add(nfq);
-                            }
-                        }
-                    }
-                    if (found != null) {
-                        platform = found;
-                    }
-                }
-                List<String> all = platform.isEmpty() ? matches : platform;
-                String fn = !nothingFound && all.size() == 1 ? all.get(0) : af.function();
-                List<String> candidates = nothingFound ? platform : (all.size() > 1 ? all : List.<String>of());
+                CallNames named = decide(af.function(), resolveCallCandidates(af.function(), scope),
+                        scope.prelude(), af.parameters().size());
+                String fn = named.function();
+                List<String> candidates = named.referents();
                 List<ValueSpecification> params = resolveVsList(af.parameters(), scope);
                 yield (fn.equals(af.function()) && params == af.parameters() && candidates.isEmpty()) ? af
                         // preserve pos + every written form: infix is load-bearing downstream (the emitter's

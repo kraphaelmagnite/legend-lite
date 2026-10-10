@@ -81,7 +81,7 @@ final class EvalChecker {
     private static TypedSpec referenceEval(Typer t, PackageableElementPtr ref,
             List<ValueSpecification> rawArgs, Env env) {
         try {
-            return t.synth(new AppliedFunction(ref.fullPath(), rawArgs), env);
+            return t.synth(Calls.platform(ref.fullPath(), rawArgs), env);
         } catch (TypeInferenceException e) {
             List<TypedFunction> fns = t.functionCandidates(ref.fullPath()).stream()
                     .filter(f -> f.parameters().size() == rawArgs.size()).toList();
@@ -193,7 +193,7 @@ final class EvalChecker {
         InferenceKernel.Resolution r;
         try {
             r = t.kernel().resolveOverload(
-                    t.model().findFunction(CoreFn.EVAL.parseName()), argTypes);
+                    t.formCandidates(CoreFn.EVAL, argTypes.size()), argTypes);
         } catch (TypeInferenceException e) {
             // real pure checks an eval argument's MULTIPLICITY when the value
             // arrives (eval.pure testEvalWithCollectionWithOneElement passes
@@ -211,7 +211,7 @@ final class EvalChecker {
                         ft.params().get(i).multiplicity()));
             }
             r = t.kernel().resolveOverload(
-                    t.model().findFunction(CoreFn.EVAL.parseName()), declaredArgs);
+                    t.formCandidates(CoreFn.EVAL, declaredArgs.size()), declaredArgs);
         }
         return new TypedEval(fnTyped, args, r.output());
     }

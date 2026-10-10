@@ -110,16 +110,63 @@ public final class BareNames {
         return out;
     }
 
-    /** The catalog natives a bare {@code name} may denote — the overloads at
-     *  every tier FQN. */
-    public static List<NativeFunctionDefinition> catalog(String name) {
-        List<NativeFunctionDefinition> out = new ArrayList<>();
-        java.util.Set<String> seen = new java.util.HashSet<>();
+    /** THE RULE'S ANSWER FOR A CALL (L7 "resolve once"; the ledger's PARK-5): the full names a bare {@code name}
+     *  may denote at {@code arity} — the catalog natives at each tier FQN with that many parameters — in tier
+     *  order, distinct. The resolver records it on a parsed call the program declares nothing for, and
+     *  {@link com.legend.compiler.spec.Calls} on a call built after the resolver: the same list, so a built call
+     *  means what the same call parsed would. One table per process, filled on demand: every input (the engine
+     *  surface, the core import group, the forms' declarations, the catalog) is a static table. */
+    public static List<String> referents(String name, int arity) {
+        List<String> hit = REFERENTS.get(name + '/' + arity);
+        if (hit != null) {
+            return hit;
+        }
+        List<String> out = new ArrayList<>();
         for (var tier : catalogTiered(name)) {
-            if (seen.add(tier.getKey().fqn())) {
-                out.addAll(tier.getValue());
+            String fqn = tier.getKey().fqn();
+            boolean declared = false;
+            for (NativeFunctionDefinition nf : tier.getValue()) {
+                if (nf.parameters().size() == arity) {
+                    declared = true;
+                    break;
+                }
+            }
+            // the platform's own Pure (the prelude: tableReference(db, schema, table) and its kin) declares
+            // functions the catalog has no native for; the typer finds them at the FQN as it finds a native
+            if (!declared) {
+                declared = PreludeArities.AT.getOrDefault(fqn, java.util.Set.of()).contains(arity);
+            }
+            if (declared && !out.contains(fqn)) {
+                out.add(fqn);
             }
         }
-        return out;
+        List<String> made = List.copyOf(out);
+        if (!made.isEmpty()) {
+            // an empty answer is not kept: a misspelled or undeclared name typed into a long-lived process would
+            // otherwise grow the table without bound
+            REFERENTS.putIfAbsent(name + '/' + arity, made);
+        }
+        return made;
     }
+
+    /** The prelude's functions by FQN, each with the arities it declares (built once, on first use). */
+    private static final class PreludeArities {
+        static final Map<String, java.util.Set<Integer>> AT = build();
+
+        private static Map<String, java.util.Set<Integer>> build() {
+            Map<String, java.util.Set<Integer>> at = new java.util.LinkedHashMap<>();
+            for (com.legend.model.PackageableElement el : com.legend.builtin.Prelude.elements()) {
+                if (el instanceof com.legend.model.Function f) {
+                    at.computeIfAbsent(f.qualifiedName(), k -> new java.util.LinkedHashSet<>()).add(f.parameters().size());
+                }
+            }
+            Map<String, java.util.Set<Integer>> frozen = new java.util.LinkedHashMap<>();
+            at.forEach((k, v) -> frozen.put(k, java.util.Collections.unmodifiableSet(v)));
+            return java.util.Collections.unmodifiableMap(frozen);
+        }
+    }
+
+    private static final java.util.concurrent.ConcurrentHashMap<String, List<String>> REFERENTS =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
 }

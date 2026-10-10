@@ -810,7 +810,7 @@ final class StaticFold {
                 ValueSpecification f = reify(p.first());
                 ValueSpecification s = reify(p.second());
                 yield f == null || s == null ? null
-                        : new AppliedFunction("pair", List.of(f, s));
+                        : Calls.platform("pair", List.of(f, s));
             }
             case List<?> l -> {
                 List<ValueSpecification> vs = new ArrayList<>(l.size());

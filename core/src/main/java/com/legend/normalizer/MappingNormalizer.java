@@ -1,5 +1,6 @@
 package com.legend.normalizer;
 
+import com.legend.compiler.spec.Calls;
 import com.legend.builtin.Pure;
 import com.legend.compiler.ModelBuilder;
 import com.legend.compiler.SynthFqn;
@@ -815,7 +816,7 @@ public final class MappingNormalizer {
         Variable row = new Variable("rf_row");
         Map<String, KeyExpression> fields = new LinkedHashMap<>();
         putRelationCols(fields, rf.columns(), row, rf.className(), md, model);
-        return new AppliedFunction("map", List.of(pipeline,
+        return Calls.platform("map", List.of(pipeline,
                 new LambdaFunction(List.of(row),
                         List.of(buildNewInstanceToOne(rf.className(), fields, model)))));
     }
@@ -1025,7 +1026,7 @@ public final class MappingNormalizer {
         }
         Variable a = new Variable("a");
         Variable b = new Variable("b");
-        ValueSpecification body = new AppliedFunction(Pure.Lite.LEGACY_ASSOC_PREDICATE, List.of(
+        ValueSpecification body = Calls.exact(Pure.Lite.LEGACY_ASSOC_PREDICATE, List.of(
                 a, b,
                 endA.pipeline(),
                 endB.pipeline(),
@@ -1100,7 +1101,7 @@ public final class MappingNormalizer {
                 model);
         Variable a = new Variable("a");
         Variable b = new Variable("b");
-        ValueSpecification body = new AppliedFunction(Pure.Lite.LEGACY_ASSOC_PREDICATE, List.of(
+        ValueSpecification body = Calls.exact(Pure.Lite.LEGACY_ASSOC_PREDICATE, List.of(
                 a, b,
                 pipeA,
                 pipeB,
@@ -1145,10 +1146,10 @@ public final class MappingNormalizer {
                     + " map from — such a mapping can be compiled and"
                     + " analysed but cannot produce rows");
         }
-        ValueSpecification source = new AppliedFunction("getAll",
+        ValueSpecification source = Calls.platform("getAll",
                 List.of(new PackageableElementPtr(srcFqn)));
         if (pcm.filter() != null) {
-            source = new AppliedFunction("filter", List.of(source,
+            source = Calls.platform("filter", List.of(source,
                     new LambdaFunction(List.of(new Variable("src")),
                                        List.of(pcm.filter()))));
         }
@@ -1194,7 +1195,7 @@ public final class MappingNormalizer {
             fields.put(keyName,
                     new KeyExpression(m2mPropertyValue(pb, tgt, md, model, ledger), false, false));
         }
-        return new AppliedFunction("map", List.of(source,
+        return Calls.platform("map", List.of(source,
                 new LambdaFunction(List.of(srcBind),
                                    List.of(buildNewInstance(pcm.className(), fields)))));
     }
@@ -1538,7 +1539,7 @@ public final class MappingNormalizer {
     private static ValueSpecification synthJsonSourceMapping(ResolvedMapping md,
                                                             ClassMapping.Relational rcm,
                                                             ModelBuilder model) {
-        ValueSpecification source = new AppliedFunction(Pure.Lite.SOURCE_URL,
+        ValueSpecification source = Calls.exact(Pure.Lite.SOURCE_URL,
                 List.of(new CString(java.util.Objects.requireNonNull(rcm.sourceUrl(),
                         "sourceUrl-backed set without a source url"))));
         Variable rowBind = new Variable("row");
@@ -1552,18 +1553,18 @@ public final class MappingNormalizer {
             // single VARIANT `data` column is fanned into property values
             // by key (ours: the engine reads a JsonModelConnection in memory
             // and generates no SQL for it; this is the SQL-side equivalent).
-            ValueSpecification get = new AppliedFunction("get", List.of(
+            ValueSpecification get = Calls.platform("get", List.of(
                     new AppliedProperty(rowBind, "data"), new CString(prop.name())));
             // to(get(...), @Type) — typed text-extraction + cast. Engine uses
             // `to` (not `cast`) so the Variant text access (->>) strips JSON
             // string quotes before casting to the declared property type.
             ValueSpecification value = (prop.type() instanceof TypeExpression.NameRef nr)
-                    ? new AppliedFunction("to", List.of(get,
+                    ? Calls.platform("to", List.of(get,
                             new TypeAnnotation.Named(new TypeExpression.NameRef(nr.name()))))
                     : get;
             fields.put(prop.name(), new KeyExpression(value, false, false));
         }
-        return new AppliedFunction("map", List.of(source,
+        return Calls.platform("map", List.of(source,
                 new LambdaFunction(List.of(rowBind),
                         List.of(buildNewInstanceToOne(rcm.className(), fields, model)))));
     }
@@ -1635,7 +1636,7 @@ public final class MappingNormalizer {
                                                               MappingLedger ledger,
                                                               @com.legend.base.Nullable ValueSpecification sourceOverride) {
         RelationalParts parts = synthTableBackedParts(md, rcm, model, ledger, sourceOverride);
-        return new AppliedFunction("map", List.of(parts.pipeline(),
+        return Calls.platform("map", List.of(parts.pipeline(),
                 new LambdaFunction(List.of(parts.rowBind()),
                         List.of(buildNewInstanceToOne(rcm.className(), parts.fields(), model)))));
     }
@@ -1683,7 +1684,7 @@ public final class MappingNormalizer {
         // the table a string — the same shapes #>{db.TABLE}# produces, so
         // TableReferenceChecker serves both surfaces.
         Pipeline p = new Pipeline(sourceOverride != null ? sourceOverride
-                : new AppliedFunction("tableReference",
+                : Calls.platform("tableReference",
                         List.of(new PackageableElementPtr(mainDb), new CString(mainTable))),
                 ledger, md.views());
         UnionSynthesis.classifyUnionRoutes(md, rcm, model, p);
@@ -1791,9 +1792,9 @@ public final class MappingNormalizer {
             if (plainColumns && !mappedCols.isEmpty()) {
                 List<ColSpec> cols = mappedCols.stream()
                         .map(c -> new ColSpec(c, null, null)).toList();
-                p.expr = new AppliedFunction("select",
+                p.expr = Calls.platform("select",
                         List.of(p.expr, new ColSpecArray(cols)));
-                p.expr = new AppliedFunction("distinct", List.of(p.expr));
+                p.expr = Calls.platform("distinct", List.of(p.expr));
             } else if (!mappedCols.isEmpty() || !p.aliasToTargetTable.isEmpty()) {
                 // SLOT-CARRYING ~distinct: dedup by the mapped MAIN-TABLE
                 // columns (the unmapped PK must not defeat the dedup —
@@ -1810,7 +1811,7 @@ public final class MappingNormalizer {
                 for (String alias : p.aliasToTargetTable.keySet()) {
                     cols.add(new ColSpec(alias, null, null));
                 }
-                p.expr = new AppliedFunction("distinct",
+                p.expr = Calls.platform("distinct",
                         List.of(p.expr, new ColSpecArray(cols)));
             } else {
                 // no mapped column and no slot: nothing to dedup BY. Loud,
@@ -2129,7 +2130,7 @@ public final class MappingNormalizer {
                 oe.embedded(), rowBind, tableScope, defaultTable, pipeline,
                 ownerClassFqn, md, model, null);
         ValueSpecification fallback = new AppliedProperty(rowBind, oe.propertyName());
-        return new AppliedFunction(Pure.Lite.OTHERWISE, List.of(partial, fallback));
+        return Calls.exact(Pure.Lite.OTHERWISE, List.of(partial, fallback));
     }
 
     // InlineEmbedded (§5.4.8): splice the referenced set's PMs inline.
@@ -2252,7 +2253,7 @@ public final class MappingNormalizer {
                 ? ViewRelation.frameRewriteIfView(fd.condition(), mainDb, mainTable, md, model)
                 : ViewRelation.inlineViewRefs(fd.condition(), dbFqn, model);
         ValueSpecification cond = RelOpTranslator.translate(fcond, scope, null, rowBind, p.view());
-        return new AppliedFunction("filter", List.of(source,
+        return Calls.platform("filter", List.of(source,
                 new LambdaFunction(List.of(rowBind), List.of(cond))));
     }
 
@@ -2291,7 +2292,7 @@ public final class MappingNormalizer {
         // intercepts it first and builds the row-exploding source
         // (innerFilteredSource) — the wall that stood here described an
         // emission that WAS built (audit 2026-09-15 P6)
-        return new AppliedFunction("filter", List.of(source,
+        return Calls.platform("filter", List.of(source,
                 new LambdaFunction(List.of(rowBind), List.of(cond))));
     }
 
@@ -2450,10 +2451,10 @@ public final class MappingNormalizer {
                 } else {
                     throw new ModelException(LegendCompileException.Phase.NORMALIZE, "Unhandled SourceValue: " + sv);
                 }
-                ValueSpecification eq = new AppliedFunction("equal",
+                ValueSpecification eq = Calls.platform("equal",
                         List.of(sourceRead, srcLit));
                 disj = disj == null ? eq
-                        : new AppliedFunction("or", List.of(disj, eq));
+                        : Calls.platform("or", List.of(disj, eq));
             }
             if (disj == null) {
                 throw new ModelException(LegendCompileException.Phase.NORMALIZE, 
@@ -2463,7 +2464,7 @@ public final class MappingNormalizer {
                       + "'. Mapping=" + md.qualifiedName());
             }
             ValueSpecification then = new EnumValue(em.enumName(), ev.enumValue());
-            tail = new AppliedFunction("if", List.of(disj,
+            tail = Calls.platform("if", List.of(disj,
                     new LambdaFunction(List.of(), List.of(then)),
                     new LambdaFunction(List.of(), List.of(tail))));
         }
@@ -2703,7 +2704,7 @@ public final class MappingNormalizer {
                                                       Map<String, KeyExpression> fields) {
         String fqnNN = java.util.Objects.requireNonNull(classFqn,
                 "instance construction without a target class");
-        return new AppliedFunction("new", List.of(
+        return Calls.platform("new", List.of(
                 new PackageableElementPtr(fqnNN),
                 new NewInstance(fqnNN, List.of(),
                         fields.entrySet().stream().map(e ->
@@ -2770,7 +2771,7 @@ public final class MappingNormalizer {
                             ? simpleTypeName(ptName) : null;
             if (v instanceof AppliedFunction gf && com.legend.builtin.NativeFn.RowGetter.GET.property().equals(gf.function())
                     && primitiveName != null) {
-                v = new AppliedFunction("to", List.of(v,
+                v = Calls.platform("to", List.of(v,
                         new TypeAnnotation.Named(
                                 new TypeExpression.NameRef(primitiveName))));
             }
@@ -2783,7 +2784,7 @@ public final class MappingNormalizer {
                         || af.function().equals(Pure.Lite.OTHERWISE)
                         || AppliedFunction.isNew(af));
             wrapped.put(name, toOneDeclared && !exempt
-                    ? new KeyExpression(new AppliedFunction(com.legend.builtin.Pure.Lite.TRUST_ONE, List.of(v)),
+                    ? new KeyExpression(Calls.exact(com.legend.builtin.Pure.Lite.TRUST_ONE, List.of(v)),
                             key.isAdd(), key.isLocal())
                     : new KeyExpression(v, key.isAdd(), key.isLocal()));
         });

@@ -88,7 +88,7 @@ public final class SignatureMangle {
      * id is exactly {@code ref}, and whether SOME declaration exists under a
      * prefix of it (a base this platform spells differently — the caller
      * decides what an opaque reference to it means). */
-    public record Resolution<F>(List<F> exact, boolean baseExists) {
+    public record Resolution<F>(List<F> exact, boolean baseExists, List<F> base) {
     }
 
     /**
@@ -103,6 +103,7 @@ public final class SignatureMangle {
             java.util.function.Function<F, com.legend.model.@com.legend.base.Nullable Function> def) {
         int from = Math.max(ref.lastIndexOf("::") + 2, 0);
         boolean baseExists = false;
+        List<F> base = List.of();
         for (int i = ref.length() - 1; i > from; i--) {
             if (ref.charAt(i) != '_') {
                 continue;
@@ -112,6 +113,9 @@ public final class SignatureMangle {
                 continue;
             }
             baseExists = true;
+            if (base.isEmpty()) {
+                base = cands;   // the declarations under the longest base that exists
+            }
             List<F> exact = new ArrayList<>();
             for (F c : cands) {
                 Function d = def.apply(c);
@@ -120,9 +124,9 @@ public final class SignatureMangle {
                 }
             }
             if (!exact.isEmpty()) {
-                return new Resolution<>(exact, true);
+                return new Resolution<>(exact, true, base);
             }
         }
-        return new Resolution<>(List.of(), baseExists);
+        return new Resolution<>(List.of(), baseExists, base);
     }
 }

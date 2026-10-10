@@ -115,6 +115,14 @@ two trees; `eager_jfr.sh` adds the recording; `jfr_agg.py` reads it). To redo th
 PARK-5's acceptance: names worked out once and recorded; typing on the eager compile at or below main's; the six
 corpus passes, PCT and the reference lane unchanged. Measure with the same probe and the profile above.
 
+### Closed (L7 step 3, 2026-10-10; the GATES entry "L7 step 3")
+
+Every call carries its record: the resolver's for a parsed call (step 2), `compiler.spec.Calls`' for a built one
+(step 3; `L7_RESOLVE_ONCE_DESIGN_2026_10_10.md` §11, §12). The read-time rule is gone: `ResolvedNames.referents`
+returns a full name or the record and nothing else; `Overloads.candidatesOf` has one path (the record's names, each
+looked up as a declaration); `FunctionCompiler.functionsAt` answers a bare name with nothing; `BareNames.catalog` and
+`DecisionProbe.bareCall` are deleted; the ledger row and its anchor are gone. The measurement is in the GATES entry.
+
 ## PARK-6: an argument typed more than once
 
 ### Where (each types an argument, then types a rewritten call that contains it again)

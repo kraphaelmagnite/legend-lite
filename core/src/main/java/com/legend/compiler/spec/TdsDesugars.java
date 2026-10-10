@@ -139,7 +139,7 @@ final class TdsDesugars {
                             : com.legend.compiler.element.type.PlatformTypes.IS_EMPTY,
                             List.of(erasedCell(nrecv, ncol)));
                 }
-                return synth(new AppliedFunction(notNull ? "isNotEmpty" : "isEmpty",
+                return synth(Calls.platform(notNull ? "isNotEmpty" : "isEmpty",
                         List.of(new AppliedProperty(af.parameters().get(0), ncol))), env);
             }
         }
@@ -164,14 +164,14 @@ final class TdsDesugars {
                             str1);
                 }
                 var read = new AppliedProperty(g.parameters().get(0), gc.value());
-                return synth(new AppliedFunction("if", List.of(
-                        new AppliedFunction("isEmpty", List.of(read)),
+                return synth(Calls.platform("if", List.of(
+                        Calls.platform("isEmpty", List.of(read)),
                         new com.legend.protocol.spec.LambdaFunction(List.of(),
                                 List.of(new CString(com.legend.compiler.element.type
                                         .PlatformTypes.TDS_NULL_CELL))),
                         new com.legend.protocol.spec.LambdaFunction(List.of(),
-                                List.of(new AppliedFunction("toString", List.of(
-                                        new AppliedFunction(com.legend.builtin.Pure.Lite.TRUST_ONE,
+                                List.of(Calls.platform("toString", List.of(
+                                        Calls.exact(com.legend.builtin.Pure.Lite.TRUST_ONE,
                                                 List.of(read)))))))), env);
             }
         }
@@ -223,27 +223,27 @@ final class TdsDesugars {
                         var rv = new Variable("_tg0");
                         var cell = new AppliedProperty(rv, gcol.value());
                         ValueSpecification body =
-                                new AppliedFunction("if", List.of(
-                                        new AppliedFunction("isEmpty", List.of(cell)),
+                                Calls.platform("if", List.of(
+                                        Calls.platform("isEmpty", List.of(cell)),
                                         new LambdaFunction(List.of(),   // the ^TDSNull() INSTANCE (69a)
                                                 List.of(new com.legend.protocol.spec.NewInstance(
                                                         com.legend.compiler.element.type.PlatformTypes.TDS_NULL_FQN,
                                                         List.of(), List.of(), List.of()))),
                                         new LambdaFunction(List.of(),
-                                                List.of(new AppliedFunction("cast", List.of(
-                                                        new AppliedFunction(com.legend.builtin.Pure.Lite.TRUST_ONE,
+                                                List.of(Calls.platform("cast", List.of(
+                                                        Calls.exact(com.legend.builtin.Pure.Lite.TRUST_ONE,
                                                                 List.of(cell)),
                                                         new com.legend.protocol.spec
                                                                 .TypeAnnotation.Named(
                                                                 new com.legend.protocol
                                                                         .TypeExpression.NameRef(
                                                                         com.legend.compiler.element.type.PlatformTypes.ANY))))))));
-                        return synth(new AppliedFunction("map", List.of(
+                        return synth(Calls.platform("map", List.of(
                                 af.parameters().get(0),
                                 new LambdaFunction(List.of(rv), List.of(body)))), env);
                     }
                 }
-                return synth(new AppliedFunction(com.legend.builtin.Pure.Lite.TRUST_ONE, List.of(
+                return synth(Calls.exact(com.legend.builtin.Pure.Lite.TRUST_ONE, List.of(
                         new AppliedProperty(af.parameters().get(0), gcol.value()))), env);
             }
         }
@@ -266,7 +266,7 @@ final class TdsDesugars {
         if (com.legend.builtin.TdsLegacy.RENAME_COLUMN.matches(af) && af.parameters().size() == 3
                 && af.parameters().get(1) instanceof CString ro
                 && af.parameters().get(2) instanceof CString rn) {
-            return synth(new AppliedFunction("rename", List.of(
+            return synth(Calls.platform("rename", List.of(
                     af.parameters().get(0),
                     new ColSpec(stripQuotes(ro.value()), null, null),
                     new ColSpec(stripQuotes(rn.value()), null, null))), env);
@@ -313,10 +313,10 @@ final class TdsDesugars {
             ValueSpecification sz = af.parameters().get(2);
             // arithmetic in the parser's (= the engine's) COLLECTION form:
             // plus/minus/times are declared over T[*] only (batch 5)
-            return synth(new AppliedFunction("slice", List.of(
+            return synth(Calls.platform("slice", List.of(
                     af.parameters().get(0),
-                    AppliedFunction.infixRun("times", List.of(AppliedFunction.infixRun("minus", List.of(pg, new CInteger(1L))), sz)),
-                    AppliedFunction.infixRun("times", List.of(pg, sz)))), env);
+                    Calls.infixRun("times", List.of(Calls.infixRun("minus", List.of(pg, new CInteger(1L))), sz)),
+                    Calls.infixRun("times", List.of(pg, sz)))), env);
         }
         // olapGroupBy — the legacy TDS OLAP spellings; the modern construct
         // IS the windowed extend (see olapGroupByDesugar)
@@ -337,17 +337,17 @@ final class TdsDesugars {
                     af.parameters().get(1) instanceof PureCollection pc
                             ? pc.values() : List.of(af.parameters().get(1));
             for (ValueSpecification m : members) {
-                acc = new AppliedFunction("concatenate", List.of(acc, m));
+                acc = Calls.platform("concatenate", List.of(acc, m));
             }
-            return synth(new AppliedFunction("distinct", List.of(acc)), env);
+            return synth(Calls.platform("distinct", List.of(acc)), env);
         }
         // columnValues(tds,'c') — the rows-mapped cell read
         if (com.legend.builtin.TdsLegacy.COLUMN_VALUES.matches(af) && af.parameters().size() == 2
                 && af.parameters().get(1) instanceof CString cvCol) {
-            return synth(new AppliedFunction("map", List.of(
+            return synth(Calls.platform("map", List.of(
                     new AppliedProperty(af.parameters().get(0), "rows"),
                     new LambdaFunction(List.of(new Variable("_cvr")),
-                            List.of(new AppliedFunction("get", List.of(
+                            List.of(Calls.platform("get", List.of(
                                     new Variable("_cvr"),
                                     new CString(cvCol.value()))))))), env);
         }
@@ -429,10 +429,10 @@ final class TdsDesugars {
                     ? List.of(p, r) : List.of(p, w, r);
             col = new ColSpec(outName.value(),
                     new LambdaFunction(List.of(p, w, r), List.of(
-                            new AppliedFunction(rankFn, rankArgs))), null);
+                            Calls.platform(rankFn, rankArgs))), null);
         }
-        return new AppliedFunction("extend", List.of(ps.get(0),
-                new AppliedFunction("over", overArgs), col));
+        return Calls.platform("extend", List.of(ps.get(0),
+                Calls.platform("over", overArgs), col));
     }
 
     private static boolean isLegacySortKey(ValueSpecification v) {
@@ -544,17 +544,17 @@ final class TdsDesugars {
                     return null;
                 }
                 String pn = wn.value() + "__wp" + j;
-                projCols.add(new AppliedFunction("col",
+                projCols.add(Calls.platform("col",
                         List.of(pl, new CString(pn))));
                 partCols.add(pn);
             }
             String mn = wn.value() + "__wm";
-            projCols.add(new AppliedFunction("col",
+            projCols.add(Calls.platform("col",
                     List.of(mapLam, new CString(mn))));
             wins.add(new WinCol(wn.value(), partCols, mn, aggLam));
             declared.add(new CString(wn.value()));
         }
-        ValueSpecification chain = new AppliedFunction("project",
+        ValueSpecification chain = Calls.platform("project",
                 List.of(ps.get(0), new PureCollection(projCols)));
         for (WinCol wc : wins) {
             List<ValueSpecification> partSpecs = new ArrayList<>();
@@ -564,15 +564,15 @@ final class TdsDesugars {
             Variable p = new Variable("_wcp");
             Variable ww = new Variable("_wcw");
             Variable r = new Variable("_wcr");
-            chain = new AppliedFunction("extend", List.of(chain,
-                    new AppliedFunction("over",
+            chain = Calls.platform("extend", List.of(chain,
+                    Calls.platform("over",
                             List.of(new PureCollection(partSpecs))),
                     new ColSpec(wc.name(),
                             new LambdaFunction(List.of(p, ww, r), List.of(
                                     new AppliedProperty(r, wc.mapCol()))),
                             wc.agg())));
         }
-        return new AppliedFunction("restrict",
+        return Calls.platform("restrict",
                 List.of(chain, new PureCollection(declared)));
     }
 
@@ -627,7 +627,7 @@ final class TdsDesugars {
             outLams.add(fn);
             outNames.add(new CString(s));
         }
-        return new AppliedFunction("project", List.of(ps.get(0),
+        return Calls.platform("project", List.of(ps.get(0),
                 new PureCollection(outLams), new PureCollection(outNames)));
     }
 
@@ -712,9 +712,9 @@ final class TdsDesugars {
             int cc = wrt.columns().size();
             long k = wk.value().longValue();
             if (cc > 0 && k >= 0) {
-                return synth(new AppliedFunction(com.legend.builtin.Pure.Lite.TRUST_ONE, List.of(
+                return synth(Calls.exact(com.legend.builtin.Pure.Lite.TRUST_ONE, List.of(
                         new AppliedProperty(
-                                new AppliedFunction("at", List.of(
+                                Calls.platform("at", List.of(
                                         vp.receiver(),
                                         new CInteger(k / cc))),
                                 wrt.columns().get((int) (k % cc)).name()))),
@@ -743,7 +743,7 @@ final class TdsDesugars {
                     + " where the collection is of size "
                     + prt.columns().size());
         }
-        return synth(new AppliedFunction(com.legend.builtin.Pure.Lite.TRUST_ONE, List.of(
+        return synth(Calls.exact(com.legend.builtin.Pure.Lite.TRUST_ONE, List.of(
                 new AppliedProperty(vp.receiver(),
                         prt.columns().get(k).name()))), env);
     }
@@ -826,7 +826,7 @@ final class TdsDesugars {
                             + " literal pair('old','new') /"
                             + " ^Pair(first=,second=) mappings");
                 }
-                acc = new AppliedFunction("rename", List.of(acc,
+                acc = Calls.platform("rename", List.of(acc,
                         new ColSpec(stripQuotes(po), null, null),
                         new ColSpec(stripQuotes(java.util.Objects
                                 .requireNonNull(pn, "pn")), null, null)));

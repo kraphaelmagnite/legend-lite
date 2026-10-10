@@ -63,6 +63,15 @@ import static org.junit.jupiter.api.Assertions.fail;
 @DisplayName("MappingNormalizer — Phase E.1 (Increment 1)")
 class MappingNormalizerTest {
 
+    /** A built call's simple name: since L7 "resolve once" step 3 (2026-10-10) a call the normalizer builds is born
+     *  resolved, so its spelling may be the full name the resolver gives it; these tests assert WHICH function is
+     *  called, not how the resolver spells it. */
+    private static String fn(com.legend.protocol.spec.AppliedFunction af) {
+        String f = af.function();
+        int cut = f.lastIndexOf("::");
+        return cut < 0 ? f : f.substring(cut + 2);
+    }
+
     // ====================================================================
     // 1 & 2 — Foundation
     // ====================================================================
@@ -104,11 +113,11 @@ class MappingNormalizerTest {
         // empty or missing the terminal map(...|^Target), this asserts that.
         for (FunctionDefinition fn : lifted) {
             AppliedFunction map = (AppliedFunction) sole(fn.body());
-            assertEquals("map", map.function(),
+            assertEquals("map", fn(map),
                     "every synth body terminates in map(...)");
             LambdaFunction lambda = (LambdaFunction) map.parameters().get(1);
             AppliedFunction newCall = (AppliedFunction) sole(lambda.body());
-            assertEquals("new", newCall.function(),
+            assertEquals("new", fn(newCall),
                     "every map lambda body is ^Target(...) ie new()");
         }
     }
@@ -385,11 +394,11 @@ class MappingNormalizerTest {
 
         // Body: map(getAll(model::RawPerson), src | ^model::Person(...))
         AppliedFunction mapCall = (AppliedFunction) sole(fn.body());
-        assertEquals("map", mapCall.function());
+        assertEquals("map", fn(mapCall));
         assertEquals(2, mapCall.parameters().size());
 
         AppliedFunction getAll = (AppliedFunction) mapCall.parameters().get(0);
-        assertEquals("getAll", getAll.function());
+        assertEquals("getAll", fn(getAll));
         assertEquals(new PackageableElementPtr("model::RawPerson"),
                 getAll.parameters().get(0));
 
@@ -398,7 +407,7 @@ class MappingNormalizerTest {
 
         // ^Person(fullName=..., age=...)
         AppliedFunction newCall = (AppliedFunction) sole(lambda.body());
-        assertEquals("new", newCall.function());
+        assertEquals("new", fn(newCall));
         assertEquals(new PackageableElementPtr("model::Person"), newCall.parameters().get(0));
         NewInstance ni = (NewInstance) newCall.parameters().get(1);
         assertEquals("model::Person", ni.className());
@@ -462,10 +471,10 @@ class MappingNormalizerTest {
 
         // Body: map(tableReference("db::DB", "T_PERSON"), row | ^Person(...))
         AppliedFunction mapCall = (AppliedFunction) sole(fn.body());
-        assertEquals("map", mapCall.function());
+        assertEquals("map", fn(mapCall));
 
         AppliedFunction tableRef = (AppliedFunction) mapCall.parameters().get(0);
-        assertEquals("tableReference", tableRef.function());
+        assertEquals("tableReference", fn(tableRef));
         assertEquals(2, tableRef.parameters().size());
         // Args are PackageableElementPtr(db) + CString(table) — query-parser
         // parity (H1: TableReferenceChecker serves both surfaces).
@@ -478,7 +487,7 @@ class MappingNormalizerTest {
         assertEquals(List.of(new Variable("row")), lambda.parameters());
 
         AppliedFunction newCall = (AppliedFunction) sole(lambda.body());
-        assertEquals("new", newCall.function());
+        assertEquals("new", fn(newCall));
         NewInstance ni = (NewInstance) newCall.parameters().get(1);
         assertEquals("model::Person", ni.className());
         assertEquals(List.of("firstName", "lastName"), List.copyOf(ni.properties().stream().map(com.legend.protocol.spec.NewInstance.KeyBinding::key).toList()));
@@ -549,14 +558,14 @@ class MappingNormalizerTest {
 
         // Body: map(filter(getAll(RawPerson), src | <filter>), src | ^ActivePerson(...))
         AppliedFunction mapCall = (AppliedFunction) sole(fn.body());
-        assertEquals("map", mapCall.function());
+        assertEquals("map", fn(mapCall));
 
         AppliedFunction filterCall = (AppliedFunction) mapCall.parameters().get(0);
-        assertEquals("filter", filterCall.function(),
+        assertEquals("filter", fn(filterCall),
                 "M2M filter wraps the getAll source, lives BEFORE the map terminus");
 
         AppliedFunction getAll = (AppliedFunction) filterCall.parameters().get(0);
-        assertEquals("getAll", getAll.function());
+        assertEquals("getAll", fn(getAll));
         assertEquals(new PackageableElementPtr("model::RawPerson"),
                 getAll.parameters().get(0));
 
@@ -596,21 +605,21 @@ class MappingNormalizerTest {
 
         // Body: map(filter(tableReference(...), row | $row.IS_ACTIVE == 1), row | ^Person(...))
         AppliedFunction mapCall = (AppliedFunction) sole(fn.body());
-        assertEquals("map", mapCall.function());
+        assertEquals("map", fn(mapCall));
 
         AppliedFunction filterCall = (AppliedFunction) mapCall.parameters().get(0);
-        assertEquals("filter", filterCall.function(),
+        assertEquals("filter", fn(filterCall),
                 "Relational ~filter Direct wraps tableReference");
 
         AppliedFunction tableRef = (AppliedFunction) filterCall.parameters().get(0);
-        assertEquals("tableReference", tableRef.function());
+        assertEquals("tableReference", fn(tableRef));
 
         // The filter lambda binds 'row' and the body is the translated
         // RelationalOperation: equal($row.IS_ACTIVE, 1)
         LambdaFunction filterLambda = (LambdaFunction) filterCall.parameters().get(1);
         assertEquals(List.of(new Variable("row")), filterLambda.parameters());
         AppliedFunction condition = (AppliedFunction) sole(filterLambda.body());
-        assertEquals("equal", condition.function(),
+        assertEquals("equal", fn(condition),
                 "T_PERSON.IS_ACTIVE = 1 translates to equal(...)");
         assertEquals(2, condition.parameters().size());
         // left = $row.IS_ACTIVE->toOne() — a relational comparison over a
@@ -857,7 +866,7 @@ class MappingNormalizerTest {
 
         // Body shape: map(join(tableRef, ColSpec, cond), row | ^Person(...))
         AppliedFunction mapCall = (AppliedFunction) sole(fn.body());
-        assertEquals("map", mapCall.function());
+        assertEquals("map", fn(mapCall));
 
         AppliedFunction join = (AppliedFunction) mapCall.parameters().get(0);
         assertEquals(Pure.Lite.JOIN_SLOT, join.function());
@@ -866,7 +875,7 @@ class MappingNormalizerTest {
 
         // Upstream is the bare tableReference (no filter, no prior join)
         AppliedFunction upstream = (AppliedFunction) join.parameters().get(0);
-        assertEquals("tableReference", upstream.function());
+        assertEquals("tableReference", fn(upstream));
 
         // ColSpec(~Person_Firm: tableRef(db::DB, T_FIRM))
         com.legend.protocol.spec.ColSpec binding =
@@ -877,7 +886,7 @@ class MappingNormalizerTest {
         assertEquals(List.of(), targetLambda.parameters(),
                 "ColSpec target lambda is 0-param (engine convention)");
         AppliedFunction targetTableRef = (AppliedFunction) sole(targetLambda.body());
-        assertEquals("tableReference", targetTableRef.function());
+        assertEquals("tableReference", fn(targetTableRef));
         assertEquals(new PackageableElementPtr("db::DB"),
                 targetTableRef.parameters().get(0));
         assertEquals(new com.legend.protocol.spec.CString("T_FIRM"),
@@ -888,7 +897,7 @@ class MappingNormalizerTest {
         assertEquals(List.of(new Variable("s"), new Variable("t")),
                 condLambda.parameters());
         AppliedFunction cond = (AppliedFunction) sole(condLambda.body());
-        assertEquals("equal", cond.function());
+        assertEquals("equal", fn(cond));
         AppliedProperty left = (AppliedProperty) cond.parameters().get(0);
         assertEquals("FIRM_ID", left.property());
         assertEquals(new Variable("s"), left.receiver());
@@ -942,7 +951,7 @@ class MappingNormalizerTest {
         assertEquals(Pure.Lite.JOIN_SLOT, innerJoin.function(),
                 "inner join is hop 1");
         AppliedFunction tableRef = (AppliedFunction) innerJoin.parameters().get(0);
-        assertEquals("tableReference", tableRef.function());
+        assertEquals("tableReference", fn(tableRef));
 
         // Hop 1: alias Person_Firm, target T_FIRM, cond $s.FIRM_ID = $t.ID
         com.legend.protocol.spec.ColSpec h1Spec =
@@ -965,7 +974,7 @@ class MappingNormalizerTest {
         // hop 1's target as a sub-row reached through the hop 1 alias.
         LambdaFunction h2Cond = (LambdaFunction) outerJoin.parameters().get(2);
         AppliedFunction h2Eq = (AppliedFunction) sole(h2Cond.body());
-        assertEquals("equal", h2Eq.function());
+        assertEquals("equal", fn(h2Eq));
         // Left: $s.Person_Firm.ORG_ID
         AppliedProperty left = (AppliedProperty) h2Eq.parameters().get(0);
         assertEquals("ORG_ID", left.property());
@@ -1079,7 +1088,7 @@ class MappingNormalizerTest {
 
         // Top-level is map(legacyNavigate(...), row | ^Person(...)).
         AppliedFunction mapCall = (AppliedFunction) sole(personFn.body());
-        assertEquals("map", mapCall.function());
+        assertEquals("map", fn(mapCall));
 
         // map's source is the legacyNavigate pipeline step.
         AppliedFunction nav = (AppliedFunction) mapCall.parameters().get(0);
@@ -1090,7 +1099,7 @@ class MappingNormalizerTest {
 
         // Upstream of legacyNavigate is the bare tableReference.
         AppliedFunction upstream = (AppliedFunction) nav.parameters().get(0);
-        assertEquals("tableReference", upstream.function());
+        assertEquals("tableReference", fn(upstream));
 
         // ColSpec(~firm: {| getAll(model::Firm)}) — slot named after the property.
         com.legend.protocol.spec.ColSpec slot =
@@ -1101,7 +1110,7 @@ class MappingNormalizerTest {
         assertEquals(List.of(), slotLambda.parameters(),
                 "slot body is a 0-param lambda");
         AppliedFunction getAll = (AppliedFunction) sole(slotLambda.body());
-        assertEquals("getAll", getAll.function(),
+        assertEquals("getAll", fn(getAll),
                 "slot materializes the target class via getAll(Firm)");
         PackageableElementPtr firmPtr = (PackageableElementPtr) sole(getAll.parameters());
         assertEquals("model::Firm", firmPtr.fullPath());
@@ -1110,7 +1119,7 @@ class MappingNormalizerTest {
         LambdaFunction condLambda = (LambdaFunction) nav.parameters().get(3);
         assertEquals(2, condLambda.parameters().size());
         AppliedFunction eq = (AppliedFunction) sole(condLambda.body());
-        assertEquals("equal", eq.function());
+        assertEquals("equal", fn(eq));
         AppliedProperty sFk = (AppliedProperty) eq.parameters().get(0);
         assertEquals("FIRM_ID", sFk.property(), "source side reads the physical FK column");
         AppliedProperty tId = (AppliedProperty) eq.parameters().get(1);
@@ -1173,7 +1182,7 @@ class MappingNormalizerTest {
         // No associates -- Embedded reads from outer scope.
         AppliedFunction mapCall = (AppliedFunction) sole(fn.body());
         AppliedFunction underneath = (AppliedFunction) mapCall.parameters().get(0);
-        assertEquals("tableReference", underneath.function(),
+        assertEquals("tableReference", fn(underneath),
                 "Embedded PMs do NOT emit associates; main table is the direct upstream");
 
         LambdaFunction projectLambda = (LambdaFunction) mapCall.parameters().get(1);
@@ -1182,7 +1191,7 @@ class MappingNormalizerTest {
 
         // firm value is ^Firm(...).
         AppliedFunction firmNew = (AppliedFunction) personNi.first("firm").value();
-        assertEquals("new", firmNew.function());
+        assertEquals("new", fn(firmNew));
         assertEquals(new PackageableElementPtr("model::Firm"), firmNew.parameters().get(0));
         NewInstance firmNi = (NewInstance) firmNew.parameters().get(1);
         assertEquals("model::Firm", firmNi.className());
@@ -1260,7 +1269,7 @@ class MappingNormalizerTest {
                 .parameters().get(1);
 
         AppliedFunction brokerNew = (AppliedFunction) personNi.first("broker").value();
-        assertEquals("new", brokerNew.function());
+        assertEquals("new", fn(brokerNew));
         assertEquals(new PackageableElementPtr("model::Broker"), brokerNew.parameters().get(0));
         NewInstance brokerNi = (NewInstance) brokerNew.parameters().get(1);
         assertEquals("model::Broker", brokerNi.className());
@@ -1322,7 +1331,7 @@ class MappingNormalizerTest {
         // Pipeline: map(filter(join(tableRef, ColSpec, cond), <lambda>), ^Person)
         AppliedFunction mapCall = (AppliedFunction) sole(fn.body());
         AppliedFunction filterCall = (AppliedFunction) mapCall.parameters().get(0);
-        assertEquals("filter", filterCall.function());
+        assertEquals("filter", fn(filterCall));
 
         AppliedFunction joinCall = (AppliedFunction) filterCall.parameters().get(0);
         assertEquals(Pure.Lite.JOIN_SLOT, joinCall.function());
@@ -1333,13 +1342,13 @@ class MappingNormalizerTest {
                         + "going through @Person_Firm)");
 
         AppliedFunction tableRef = (AppliedFunction) joinCall.parameters().get(0);
-        assertEquals("tableReference", tableRef.function());
+        assertEquals("tableReference", fn(tableRef));
 
         // Filter condition: $row.Person_Firm.IS_ACTIVE == 1
         LambdaFunction filterLambda = (LambdaFunction) filterCall.parameters().get(1);
         assertEquals(List.of(new Variable("row")), filterLambda.parameters());
         AppliedFunction eq = (AppliedFunction) sole(filterLambda.body());
-        assertEquals("equal", eq.function());
+        assertEquals("equal", fn(eq));
         AppliedProperty leftCol = (AppliedProperty) eq.parameters().get(0);
         assertEquals("IS_ACTIVE", leftCol.property());
         AppliedProperty filterAlias = (AppliedProperty) leftCol.receiver();
@@ -1371,7 +1380,7 @@ class MappingNormalizerTest {
         FunctionDefinition fn = soleSynth(normalizeViaPipeline(parsed));
         AppliedFunction mapCall = (AppliedFunction) sole(fn.body());
         AppliedFunction distinctCall = (AppliedFunction) mapCall.parameters().get(0);
-        assertEquals("distinct", distinctCall.function(),
+        assertEquals("distinct", fn(distinctCall),
                 "distinct() sits between source pipeline and the terminal map()");
         assertEquals(1, distinctCall.parameters().size(),
                 "distinct() with no args (zero-arg overload) over the relation");
@@ -1379,10 +1388,10 @@ class MappingNormalizerTest {
         // narrows to a select of exactly the consumed columns first (the
         // table's unmapped PK would otherwise defeat the dedup)
         AppliedFunction select = (AppliedFunction) distinctCall.parameters().get(0);
-        assertEquals("select", select.function(),
+        assertEquals("select", fn(select),
                 "~distinct dedups the MAPPED columns: select narrows first");
         AppliedFunction tableRef = (AppliedFunction) select.parameters().get(0);
-        assertEquals("tableReference", tableRef.function());
+        assertEquals("tableReference", fn(tableRef));
     }
 
     @Test
@@ -1409,7 +1418,7 @@ class MappingNormalizerTest {
         FunctionDefinition fn = soleSynth(normalizeViaPipeline(parsed));
         AppliedFunction mapCall = (AppliedFunction) sole(fn.body());
         AppliedFunction distinctCall = (AppliedFunction) mapCall.parameters().get(0);
-        assertEquals("distinct", distinctCall.function());
+        assertEquals("distinct", fn(distinctCall));
         assertEquals(2, distinctCall.parameters().size(),
                 "distinct BY the listed columns — never the zero-arg raw-row form");
         ColSpecArray by = (ColSpecArray) distinctCall.parameters().get(1);
@@ -1437,9 +1446,9 @@ class MappingNormalizerTest {
         FunctionDefinition fn = soleSynth(normalizeViaPipeline(parsed));
         AppliedFunction mapCall = (AppliedFunction) sole(fn.body());
         AppliedFunction distinctCall = (AppliedFunction) mapCall.parameters().get(0);
-        assertEquals("distinct", distinctCall.function());
+        assertEquals("distinct", fn(distinctCall));
         AppliedFunction select = (AppliedFunction) distinctCall.parameters().get(0);
-        assertEquals("select", select.function(), "plain reads: select narrows to the mapped columns first");
+        assertEquals("select", fn(select), "plain reads: select narrows to the mapped columns first");
         ColSpecArray cols = (ColSpecArray) select.parameters().get(1);
         assertEquals(List.of("NAME", "CITY"), cols.colSpecs().stream().map(ColSpec::name).toList(),
                 "the embedded block's column reads are main-table reads and join the dedup key");
@@ -1633,12 +1642,12 @@ class MappingNormalizerTest {
 
         // Outer: if(equal($row.STATUS, 'A'), {| Active}, <else>)
         AppliedFunction outerIf = (AppliedFunction) toOneInner(ni.first("status").value());
-        assertEquals("if", outerIf.function(),
+        assertEquals("if", fn(outerIf),
                 "EnumeratedColumn inlines as nested if(...) chain");
         assertEquals(3, outerIf.parameters().size());
 
         AppliedFunction outerEq = (AppliedFunction) outerIf.parameters().get(0);
-        assertEquals("equal", outerEq.function());
+        assertEquals("equal", fn(outerEq));
         AppliedProperty colRefA = (AppliedProperty) outerEq.parameters().get(0);
         assertEquals("STATUS", colRefA.property());
         assertEquals(new Variable("row"), colRefA.receiver());
@@ -1656,7 +1665,7 @@ class MappingNormalizerTest {
         // Inner: if(equal($row.STATUS, 'I'), {| Inactive}, {| []})
         LambdaFunction elseOuter = (LambdaFunction) outerIf.parameters().get(2);
         AppliedFunction innerIf = (AppliedFunction) sole(elseOuter.body());
-        assertEquals("if", innerIf.function());
+        assertEquals("if", fn(innerIf));
         AppliedFunction innerEq = (AppliedFunction) innerIf.parameters().get(0);
         assertEquals(new com.legend.protocol.spec.CString("I"),
                 innerEq.parameters().get(1),
@@ -1776,7 +1785,7 @@ class MappingNormalizerTest {
         // Condition: {s, t | $s.FIRM_ID == $t.ID}.
         LambdaFunction cond = (LambdaFunction) nav.parameters().get(3);
         AppliedFunction condEq = (AppliedFunction) sole(cond.body());
-        assertEquals("equal", condEq.function());
+        assertEquals("equal", fn(condEq));
         assertEquals("FIRM_ID", propOf(condEq.parameters().get(0)));
         assertEquals("s", recvOf(condEq.parameters().get(0)));
         assertEquals("ID", propOf(condEq.parameters().get(1)));
@@ -1791,7 +1800,7 @@ class MappingNormalizerTest {
 
         // First arg: partial ^Firm with ONLY the inline-cached legalName.
         AppliedFunction firmNewCall = (AppliedFunction) otherwiseCall.parameters().get(0);
-        assertEquals("new", firmNewCall.function());
+        assertEquals("new", fn(firmNewCall));
         NewInstance partialFirm = (NewInstance) firmNewCall.parameters().get(1);
         assertEquals(List.of("legalName"),
                 List.copyOf(partialFirm.properties().stream().map(com.legend.protocol.spec.NewInstance.KeyBinding::key).toList()),
@@ -1993,7 +2002,7 @@ class MappingNormalizerTest {
 
         // firmIdStr value: concat($row.firmName_h1.ID, '')
         AppliedFunction firmIdStr = (AppliedFunction) toOneInner(ni.first("firmIdStr").value());
-        assertEquals("plus", firmIdStr.function());   // concat -> plus-chain
+        assertEquals("plus", fn(firmIdStr));   // concat -> plus-chain
         AppliedProperty idRef = (AppliedProperty) unwrapToString(runHead(firmIdStr));
         assertEquals("ID", idRef.property());
         AppliedProperty firmAlias = (AppliedProperty) idRef.receiver();
@@ -2120,7 +2129,7 @@ class MappingNormalizerTest {
         // source) must resolve via the Join PM's alias -- the two-pass
         // design hoists ALL joins before project translation runs.
         AppliedFunction firmIdStr = (AppliedFunction) toOneInner(ni.first("firmIdStr").value());
-        assertEquals("plus", firmIdStr.function());   // concat -> plus-chain
+        assertEquals("plus", fn(firmIdStr));   // concat -> plus-chain
         AppliedProperty idRef = (AppliedProperty) unwrapToString(runHead(firmIdStr));
         AppliedProperty firmAlias = (AppliedProperty) idRef.receiver();
         assertEquals("Person_Firm", firmAlias.property(),
@@ -2170,13 +2179,13 @@ class MappingNormalizerTest {
         // Outer is map; under it: filter -> join -> tableReference.
         AppliedFunction mapCall = (AppliedFunction) sole(fn.body());
         AppliedFunction filter = (AppliedFunction) mapCall.parameters().get(0);
-        assertEquals("filter", filter.function(),
+        assertEquals("filter", fn(filter),
                 "filter is outermost upstream op (wraps the joins)");
         AppliedFunction joinCall = (AppliedFunction) filter.parameters().get(0);
         assertEquals(Pure.Lite.JOIN_SLOT, joinCall.function(),
                 "join sits between tableReference and filter");
         AppliedFunction tableRef = (AppliedFunction) joinCall.parameters().get(0);
-        assertEquals("tableReference", tableRef.function(),
+        assertEquals("tableReference", fn(tableRef),
                 "tableReference is innermost");
     }
 
@@ -2215,7 +2224,7 @@ class MappingNormalizerTest {
         // Directly under the join is the bare tableReference -- no
         // second join for the second PM.
         AppliedFunction underJoin = (AppliedFunction) joinCall.parameters().get(0);
-        assertEquals("tableReference", underJoin.function(),
+        assertEquals("tableReference", fn(underJoin),
                 "No redundant second join; PMs share the prefix");
 
         // Both PMs read from the SAME sub-row.
@@ -2587,7 +2596,7 @@ class MappingNormalizerTest {
     private static void collectTableReferenceTables(ValueSpecification vs, Set<String> out) {
         switch (vs) {
             case AppliedFunction af -> {
-                if ("tableReference".equals(af.function()) && af.parameters().size() == 2
+                if ("tableReference".equals(fn(af)) && af.parameters().size() == 2
                         && af.parameters().get(1) instanceof com.legend.protocol.spec.CString cs) {
                     out.add(cs.value());
                 }
@@ -2755,7 +2764,7 @@ class MappingNormalizerTest {
      */
     /** The first operand of a plus carrier ({@code plus([a, b, …])}). */
     private static ValueSpecification runHead(AppliedFunction plus) {
-        assertEquals("plus", plus.function());
+        assertEquals("plus", fn(plus));
         return assertInstanceOf(com.legend.protocol.spec.PureCollection.class,
                 plus.parameters().get(0), "expected the plus run").values().get(0);
     }
@@ -2765,7 +2774,7 @@ class MappingNormalizerTest {
         // string::plus(String[*]) (batch 5 leg 5)
         AppliedFunction af = assertInstanceOf(AppliedFunction.class, v,
                 "expected a plus carrier");
-        assertEquals("plus", af.function());
+        assertEquals("plus", fn(af));
         assertEquals(1, af.parameters().size());
         var run = assertInstanceOf(com.legend.protocol.spec.PureCollection.class,
                 af.parameters().get(0), "expected the plus run");
@@ -2784,7 +2793,7 @@ class MappingNormalizerTest {
         // strict [1], so the translator wraps each optional read — the
         // 'position' idiom made uniform) ...
         if (v instanceof AppliedFunction t1
-                && (t1.function().equals("toOne")
+                && (fn(t1).equals("toOne")
                         || t1.function().equals(Pure.Lite.TRUST_ONE))
                 && t1.parameters().size() == 1) {
             v = t1.parameters().get(0);
@@ -2793,7 +2802,7 @@ class MappingNormalizerTest {
         // argument (SQL concat coerces via the DATABASE's VARCHAR cast —
         // audit: pure toString's ISO datetime form diverged from
         // SQL-concat semantics).
-        return v instanceof AppliedFunction af && af.function().equals("cast")
+        return v instanceof AppliedFunction af && fn(af).equals("cast")
                 && af.parameters().size() == 2 ? af.parameters().get(0) : v;
     }
 
@@ -2819,7 +2828,7 @@ class MappingNormalizerTest {
      */
     private static AppliedFunction navStep(FunctionDefinition fn) {
         AppliedFunction map = (AppliedFunction) sole(fn.body());
-        assertEquals("map", map.function(), "synth body terminates in map(...)");
+        assertEquals("map", fn(map), "synth body terminates in map(...)");
         AppliedFunction nav = (AppliedFunction) map.parameters().get(0);
         assertEquals(Pure.Lite.LEGACY_NAVIGATE, nav.function(),
                 "class-typed Join PM emits a legacyNavigate pipeline step");
@@ -2830,7 +2839,7 @@ class MappingNormalizerTest {
     private static ValueSpecification navCondBody(FunctionDefinition fn) {
         AppliedFunction nav = navStep(fn);
         AppliedFunction tgtRows = (AppliedFunction) nav.parameters().get(2);
-        assertEquals("tableReference", tgtRows.function(),
+        assertEquals("tableReference", fn(tgtRows),
                 "legacyNavigate carries the target's table row source");
         LambdaFunction cond = (LambdaFunction) nav.parameters().get(3);
         return sole(cond.body());
@@ -2900,12 +2909,12 @@ class MappingNormalizerTest {
         // Condition appears verbatim in the legacyNavigate lambda:
         // and(equal($s.REGION, $t.REGION), equal($s.ADDR_ID, $t.ID)).
         AppliedFunction andCall = (AppliedFunction) navCondBody(personFn);
-        assertEquals("and", andCall.function(),
+        assertEquals("and", fn(andCall),
                 "Composite-key condition is the AND of per-pair equalities, verbatim");
         AppliedFunction eq1 = (AppliedFunction) andCall.parameters().get(0);
         AppliedFunction eq2 = (AppliedFunction) andCall.parameters().get(1);
-        assertEquals("equal", eq1.function());
-        assertEquals("equal", eq2.function());
+        assertEquals("equal", fn(eq1));
+        assertEquals("equal", fn(eq2));
         assertEquals("REGION", propOf(eq1.parameters().get(0)));
         assertEquals("s", recvOf(eq1.parameters().get(0)), "source side reads $s");
         assertEquals("REGION", propOf(eq1.parameters().get(1)));
@@ -2955,7 +2964,7 @@ class MappingNormalizerTest {
         // lambda. The AND-walker descends both sides recursively; collect
         // all leaf equalities and assert the three source columns appear.
         AppliedFunction andOuter = (AppliedFunction) navCondBody(srcFn);
-        assertEquals("and", andOuter.function());
+        assertEquals("and", fn(andOuter));
         List<String> srcCols = new java.util.ArrayList<>();
         collectEqualitySourceCols(andOuter, srcCols);
         assertEquals(List.of("A", "B", "C"), srcCols,
@@ -2966,7 +2975,7 @@ class MappingNormalizerTest {
 
     /** Recursively collect source-side ($s) column names from a nested AND of equalities. */
     private static void collectEqualitySourceCols(AppliedFunction node, List<String> out) {
-        if (node.function().equals("and")) {
+        if (fn(node).equals("and")) {
             collectEqualitySourceCols((AppliedFunction) node.parameters().get(0), out);
             collectEqualitySourceCols((AppliedFunction) node.parameters().get(1), out);
         } else {
@@ -3015,12 +3024,12 @@ class MappingNormalizerTest {
         // Condition: or(equal($s.A, $t.A), equal($s.B, $t.B)) — OR
         // reconstructed verbatim in the legacyNavigate lambda.
         AppliedFunction orCall = (AppliedFunction) navCondBody(srcFn);
-        assertEquals("or", orCall.function(),
+        assertEquals("or", fn(orCall),
                 "Condition reconstructed with OR verbatim from the source AST");
         AppliedFunction eq1 = (AppliedFunction) orCall.parameters().get(0);
         AppliedFunction eq2 = (AppliedFunction) orCall.parameters().get(1);
-        assertEquals("equal", eq1.function());
-        assertEquals("equal", eq2.function());
+        assertEquals("equal", fn(eq1));
+        assertEquals("equal", fn(eq2));
         assertEquals("A", propOf(eq1.parameters().get(0)));
         assertEquals("s", recvOf(eq1.parameters().get(0)));
         assertEquals("B", propOf(eq2.parameters().get(0)));
@@ -3060,10 +3069,10 @@ class MappingNormalizerTest {
                 .findFirst().orElseThrow();
 
         AppliedFunction andCall = (AppliedFunction) navCondBody(srcFn);
-        assertEquals("and", andCall.function());
+        assertEquals("and", fn(andCall));
         AppliedFunction eq = (AppliedFunction) andCall.parameters().get(0);
         AppliedFunction lt = (AppliedFunction) andCall.parameters().get(1);
-        assertEquals("equal", eq.function(),
+        assertEquals("equal", fn(eq),
                 "First conjunct keeps `==` operator from source");
         assertEquals("meta::legend::lite::lessThan", lt.function(),
                 "Second conjunct keeps `<` operator from source (non-equality preserved)");
@@ -3105,12 +3114,12 @@ class MappingNormalizerTest {
 
         // Condition AND has equal($s.TGT_ID, $t.ID) then isNull($t.DELETED_AT).
         AppliedFunction andCall = (AppliedFunction) navCondBody(srcFn);
-        assertEquals("and", andCall.function());
+        assertEquals("and", fn(andCall));
         AppliedFunction eq = (AppliedFunction) andCall.parameters().get(0);
         assertEquals("TGT_ID", propOf(eq.parameters().get(0)));
         assertEquals("s", recvOf(eq.parameters().get(0)), "source side reads $s");
         AppliedFunction isNullCall = (AppliedFunction) andCall.parameters().get(1);
-        assertEquals("isEmpty", isNullCall.function());
+        assertEquals("isEmpty", fn(isNullCall));
         AppliedProperty deletedAt = (AppliedProperty) isNullCall.parameters().get(0);
         assertEquals("DELETED_AT", deletedAt.property());
         assertEquals("t", ((Variable) deletedAt.receiver()).name(),
@@ -3152,9 +3161,9 @@ class MappingNormalizerTest {
         // Condition: equal(upper($s.NAME), $t.NAME) — the upper(...) wrapper
         // around the source column is preserved verbatim in the lambda.
         AppliedFunction eq = (AppliedFunction) navCondBody(srcFn);
-        assertEquals("equal", eq.function());
+        assertEquals("equal", fn(eq));
         AppliedFunction upperCall = (AppliedFunction) eq.parameters().get(0);
-        assertEquals("upper", upperCall.function(),
+        assertEquals("upper", fn(upperCall),
                 "Function call wrapper around source column is preserved in the condition");
         // the dyna fallback wraps its SQL-lane operand in toOne
         // (multiplicity audit slice 2) — peel it, then the column read
@@ -3203,7 +3212,7 @@ class MappingNormalizerTest {
         // individually inside the plus(...) call — source to $s, target to $t.
         AppliedFunction eq = (AppliedFunction) navCondBody(srcFn);
         AppliedFunction plusCall = (AppliedFunction) eq.parameters().get(0);
-        assertEquals("plus", plusCall.function());
+        assertEquals("plus", fn(plusCall));
         // dyna operands carry the SQL-lane toOne wrap (audit slice 2)
         List<ValueSpecification> run = plusChain(plusCall, 2);
         AppliedProperty arg0 = (AppliedProperty) run.get(0);
@@ -3311,7 +3320,7 @@ class MappingNormalizerTest {
         // Condition: {s, t | $s.Person_Firm.ORG_ID == $t.ID}.
         LambdaFunction cond = (LambdaFunction) nav.parameters().get(3);
         AppliedFunction eq = (AppliedFunction) sole(cond.body());
-        assertEquals("equal", eq.function());
+        assertEquals("equal", fn(eq));
         AppliedProperty srcCol = (AppliedProperty) eq.parameters().get(0);
         assertEquals("ORG_ID", srcCol.property());
         AppliedProperty srcSub = (AppliedProperty) srcCol.receiver();
@@ -3426,7 +3435,7 @@ class MappingNormalizerTest {
         assertEquals(Pure.Lite.JOIN_SLOT, h1Join.function(),
                 "intermediate hop is present as a join beneath the legacyNavigate");
         AppliedFunction base = (AppliedFunction) h1Join.parameters().get(0);
-        assertEquals("tableReference", base.function(),
+        assertEquals("tableReference", fn(base),
                 "the intermediate join's upstream is the main tableReference");
     }
 
@@ -3528,7 +3537,7 @@ class MappingNormalizerTest {
         assertEquals(Pure.Lite.JOIN_SLOT, innerJoin.function(),
                 "Inner join wraps the first chain (Person_Firm)");
         AppliedFunction tableRef = (AppliedFunction) innerJoin.parameters().get(0);
-        assertEquals("tableReference", tableRef.function());
+        assertEquals("tableReference", fn(tableRef));
 
         // Aliases: PM declaration order drives prelude order.
         assertEquals("Person_Firm",
@@ -3645,7 +3654,7 @@ class MappingNormalizerTest {
         // Pipeline shape: map(filter(join(tableRef, ~Person_Firm), <cond>), ...)
         AppliedFunction mapCall = (AppliedFunction) sole(fn.body());
         AppliedFunction filterCall = (AppliedFunction) mapCall.parameters().get(0);
-        assertEquals("filter", filterCall.function());
+        assertEquals("filter", fn(filterCall));
         AppliedFunction joinCall = (AppliedFunction) filterCall.parameters().get(0);
         assertEquals(Pure.Lite.JOIN_SLOT, joinCall.function(),
                 "Chain from the filter condition is hoisted BEFORE the filter");
@@ -3655,7 +3664,7 @@ class MappingNormalizerTest {
         // Filter condition: $row.Person_Firm.IS_ACTIVE == 1
         LambdaFunction filterLambda = (LambdaFunction) filterCall.parameters().get(1);
         AppliedFunction eq = (AppliedFunction) sole(filterLambda.body());
-        assertEquals("equal", eq.function());
+        assertEquals("equal", fn(eq));
         // the hoisted-chain read is a ColumnRef at translate time — the
         // relational comparison conforms by EMISSION (toOne wrap)
         AppliedFunction isActiveToOne = (AppliedFunction) eq.parameters().get(0);
@@ -3697,7 +3706,7 @@ class MappingNormalizerTest {
         AppliedFunction joinCall = (AppliedFunction) mapCall.parameters().get(0);
         assertEquals(Pure.Lite.JOIN_SLOT, joinCall.function());
         AppliedFunction underJoin = (AppliedFunction) joinCall.parameters().get(0);
-        assertEquals("tableReference", underJoin.function(),
+        assertEquals("tableReference", fn(underJoin),
                 "Structural JTC and nested JoinNavigation share one join (dedup)");
     }
 
@@ -3743,7 +3752,7 @@ class MappingNormalizerTest {
         assertTrue(displayKe.isLocal(),
                 "displayFirm is a +local field (isLocal=true)");
         AppliedFunction concat = (AppliedFunction) displayKe.value();
-        assertEquals("plus", concat.function());   // concat -> plus-chain
+        assertEquals("plus", fn(concat));   // concat -> plus-chain
         AppliedProperty subRowCol = (AppliedProperty) unwrapToString(runHead(concat));
         assertEquals("LEGAL_NAME", subRowCol.property());
         assertEquals("Person_Firm",
@@ -3790,7 +3799,7 @@ class MappingNormalizerTest {
         assertEquals("Person_Firm",
                 ((com.legend.protocol.spec.ColSpec) h1Join.parameters().get(1)).name());
         AppliedFunction tableRef = (AppliedFunction) h1Join.parameters().get(0);
-        assertEquals("tableReference", tableRef.function());
+        assertEquals("tableReference", fn(tableRef));
 
         // Hop 2's condition must reach T_FIRM (hop-1 target) through
         // $s.Person_Firm — the chained-source-path invariant.
@@ -3893,12 +3902,12 @@ class MappingNormalizerTest {
 
         // Pipeline shape: map(groupBy(tableRef, ~[keys], ~[aggs]), row | ^Position(...))
         AppliedFunction mapCall = (AppliedFunction) sole(fn.body());
-        assertEquals("map", mapCall.function());
+        assertEquals("map", fn(mapCall));
         AppliedFunction groupBy = (AppliedFunction) mapCall.parameters().get(0);
         assertEquals(Pure.Lite.GROUP_BY_COMPUTED_KEYS, groupBy.function(),
                 "Pipeline must include a groupBy step when ~groupBy is declared");
         AppliedFunction tableRef = (AppliedFunction) groupBy.parameters().get(0);
-        assertEquals("tableReference", tableRef.function());
+        assertEquals("tableReference", fn(tableRef));
 
         // Key ColSpecArray: exactly 2 keys, matching declaration order.
         com.legend.protocol.spec.ColSpecArray keyArr =
@@ -4004,7 +4013,7 @@ class MappingNormalizerTest {
         assertEquals(1, aggregator.parameters().size(),
                 "Aggregator lambda binds a single 'vals' variable");
         AppliedFunction aggCall = (AppliedFunction) sole(aggregator.body());
-        assertEquals("sum", aggCall.function());
+        assertEquals("sum", fn(aggCall));
     }
 
     @Test
@@ -4492,11 +4501,11 @@ class MappingNormalizerTest {
         assertEquals(new Variable("a"), lap.parameters().get(0));
         assertEquals(new Variable("b"), lap.parameters().get(1));
         AppliedFunction srcRef = (AppliedFunction) lap.parameters().get(2);
-        assertEquals("tableReference", srcRef.function());
+        assertEquals("tableReference", fn(srcRef));
         assertEquals(new com.legend.protocol.spec.CString("T_FIRM"),
                 srcRef.parameters().get(1), "src row source is classA's (Firm) ~mainTable");
         AppliedFunction tgtRef = (AppliedFunction) lap.parameters().get(3);
-        assertEquals("tableReference", tgtRef.function());
+        assertEquals("tableReference", fn(tgtRef));
         assertEquals(new com.legend.protocol.spec.CString("T_PERSON"),
                 tgtRef.parameters().get(1), "tgt row source is classB's (Person) ~mainTable");
         LambdaFunction adapter = (LambdaFunction) lap.parameters().get(4);
@@ -4507,7 +4516,7 @@ class MappingNormalizerTest {
         // cond: equal($tgtRow.FIRM_ID, $srcRow.ID). srcRow is classA's
         // (Firm) main-table row T_FIRM; tgtRow is the join's other table.
         AppliedFunction eq = (AppliedFunction) sole(adapter.body());
-        assertEquals("equal", eq.function());
+        assertEquals("equal", fn(eq));
         java.util.Map<String, String> recvByCol = new java.util.HashMap<>();
         for (ValueSpecification arg : eq.parameters()) {
             AppliedProperty ap = (AppliedProperty) arg;
@@ -4552,9 +4561,9 @@ class MappingNormalizerTest {
 
         // But it adds no pipeline step: map's source is the bare tableReference.
         AppliedFunction mapCall = (AppliedFunction) sole(fn.body());
-        assertEquals("map", mapCall.function());
+        assertEquals("map", fn(mapCall));
         AppliedFunction source = (AppliedFunction) mapCall.parameters().get(0);
-        assertEquals("tableReference", source.function(),
+        assertEquals("tableReference", fn(source),
                 "~primaryKey emits no distinct/distinctBy step: map reads the bare table");
     }
 
@@ -4645,15 +4654,15 @@ class MappingNormalizerTest {
         // ~distinct lives INSIDE the frame, the PM reads the DECLARED view
         // column VERBATIM off the frame row (never the physical column).
         AppliedFunction mapCall = (AppliedFunction) sole(fn.body());
-        assertEquals("map", mapCall.function());
+        assertEquals("map", fn(mapCall));
         AppliedFunction distinctCall = (AppliedFunction) mapCall.parameters().get(0);
-        assertEquals("distinct", distinctCall.function(),
+        assertEquals("distinct", fn(distinctCall),
                 "view-level ~distinct rides inside the frame");
         AppliedFunction frame = (AppliedFunction) distinctCall.parameters().get(0);
-        assertEquals("project", frame.function(),
+        assertEquals("project", fn(frame),
                 "the view frames as its own projection (row-defining subselect)");
         AppliedFunction tableRef = (AppliedFunction) frame.parameters().get(0);
-        assertEquals("tableReference", tableRef.function());
+        assertEquals("tableReference", fn(tableRef));
         assertEquals("T_PERSON",
                 ((com.legend.protocol.spec.CString) tableRef.parameters().get(1)).value(),
                 "the frame's source is the view's physical root table");
@@ -4754,15 +4763,15 @@ class MappingNormalizerTest {
         // map( project( join(tableReference(T_PERSON), ...), cols ), λ );
         // the PM reads the declared view column VERBATIM off the frame row.
         AppliedFunction mapCall = (AppliedFunction) sole(fn.body());
-        assertEquals("map", mapCall.function());
+        assertEquals("map", fn(mapCall));
         AppliedFunction frame = (AppliedFunction) mapCall.parameters().get(0);
-        assertEquals("project", frame.function(),
+        assertEquals("project", fn(frame),
                 "the view frames as its own projection");
         AppliedFunction joinCall = (AppliedFunction) frame.parameters().get(0);
         assertEquals(Pure.Lite.JOIN_SLOT, joinCall.function(),
                 "the join-backed view column's join lives INSIDE the frame");
         AppliedFunction tableRef = (AppliedFunction) joinCall.parameters().get(0);
-        assertEquals("tableReference", tableRef.function());
+        assertEquals("tableReference", fn(tableRef));
         assertEquals("T_PERSON",
                 ((com.legend.protocol.spec.CString) tableRef.parameters().get(1)).value(),
                 "the frame's source is the physical root table");
@@ -4895,7 +4904,7 @@ class MappingNormalizerTest {
         AppliedFunction outerFilter = spine.get(1);
         AppliedFunction innerFilter = spine.get(3);
         AppliedFunction tableRef = spine.get(spine.size() - 1);
-        assertEquals("tableReference", tableRef.function());
+        assertEquals("tableReference", fn(tableRef));
         assertEquals("T_PERSON",
                 ((com.legend.protocol.spec.CString) tableRef.parameters().get(1)).value());
 
@@ -4932,12 +4941,12 @@ class MappingNormalizerTest {
                         + ")");
         FunctionDefinition fn = soleSynth(normalizeViaPipeline(parsed));
         AppliedFunction mapCall = (AppliedFunction) sole(fn.body());
-        assertEquals("map", mapCall.function());
+        assertEquals("map", fn(mapCall));
         AppliedFunction groupBy = (AppliedFunction) mapCall.parameters().get(0);
         assertEquals(Pure.Lite.GROUP_BY_COMPUTED_KEYS, groupBy.function(),
                 "view-level ~groupBy merges into the pipeline as a groupBy() step");
         AppliedFunction tableRef = (AppliedFunction) groupBy.parameters().get(0);
-        assertEquals("tableReference", tableRef.function());
+        assertEquals("tableReference", fn(tableRef));
         assertEquals("T",
                 ((com.legend.protocol.spec.CString) tableRef.parameters().get(1)).value(),
                 "groupBy runs over the inferred physical root table");
@@ -5030,11 +5039,11 @@ class MappingNormalizerTest {
         NewInstance ni = (NewInstance) ((AppliedFunction) sole(lambda.body()))
                 .parameters().get(1);
         AppliedFunction toCall = (AppliedFunction) toOneInner(ni.first("name").value());
-        assertEquals("to", toCall.function());
+        assertEquals("to", fn(toCall));
         assertEquals(2, toCall.parameters().size());
 
         AppliedFunction getCall = (AppliedFunction) toCall.parameters().get(0);
-        assertEquals("get", getCall.function());
+        assertEquals("get", fn(getCall));
         assertEquals(2, getCall.parameters().size(),
                 "get is the 2-arg variant accessor get(Variant, key)");
         AppliedProperty dataRef = (AppliedProperty) getCall.parameters().get(0);
@@ -5111,7 +5120,7 @@ class MappingNormalizerTest {
         // this proves the injected chain carries the intermediate correctly.
         LambdaFunction cond = (LambdaFunction) nav.parameters().get(3);
         AppliedFunction eq = (AppliedFunction) sole(cond.body());
-        assertEquals("equal", eq.function());
+        assertEquals("equal", fn(eq));
         AppliedProperty srcCol = (AppliedProperty) eq.parameters().get(0);
         assertEquals("CITY_ID", srcCol.property(), "source side reads ADDR.CITY_ID");
         AppliedProperty srcSub = (AppliedProperty) srcCol.receiver();

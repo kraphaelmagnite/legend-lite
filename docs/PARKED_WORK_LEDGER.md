@@ -190,41 +190,6 @@ row allows keeping a behavior, keeping it means a `docs/SEMANTICS_REGISTER.md` r
 
 ---
 
-## PARK-5 — A call to a platform function is never resolved once (the typing slowdown)
-
-**What we do today.** The resolver records which of the program's own functions a call can mean; a call to a
-platform function stays bare (the resolver adds the platform's only when it also found one of the program's). Every
-later check that asks what a bare call can be works it out again from the spelling (`ResolvedNames.referents` →
-`BareNames.catalog`: the name tried under each of the 32 core-import packages), about five times per call. The ~200
-calls the typer and the mapping normalizer build after the resolver are bare too.
-
-**Why parked.** The correct fix changes the resolver and about 200 places that build calls; the user put it on this
-list on 2026-10-07. Ruled: Phase 3 landed with it recorded (2026-10-09, 1e4a2bd40); the fix is landing L7, right after
-Phase 3b and before Phases 6, 4 and 5 (the user, 2026-10-09, on `COLD_READ_2026_10_09.md` F1).
-
-**Cost while parked.** Measured on the eager corpus compile (same machine, runs alternated): this one lookup is 19% of
-typing time on main and 29% after Phase 3, whose forms are read by the names a call resolves to (21 checks): typing
-2,147 → 2,533 ms (+18%); whole corpus passes 0–4% slower. The browser editor runs the typer and was not measured.
-
-**Acceptance (what closes this row).** Each call's names worked out once and recorded on the call: by the resolver for
-parsed calls; calls built after the resolver built resolved; every check reads the record. Typing time on the eager
-compile at or below main's; the six corpus passes, PCT and the reference lane unchanged.
-
-**Step 2 landed (L7, 2026-10-10; `docs/build-inventory/program/L7_RESOLVE_ONCE_DESIGN_2026_10_10.md`):** the
-resolver records every parsed call's names once (`AppliedFunction.referents`: the program's candidates as before and,
-on a call the program declares nothing for, the platform's names at the call's arity, main's read-time answer recorded)
-and `ResolvedNames` reads the record; the rule runs at a read only for a call with no record, which after step 2 is
-a call built after the resolver. A call with a record is not resolved again (the design note's §10). What remains is step 3: the 243 built calls, born resolved through one
-builder, and then the read-time rule deleted.
-
-**Anchor.** `BareNames.catalog(` is called from exactly one product file, `ResolvedNames.java` (`referents`, the
-no-record path). Step 3 removes that call.
-
-**Research.** `docs/build-inventory/program/DEBTS_RESOLVE_AND_TYPE_ONCE.md` (plan branch): the profile with every
-calling site, the cause, the options weighed and the ones rejected.
-
----
-
 ## PARK-6 — Arguments typed more than once
 
 **What we do today.** The typer often looks at an argument's type to choose a route, then rewrites the call and types
@@ -247,7 +212,7 @@ arguments. Same results on every lane; typing time measured against main.
 **Anchors** (one per place; the `map` rewrites sit inside the first two): a receiver typed only to choose a route
 (`recv = synth(af.parameters().get(0), env)`, and `grecv` in the TDS receiver checks) in exactly `Typer.java`,
 `CallShapes.java` and `TdsDesugars.java`; the property's body call re-applied after typing
-(`applyGeneric(new AppliedFunction(d.bodyFunctionFqn(), qargs), env)`) in exactly `Overloads.java` and `Typer.java`;
+(`applyGeneric(Calls.exact(d.bodyFunctionFqn(), qargs), env)`; the spelling since L7 step 3, 2026-10-10, when every built call moved into `Calls`) in exactly `Overloads.java` and `Typer.java`;
 the receiver-owned check's receiver typing (`Type rt = t.synth(recv, env)`) in exactly `ReceiverOwnedFunctions.java`;
 the must-inline substitution of untyped arguments (`subst.put(chosen.parameters().get(i).name(),
 af.parameters().get(i))`) in exactly `Overloads.java`.

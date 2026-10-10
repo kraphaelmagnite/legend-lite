@@ -8431,3 +8431,38 @@ before the register and the ratchet (fixed); the seven timeouts under its load p
 warehouse, datacube, ui, sdlc) on every platform (30 jobs) -- the PCT and corpus lanes not run: the change adds two
 classes they never use and alters no compile path; rebased over docs-only commits before the push (the tested code
 unchanged); pushed to main as fe7961b7b with the user's "Yes push to main".
+
+## 2026-10-10 — L7 "resolve once", steps 3 and 4: every built call born with its record; the read-time rule deleted; PARK-5 closed
+
+**Landed 2026-10-10 as 472f0f817** (branch `build/l7-step3`; run 38094185136, full gate.yml on all platforms: green on every job after one re-run of windows / warehouse (a runner filesystem error in the Node module tree during analysis of a Python target the change does not touch; main's own run of the same base, 38091778746, passed it)).
+The design: `docs/build-inventory/program/L7_RESOLVE_ONCE_DESIGN_2026_10_10.md` (§11 the sites, §12 step 3 as
+built, §13 step 4 as built). Step 2 landed the same day (the entry above). The ledger's PARK-5 is closed: its row and
+anchor are deleted in this commit.
+
+1. **The builder.** `compiler/spec/Calls` is the one place a call is built after the resolver: 195 construction
+   sites in 23 files (`RelOpTranslator` 33, `TdsDesugars` 31, `MappingNormalizer` 24, `Typer` 16, ...) converted;
+   `ArchitectureTest.callsAreBuiltOnlyByTheBuilder` keeps every other constructor call of a call out of `compiler/`,
+   `normalizer/`, `validation/`, `lineage/` and `testdatagen/`. A built call asks the resolver
+   (`NameResolver.builtCallNames`, the call arm's own decision under the prelude alone, memoized per name and
+   arity), so it is the call the parser and the resolver would have made of the same spelling — qualified where one
+   known name is found, bare with the record where several or none (§12). The rule's record lists the platform's
+   Pure as well as its natives (`tableReference(db, schema, table)` is a native; the prelude's functions are not).
+2. **The deletions.** `ResolvedNames.referents` returns a full name or the record and nothing else;
+   `Overloads.candidatesOf` has one path (each recorded name looked up as a declaration); `functionsAt` answers a
+   bare name with nothing; `BareNames.catalog` and `DecisionProbe.bareCall` are gone. The checkers that asked for a
+   form's declarations by its parse name read the call's record, or `Typer.formCandidates(form, arity)` (§13).
+   Two typer test classes fed unresolved queries to the typer and resolve first now, as every product entry does.
+3. **Measured.** the shadow probe's candidate rows against main (`evidence/l7/candidates_steps_3_4.txt`): main 7255 (distinct (name, ids) 7243), change 7222 (distinct 7222); 39 rows differ, every one explained: 33 are built calls now spelled as the parser spells them and typed by the direct path (one row fewer each, the same function ids), 6 are the island `tableReference(db, 'schema.table')` whose record is empty at its two arguments (the checker resolves the form at three); the census identical (27 load walls, 16133 bodies typed, 1120 failing; `isEval`, which the deletions had turned into a failure, types again through the resolver's pointer arm, §13); the eager corpus compile's typing, six alternated pairs outside Bazel's cache (`evidence/l7/eager_timings_steps_3_4.tsv`): `typeAll` main 5125 to 9221 ms, median 6314.0; the change 3322 to 6316 ms, median 4500.5, below main's in five of the six pairs and above in the first; the machine carried two other sessions' judges and CI during the run (every figure about double step 2's quiet-machine run, main 2,431 to 2,927 ms that morning); the bar is the median (the design's §5); the `build` phase median 5507.5 → 5538.0 ms; the profile (`evidence/l7/jfr_steps_3_4.txt`, 4312 samples on the change, 5115 on main): `ResolvedNames.referents` 839 → 6, `BareNames.catalog` 830 → 0 (deleted), `BareNames.catalogTiered` 984 → 358, `Typer.applyFunction` 2582 → 1782
+4. **Judges:** the six corpus passes against the baseline built from main the same day: 22 result files identical (`evidence/l7/corpus_passes_compare_steps_3_4.txt`); the reference lane green (`//spec:reference_lane`, `//spec:update_reference_lane_test`; no class moved, AGREE 76,884); PCT DuckDB, H2, Postgres and channel B green; the render census, main's tree against the change, every lane with the probe: 52530 (lane, dialect, kind, text) entries; 0 differ (`evidence/l7/render_census_compare_steps_3_4.txt`); every core and spec unit suite green; the lane-membership query empty. Local gate: 323 targets green on the final tree (`bazel test --lockfile_mode=error //gates:local`).
+5. **The audit** (`evidence/l7/AUDIT_L7_STEPS_3_4.md`: ready after fixes, 0 blockers, 7 should-fix, 6 notes, every
+   one answered): a wrong-arity call to a name only the rule reaches reports the arity again, not "unknown function";
+   a built call resolves under the prelude alone (§12, stated); the mint guard counts the builder's literal names
+   (its pattern widened, re-pinned at the measured count); the two tables memoize no empty answer and no full name;
+   `EvalChecker`'s pointer call is built by `platform` (a bare pointer keeps its names); `BareNames.referents`,
+   `renamed`, `among` and `infixRunAmong` have tests; the ArchUnit rule covers every package but the parser, the
+   readers and the test runners, and the record's static factories too; dead probe code deleted.
+6. **The identity guard re-pinned** (dated notes on each): NAME_COMPARE 205 → 202 and NAME_COMPARE_REVERSED 81 → 79
+   (readers read the record); MINT_BY_NAME 142 → 152 (its pattern now counts the builder's literal names too, which
+   the old pattern had gone blind to; the literal stays until step 5 spells it by the declaration); NAME_CUTTING
+   106 → 107 and SIGNATURE_ID_CUTTING 1 → 2 (the bare id's base resolution moved into the resolver, once); the construction guard's rows re-pinned at the other protocol nodes'
+   measured counts with `Calls` excluded.

@@ -206,11 +206,6 @@ public final class Shadow implements DecisionProbe {
         write("UNKNOWN-FN", name, propertyCall ? "dot" : "call", site, "");
     }
 
-    @Override
-    public void onBareCall(String name, boolean hasPos, boolean propertyCall, boolean infix) {
-        write("BARE-CALL", name, hasPos ? "parsed" : "minted", propertyCall ? "dot" : "call",
-                infix ? "infix" : "");
-    }
 
     /** The catalog natives a USER may not name (the lite-internal partition,
      *  {@code Pure.userResolvableFunctionFqns}) — the count revision 2 §2 owes

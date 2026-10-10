@@ -3,6 +3,7 @@
 
 package com.legend.normalizer;
 
+import com.legend.compiler.spec.Calls;
 import com.legend.compiler.ModelBuilder;
 import com.legend.error.NotImplementedException;
 import com.legend.model.ClassDefinition;
@@ -115,7 +116,7 @@ final class RelationReads {
                     if (model != null && rcd != null
                             && Multiplicity.Concrete.PURE_ONE.equals(
                             model.knowledge().propertyMultiplicity(rcd, ap.property()))) {
-                        read = new AppliedFunction(com.legend.builtin.Pure.Lite.TRUST_ONE, List.of(read));
+                        read = Calls.exact(com.legend.builtin.Pure.Lite.TRUST_ONE, List.of(read));
                     }
                     return read;
                 }

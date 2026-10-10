@@ -44,8 +44,7 @@ final class GraphFetchChecker {
      * defects). */
     static TypedSpec graphFetchChecked(Typer t, AppliedFunction af, Env env) {
         Checked c = checkTree(t, af, env, "graphFetchChecked");
-        var sigs = t.model().findFunction(
-                CoreFn.GRAPH_FETCH_CHECKED.parseName());
+        var sigs = t.functionCandidates(af);
         int arity = af.parameters().size();
         var sig = sigs.stream().filter(f -> f.parameters().size() == arity)
                 .findFirst().orElseThrow(() -> new TypeInferenceException(
@@ -63,7 +62,7 @@ final class GraphFetchChecker {
         // String[1] — from the registered signature's return, never hardcoded.
         // ARITY-resolved (two serialize overloads are registered) via CoreFn,
         // not a magic string + blind get(0) (audit finding).
-        var sigs = t.model().findFunction(CoreFn.SERIALIZE.parseName());
+        var sigs = t.functionCandidates(af);
         int arity = af.parameters().size();
         var sig = sigs.stream().filter(f -> f.parameters().size() == arity).findFirst()
                 .orElseThrow(() -> new TypeInferenceException(

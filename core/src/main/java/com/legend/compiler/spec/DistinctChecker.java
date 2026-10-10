@@ -25,7 +25,7 @@ final class DistinctChecker {
         // ProjectChecker lesson): rebuilds and generic resolution key on
         // the name, and an FQN finds only its own narrow catalog entry.
         if (af.function().contains("::")) {
-            af = new AppliedFunction("distinct", af.parameters());
+            af = Calls.platform("distinct", af.parameters());
         }
         Application a = t.checkGeneric(arrayIfBare(af), env);
         // collection::distinct (T[*] -> T[*], = removeDuplicates) shares the

@@ -3,6 +3,7 @@
 
 package com.legend.normalizer;
 
+import com.legend.compiler.spec.Calls;
 import com.legend.builtin.Pure;
 import com.legend.compiler.ModelBuilder;
 import com.legend.compiler.SynthFqn;
@@ -232,7 +233,7 @@ final class XStorePureEnds {
         }
         Variable a = new Variable("a");
         Variable b = new Variable("b");
-        ValueSpecification body = new AppliedFunction(Pure.Lite.LEGACY_ASSOC_PREDICATE,
+        ValueSpecification body = Calls.exact(Pure.Lite.LEGACY_ASSOC_PREDICATE,
                 List.of(a, b,
                         new CString(endA.setId()),
                         new CString(endB.setId()),
@@ -277,7 +278,7 @@ final class XStorePureEnds {
                 // type (lessThan(Any, Integer)); a cast to the declared
                 // local type was tried and regressed six XStore Pure-end
                 // tests — the typed-local read is an open leg of route A
-                return new AppliedFunction(Pure.Lite.LEGACY_LOCAL_PROPERTY,
+                return Calls.exact(Pure.Lite.LEGACY_LOCAL_PROPERTY,
                         List.of(row, new CString(ap.property())));
             }
             return new AppliedProperty(row, ap.property());

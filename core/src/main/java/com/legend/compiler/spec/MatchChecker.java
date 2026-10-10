@@ -40,7 +40,7 @@ final class MatchChecker {
         // Arity is governed by the REGISTERED overloads (the class doc's
         // claim, previously hardcoded — audit finding): match(Any[*],
         // Function[*]) and match(Any[*], Function[*], Any[*]).
-        boolean arityRegistered = t.model().findFunction(CoreFn.MATCH.parseName()).stream()
+        boolean arityRegistered = t.functionCandidates(af).stream()
                 .anyMatch(f -> f.parameters().size() == params.size());
         if (!arityRegistered) {
             throw new TypeInferenceException("no registered 'match' overload accepts "

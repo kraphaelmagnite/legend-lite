@@ -96,7 +96,7 @@ final class GroupLambdaAggs {
         if (ResolvedNames.names(call, PlatformTypes.RELATION_SIZE) && call.parameters().size() == 1) {
             return new ColSpec(cs.name(),
                     new LambdaFunction(List.of(x), List.of(new CInteger(1)), null),
-                    new LambdaFunction(List.of(y), List.of(new AppliedFunction("count", List.of(y))), null));
+                    new LambdaFunction(List.of(y), List.of(Calls.platform("count", List.of(y))), null));
         }
         if (ResolvedNames.names(call, PlatformTypes.RELATION_JOIN_STRINGS)
                 && (call.parameters().size() == 3 || call.parameters().size() == 4)) {
@@ -109,7 +109,7 @@ final class GroupLambdaAggs {
                         + ": joinStrings over the group takes a column (~col) or a row function");
             };
             LambdaFunction reduce = new LambdaFunction(List.of(y), List.of(
-                    new AppliedFunction("joinStrings", List.of(y, call.parameters().get(2)))), null);
+                    Calls.platform("joinStrings", List.of(y, call.parameters().get(2)))), null);
             if (call.parameters().size() == 4) {
                 orders.put(cs.name(), SortChecker.keysFromAst(call.parameters().get(3)));
             }

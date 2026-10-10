@@ -189,3 +189,80 @@ Core: `compiler/NameResolver.java`, `compiler/ResolvedNames.java`, `compiler/Bar
   `NameResolver` are outside the rule. `AppliedFunction.withParameters`, `asGrouped` and `withWrittenDetails` copy the
   record and stay allowed everywhere.
 
+## 12. Step 3 as built (2026-10-10): the builder asks the resolver
+
+- **A built call is what the same call parsed would be, spelling included.** The first cut recorded the bare-name
+  rule's names on a bare spelling (`Calls.platform("getAll", args)` → `getAll` with the record
+  `[meta::pure::functions::collection::getAll]`), and the normalizer's convergence test
+  (`LegacyCleanSheetConvergenceTest`) showed the parsed side differs: the resolver qualifies a bare name the core
+  import group knows to its one function (`meta::pure::functions::collection::getAll`, empty record) and records
+  only where it finds several or none. Two spellings of one meaning would have split every spelling reader. So the
+  resolver's decision is one function, `NameResolver.decide` (the call arm's merge, the nothing-found record and
+  the qualification; step 4 widened the nothing-found record to the prelude's declarations, §13), and `NameResolver.builtCallNames(name, arity)` answers a built call under the
+  sectionless-query scope (the prelude alone: no imports, no own package), memoized per (name, arity) from the
+  platform's static tables (`BUILT`, registered with the static-state guard beside `BareNames.REFERENTS`).
+  `Calls.platform`, `renamed` and `infixRun` read it; `like` keeps the original's record at the same arity and
+  joins the answer's names at another; `among` and `infixRunAmong` carry a registry row's names
+  (`RelOpTranslator`'s dynafunctions, as before); `exact` and `carrier` record nothing (a full name reads as
+  itself; a parser carrier has no function).
+- **A built call resolves under the prelude alone, not its owner's imports** (the audit of steps 3-4, S2). On main a
+  normalizer-built bare call had no record, and the normalizer's second pass resolved it under the owner's section
+  imports (`ModelNormalizer.resolveSynthesized`), where a user function imported there could join its candidates;
+  now `Calls` records it under the sectionless-query scope and the second pass keeps it. A built call names the
+  platform's function by design (the desugar wrote it), so this is the intended meaning; it is a departure from
+  main's behaviour, stated here. The one built call that must resolve in the user's namespace, a dynafunction with
+  no registry row (`RelOpTranslator`: `Calls.among(fn, List.of(), args)`), keeps an empty record on purpose so the
+  second pass resolves it; `among`'s javadoc says so.
+- **Where the normalizer's tests matched spellings** (`MappingNormalizerTest`: 94 `assertEquals("equal",
+  x.function())` sites and four helpers), they now assert the function called by its simple name (`fn(af)`), since
+  a built `equal` is spelled `meta::pure::functions::boolean::equal` as a parsed one is.
+- **Shapes beyond §2's four:** `carrier` (§11), `renamed` (a legacy `asc('COL')` rewritten as upstream's modern
+  `ascending(~COL)` with the original's position and written forms kept: `SortChecker`), `among` and
+  `infixRunAmong` (a registry row's names), `infixRun` (the parser's operator-run shape with the record). `Calls`
+  is the one class under `compiler`, `normalizer`, `validation`, `lineage` and `testdatagen` that constructs an
+  `AppliedFunction` (`ArchitectureTest.callsAreBuiltOnlyByTheBuilder`); the older construction guard
+  (`protocolNodesAreConstructedOnlyByTheParserAndTheNormalizer`) excludes `Calls` as it excludes the parser and is
+  re-pinned at the measured counts of the other protocol nodes those classes still build.
+- **Two guard trips the first cut taught:** a string test in the builder (`contains("::")`) counts as a name-affix
+  test and the identity guard is shrink-only, so the builder validates nothing and the contract is its javadoc;
+  a memo table is static collection state and must be immutable or registered, so both tables are registered
+  with their reason.
+
+## 13. Step 4 as built (2026-10-10): the deletions, and what they uncovered
+
+- **Deleted:** `ResolvedNames.referents`' no-record rule and its `BareNames` dependence (a full name is its own
+  referent, otherwise the record, possibly empty); `Overloads.candidatesOf`'s bare path and `DecisionProbe.bareCall`
+  (one path: each recorded name looked up as a declaration, the id fallback kept); `FunctionCompiler.functionsAt`'s
+  tier walk for a bare name (a bare name is not a declaration: it finds nothing); `BareNames.catalog` (the tests keep
+  a private flattening of `catalogTiered`); the ledger's PARK-5 row and its anchor. The resolver's merge condition
+  (`captured && prelude && bare`) stays: it is what records the platform's names on an ambiguous call; with the
+  nothing-found record every bare call in a prelude scope has them, which is what §4 meant.
+- **A second kind of bare-name reader** stood behind the tier walk: checkers asking for a FORM's declarations by its
+  parse name (`findFunction(CoreFn.IF.parseName())` and its kin in `IfChecker`, `LetChecker`, `MatchChecker`,
+  `EvalChecker`, `GraphFetchChecker`, `TableReferenceChecker`, `FlattenChecker`, `NavigateChecker`, `JsonChecker`).
+  Where the checker checks that very call, it reads the call's record (`t.functionCandidates(af)`); where it needs
+  another form's signature, or the form at an arity the call does not have (the two-argument island
+  `tableReference` resolved against the three-parameter native; `eval`'s declared arguments), it asks
+  `Typer.formCandidates(form, arity)`: the resolver's answer for the form's parse name at that arity, each name a
+  declaration.
+- **The record names the platform's Pure as well as its natives.** `tableReference(db, schema, table)` is a catalog
+  native, but the prelude declares functions the catalog has no native for; the old tier walk found them through
+  the model's declarations. `BareNames.referents(name, arity)` now lists a tier name when a native OR a prelude
+  function declares it at that arity (`PreludeArities`, built once from `Prelude.elements()`).
+- **The typer's contract is resolved input.** Two typer test classes (`TypeCheckerTest`, `SpecCompilerTest`) fed
+  parsed, unresolved queries to `SpecCompiler.typeBody`; the bare path had hidden that. They resolve first now, as
+  every product entry does (`Compiler.typeQuery`, `resolveQuery`); the step-2 bridge test "a built call is answered
+  by the rule" is deleted (`CallsTest` holds the step-3 truth).
+- **Three tests looked up a native by its bare name** (`ctx.findFunction("at")`): they name the declaration now.
+- **A bare signature-id reference is qualified by its base, once, in the resolver.** The census showed one body
+  change after the deletions: `meta::pure::router::preeval::isEval` references `eval`'s seven-argument overload by
+  its id, which the catalog lacks; the typer used to accept it as an opaque reference to the base function because
+  the bare base `eval` existed through the tier walk (`SignatureMangle.resolve` over `findFunction(bare)`). The
+  resolver's pointer arm now qualifies such an id under the package of the first call tier that knows its base
+  (`qualifyIdByBase`, cutting as `SignatureMangle.resolve` cuts; `callTierMatches` is the tiers' loop without the
+  fallback), and the typer resolves the qualified id as it always resolved one. The identity guard's NAME_CUTTING
+  and SIGNATURE_ID_CUTTING pins move up by one each with that reason; the census is identical again.
+- **A wrong-arity call to a name the rule knows keeps its arity message** (the audit's S1): the record is at the
+  call's arity, so `Overloads` asks the catalog whether the name exists at any arity before reporting it unknown.
+- **The memo tables keep only answers that found or recorded something** (`CallNames.found`; the audit's S4).
+

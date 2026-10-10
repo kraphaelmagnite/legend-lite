@@ -68,9 +68,6 @@ public interface DecisionProbe {
      *  {@code propertyCall} is the dot spelling; {@code site} names the throw. */
     void onUnknownFunction(String name, boolean propertyCall, String site);
 
-    /** A call whose node carries no resolver candidates when the typer asks —
-     *  a parsed call has a span, a compiler mint has none. */
-    void onBareCall(String name, boolean hasPos, boolean propertyCall, boolean infix);
 
     /** The installed probe, or null. The binding (META-INF/services) is a TEST-LANE
      *  resource (//core:shadow_binding on the suites' libraries), never the product
@@ -153,9 +150,4 @@ public interface DecisionProbe {
         }
     }
 
-    static void bareCall(String name, boolean hasPos, boolean propertyCall, boolean infix) {
-        if (INSTALLED != null) {
-            INSTALLED.onBareCall(name, hasPos, propertyCall, infix);
-        }
-    }
 }

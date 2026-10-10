@@ -46,6 +46,7 @@ generated file, never a signature we typed ourselves.
 | Phase 3 | `main` since 2026-10-09 (1e4a2bd40, run 38000346579; GATES "Build rebuild Phase 3") | yes |
 | Phase 3b (L3) | `main` since 2026-10-10 (991df952b, run 38022354707; GATES "Build rebuild Phase 3b"; `PHASE_3B_LANDING.md`) | yes |
 | L7 "resolve once", step 2 | `main` since 2026-10-10 (f32037517, run 38081706046; GATES "L7 step 2"; the design `L7_RESOLVE_ONCE_DESIGN_2026_10_10.md`; the measurement in `DEBTS_RESOLVE_AND_TYPE_ONCE.md` "Step 2 landed") | yes |
+| L7 "resolve once", steps 3-4 (L7 complete) | `main` since 2026-10-10 (472f0f817, run 38094185136; GATES "L7 step 3"; the design's §11-§13) | yes |
 | The program's debts | `docs/PARKED_WORK_LEDGER.md` rows PARK-5 to PARK-14 (on `build/phase3`; they land with Phase 3), anchored by `core/src/test/java/com/legend/ParkedWorkLedgerTest.java` | with Phase 3 |
 | Who works on what | `docs/IN_FLIGHT.md` on `main` (the program's entry lists every core file each phase touches) | yes |
 | Gate results and what moved, per change | `docs/GATES.md` (one entry per landing) | with each landing |
@@ -65,9 +66,12 @@ generated file, never a signature we typed ourselves.
   parsed call carries every full name it can mean, recorded once by the resolver; the readers read the record. The
   eager compile's typing median 2,701 → 2,188 ms (`DEBTS_RESOLVE_AND_TYPE_ONCE.md` "Step 2 landed"); candidate sets,
   census and the judges unchanged. PARK-5 stays open until step 3.
-- **Next: L7 step 3** (the `Calls` builder for the 243 built calls, the ArchUnit rule, the read-time rule deleted,
-  PARK-5 closed; its own IN_FLIGHT line), then L4 (Phase 6), L5 (Phase 4), L6 (Phase 5), the typing-order count, L8
-  (the bump). The order and cadence: the plan's §6.
+- **L7 "resolve once", steps 3 and 4, landed** (472f0f817; run 38094185136; GATES "L7 step 3"): every call built after the
+  resolver is built by `compiler/spec/Calls` with its record (195 sites in 23 files); the read-time rule, the typer's bare
+  path and `BareNames.catalog` are deleted; PARK-5 closed. L7 is complete.
+- **Next: L4 (Phase 6)**, then L5 (Phase 4), L6 (Phase 5), the typing-order count, L8 (the bump). The order and
+  cadence: the plan's §6. Before L4: the DataCube line's compile phase split (promised 2026-10-10) and the Studio
+  line's leg 8 typing changes to review (c, e).
 - **Ruled 2026-10-10 (the user):** the default world is made by upstream's own compiler at bump time, every body
   followed (F2, F3; the plan's decision 6); the pre-built boot layer is part of Phase 4, sized on the numbers
   (decision 2 as amended); the typer's order is measured before the bump (decision 7). Nothing is pending from the
@@ -291,6 +295,9 @@ the browser with `bazel run //wasm:startup`).
 - **An action's command line run outside Bazel fails with `NoClassDefFoundError`** (2026-10-10, the eager-compile
   timing): Bazel 9 builds without the bytes, so jars that hit the disk cache are not in the execution root. Build the
   target with `--remote_download_all` first (`evidence/l7/eager_ab.sh`).
+- **A tree swap for an A/B run keeps the branch's new files** (2026-10-10, L7 steps 3-4): `git checkout <ref> -- <dir>`
+  never deletes, so main's side fails to build on a file only the branch has; delete the branch-only files after the
+  main-side checkout and restore with `git checkout HEAD -- <dir>` (`evidence/l7/eager_ab.sh`).
 
 ## 7. Reading order
 

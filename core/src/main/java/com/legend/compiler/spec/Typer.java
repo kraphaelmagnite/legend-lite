@@ -235,7 +235,7 @@ final class Typer {
             case PackageableElementPtr ref
                     when ref.fullPath().equals("TDSNull")
                     || ref.fullPath().equals("meta::pure::tds::TDSNull") ->
-                    synth(new AppliedFunction(com.legend.builtin.Pure.SQL_NULL.qualifiedName(), List.of()), env);
+                    synth(Calls.exact(com.legend.builtin.Pure.SQL_NULL.qualifiedName(), List.of()), env);
             case PackageableElementPtr ref -> classReference(ref);
             case NewInstance ni -> {
                 // ^TDSNull() — the TDS null-cell INSTANCE (engine
@@ -413,11 +413,11 @@ final class Typer {
                 List<ColSpec> specs = cols.stream()
                         .map(v -> new ColSpec(TdsDesugars.stripQuotes(((CString) v).value()), null, null))
                         .toList();
-                AppliedFunction select = new AppliedFunction("select",
+                AppliedFunction select = Calls.platform("select",
                         List.of(af.parameters().get(0),
                                 new com.legend.protocol.spec.ColSpecArray(specs)));
                 return synth(com.legend.builtin.TdsLegacy.RESTRICT_DISTINCT.matches(af)
-                        ? new AppliedFunction("distinct", List.of(select)) : select, env);
+                        ? Calls.platform("distinct", List.of(select)) : select, env);
             }
         }
         if (com.legend.builtin.NativeFn.TyperForm.EXTRACT_ENUM_VALUE.matches(af.function())
@@ -449,11 +449,11 @@ final class Typer {
             if (d != null && rt.multiplicity() instanceof Multiplicity.Bounded rb && !rb.isMany()) {
                 java.util.List<ValueSpecification> qargs = new ArrayList<>(af.parameters());
                 if (rb.lower() != 1) {
-                    qargs.set(0, new AppliedFunction(com.legend.builtin.Pure.Lite.TRUST_ONE,
+                    qargs.set(0, Calls.exact(com.legend.builtin.Pure.Lite.TRUST_ONE,
                             List.of(qargs.get(0))));
                 }
                 com.legend.builtin.DecisionProbe.lifted(af.propertyCall() ? "qp-var:dot" : "qp-var:call", simple, d.bodyFunctionFqn(), ctx.findFunction(d.bodyFunctionFqn()).size());
-                return applyGeneric(new AppliedFunction(d.bodyFunctionFqn(), qargs), env);
+                return applyGeneric(Calls.exact(d.bodyFunctionFqn(), qargs), env);
             }
         }
         Optional<CoreFn> core = com.legend.compiler.ResolvedNames.form(af);
@@ -465,7 +465,7 @@ final class Typer {
             // ever meant relations, tables and class extents
             TypedFunction owned = ReceiverOwnedFunctions.of(this, af, env);
             if (owned != null) {
-                return applyGeneric(new AppliedFunction(owned.qualifiedName(),
+                return applyGeneric(Calls.exact(owned.qualifiedName(),
                         af.parameters()), env);
             }
             return applyCore(core.get(), af, env);
@@ -482,7 +482,7 @@ final class Typer {
                         instanceof com.legend.protocol.spec.PackageableElementPtr pep
                 && (pep.fullPath().equals("meta::pure::tds::TDSNull")
                         || pep.fullPath().equals("TDSNull"))) {
-            return synth(new AppliedFunction("isEmpty",
+            return synth(Calls.platform("isEmpty",
                     List.of(af.parameters().get(0))), env);
         }
         // PARAMETERIZED qualified property: $p.synonymByType(X) routes to the
@@ -528,7 +528,7 @@ final class Typer {
                     java.util.List<ValueSpecification> inner =
                             new ArrayList<>(af.parameters());
                     inner.set(0, mv);
-                    return synth(new AppliedFunction("map", List.of(
+                    return synth(Calls.platform("map", List.of(
                             af.parameters().get(0),
                             new LambdaFunction(List.of(mv), List.of(
                                     af.withParameters(inner))))),
@@ -542,11 +542,11 @@ final class Typer {
                 if (!(recv.info().multiplicity()
                         instanceof Multiplicity.Bounded rb1
                         && rb1.lower() == 1)) {
-                    qargs.set(0, new AppliedFunction(com.legend.builtin.Pure.Lite.TRUST_ONE,
+                    qargs.set(0, Calls.exact(com.legend.builtin.Pure.Lite.TRUST_ONE,
                             List.of(qargs.get(0))));
                 }
                 com.legend.builtin.DecisionProbe.lifted(af.propertyCall() ? "qp-arity:dot" : "qp-arity:call", qname, d.bodyFunctionFqn(), ctx.findFunction(d.bodyFunctionFqn()).size());
-                return applyGeneric(new AppliedFunction(d.bodyFunctionFqn(),
+                return applyGeneric(Calls.exact(d.bodyFunctionFqn(),
                         qargs), env);
             }
             // MILESTONED property functions (real pure GENERATES these on
@@ -865,6 +865,20 @@ final class Typer {
         return overloads.functionCandidates(af);
     }
 
+    /** A language FORM's declarations at an arity, asked by the form rather than by a call (a checker that needs
+     *  another form's signature: {@code tableToTDS} inside the table-reference check): the resolver's answer for
+     *  the form's parse name ({@code NameResolver.builtCallNames}), each name looked up as a declaration. Since L7
+     *  "resolve once" (2026-10-10) no bare name is looked up as a declaration. */
+    List<TypedFunction> formCandidates(com.legend.platform.CoreFn form, int arity) {
+        com.legend.compiler.NameResolver.CallNames named =
+                com.legend.compiler.NameResolver.builtCallNames(form.parseName(), arity);
+        List<TypedFunction> out = new java.util.ArrayList<>();
+        for (String fqn : named.referents().isEmpty() ? List.of(named.function()) : named.referents()) {
+            out.addAll(functionCandidates(fqn));
+        }
+        return out;
+    }
+
     /**
      * A packageable-element reference used as a value &mdash; currently a class
      * reference (the {@code Person} in {@code Person.all()}), typed as
@@ -1135,12 +1149,11 @@ final class Typer {
         // ROW is a bare struct whose schema carries the wildcard.
         TypedSpec grecv = synth(af.parameters().get(0), env);
         if (Type.relationValued(grecv.info())) {
-            return synth(new AppliedFunction("map", List.of(
+            return synth(Calls.platform("map", List.of(
                     af.parameters().get(0),
                     new LambdaFunction(List.of(new Variable("_amc")),
-                            List.of(new AppliedFunction(af.function(),
-                                    List.of(new Variable("_amc"),
-                                            af.parameters().get(1))))))),
+                            List.of(Calls.like(af, List.of(new Variable("_amc"),
+                                    af.parameters().get(1))).asPlainCall())))),
                     env);
         }
         return rowCellReadOnRow(af, env, getter, grecv);
@@ -1171,7 +1184,7 @@ final class Typer {
                         && b.lower() == 1)) {
             return cell;
         }
-        return synth(new AppliedFunction(com.legend.builtin.Pure.Lite.TRUST_ONE, List.of(
+        return synth(Calls.exact(com.legend.builtin.Pure.Lite.TRUST_ONE, List.of(
                 new AppliedProperty(af.parameters().get(0), colRef))), env);
     }
 
@@ -1341,7 +1354,7 @@ final class Typer {
                     && b1.lower() == 1 && b1.upper() != null
                     && b1.upper() == 1;
             if (!exactlyOne && source.info().multiplicity().isMany()) {
-                return synth(new AppliedFunction("map", List.of(ap.receiver(),
+                return synth(Calls.platform("map", List.of(ap.receiver(),
                         new LambdaFunction(
                                 List.of(new Variable("_am0")),
                                 List.of(new AppliedProperty(
@@ -1363,10 +1376,10 @@ final class Typer {
             // (SQL null-propagates through the inlined body, which IS
             // the engine's no-guard behavior).
             com.legend.builtin.DecisionProbe.lifted("qp-zero-arg:dot", ap.property(), d.bodyFunctionFqn(), ctx.findFunction(d.bodyFunctionFqn()).size());
-            return applyGeneric(new AppliedFunction(d.bodyFunctionFqn(),
+            return applyGeneric(Calls.exact(d.bodyFunctionFqn(),
                     List.of(exactlyOne
                             ? ap.receiver()
-                            : new AppliedFunction(com.legend.builtin.Pure.Lite.TRUST_ONE,
+                            : Calls.exact(com.legend.builtin.Pure.Lite.TRUST_ONE,
                                     List.of(ap.receiver())))), env);
         }
         // the AllVersions PROPERTY spelling (no parens): a version-sweep

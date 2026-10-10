@@ -3,6 +3,7 @@
 
 package com.legend.normalizer;
 
+import com.legend.compiler.spec.Calls;
 import com.legend.compiler.RelationalKinds;
 
 import com.legend.builtin.Pure;
@@ -60,7 +61,7 @@ final class DeclaredCoercions {
         // a WIRE coercion (the engine runtime converts on the wire and
         // its SQL/plan text never spells it) — castAsDeclared casts at
         // execution, reads bare in the engine-text funnel
-        return new AppliedFunction(Pure.Lite.CAST_AS_DECLARED, List.of(value,
+        return Calls.exact(Pure.Lite.CAST_AS_DECLARED, List.of(value,
                 new TypeAnnotation.Named(
                         new TypeExpression.NameRef(simple))));
     }
@@ -115,7 +116,7 @@ final class DeclaredCoercions {
         if (colKind == null || colKind.equals(declared)) {
             return read;
         }
-        return new AppliedFunction(Pure.Lite.TYPE_AS_DECLARED, List.of(read,
+        return Calls.exact(Pure.Lite.TYPE_AS_DECLARED, List.of(read,
                 new TypeAnnotation.Named(
                         new TypeExpression.NameRef(declared))));
     }
@@ -160,7 +161,7 @@ final class DeclaredCoercions {
         // engine-text funnel reads the expression bare (engine goldens
         // never spell wire coercions; the runtime converts on the wire)
         if ("String".equals(declared) || "Boolean".equals(declared)) {
-            return new AppliedFunction(Pure.Lite.CAST_AS_DECLARED, List.of(read,
+            return Calls.exact(Pure.Lite.CAST_AS_DECLARED, List.of(read,
                     new TypeAnnotation.Named(
                             new TypeExpression.NameRef(declared))));
         }
@@ -169,7 +170,7 @@ final class DeclaredCoercions {
             default -> false;
         };
         if (cast) {
-            return new AppliedFunction("cast", List.of(read,
+            return Calls.platform("cast", List.of(read,
                     new TypeAnnotation.Named(
                             new TypeExpression.NameRef(declared))));
         }
@@ -201,7 +202,7 @@ final class DeclaredCoercions {
             // select (Rule 2). (Retired: castAsDeclared → DOUBLE at the read,
             // fc2fe6bd3 — double arithmetic over the column:
             // 0.8499999999999943 for 0.85.)
-            return new AppliedFunction(Pure.Lite.TYPE_AS_DECLARED, List.of(read,
+            return Calls.exact(Pure.Lite.TYPE_AS_DECLARED, List.of(read,
                     new TypeAnnotation.Named(
                             new TypeExpression.NameRef(declared))));
         }
@@ -218,8 +219,8 @@ final class DeclaredCoercions {
             if (parseFn != null) {
                 // parse natives are strict String[1]; the column read is
                 // SQL-lane [0..1] — the toOne trust wrap (audit slice 2)
-                return new AppliedFunction(parseFn, List.of(
-                        new AppliedFunction(com.legend.builtin.Pure.Lite.TRUST_ONE, List.of(read))));
+                return Calls.platform(parseFn, List.of(
+                        Calls.exact(com.legend.builtin.Pure.Lite.TRUST_ONE, List.of(read))));
             }
         }
         return read;

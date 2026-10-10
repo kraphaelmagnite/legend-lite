@@ -2,6 +2,7 @@
 
 package com.legend.normalizer;
 
+import com.legend.compiler.spec.Calls;
 import com.legend.builtin.Pure;
 import com.legend.error.NotImplementedException;
 import com.legend.model.ClassMapping;
@@ -209,7 +210,7 @@ final class GroupBySynthesis {
                     rowBind, p.view());
             Variable vals = new Variable("vals");
             // the reducer is the engine dynafunction's pure passthrough
-            ValueSpecification aggBody = new AppliedFunction(
+            ValueSpecification aggBody = Calls.platform(
                     RelOpTranslator.dynaFnName(fc), List.of(vals));
             aggCols.add(new ColSpec(pm.propertyName(),
                     new LambdaFunction(List.of(rowBind), List.of(selector)),
@@ -218,7 +219,7 @@ final class GroupBySynthesis {
         // the mapped TABLE's rows are grouped by key EXPRESSIONS: the
         // internal-desugar identity (Pure.Lite.GROUP_BY_COMPUTED_KEYS —
         // upstream's relation groupBy takes bare column names; batch 5 leg 5d)
-        return new AppliedFunction(Pure.Lite.GROUP_BY_COMPUTED_KEYS, List.of(source,
+        return Calls.exact(Pure.Lite.GROUP_BY_COMPUTED_KEYS, List.of(source,
                 new ColSpecArray(keyCols), new ColSpecArray(aggCols)));
     }
 

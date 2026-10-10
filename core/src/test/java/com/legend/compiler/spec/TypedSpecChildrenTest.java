@@ -193,7 +193,7 @@ class TypedSpecChildrenTest {
             return leaf();
         }
         if (type == TypedFunction.class) {
-            return CTX.findFunction("size").get(0);   // any real native signature
+            return CTX.findFunction("meta::pure::functions::collection::size").get(0);   // any real native signature
         }
         if (type == TypedLambda.class) {
             return new TypedLambda(List.of("x"), List.of(leaf()), one());

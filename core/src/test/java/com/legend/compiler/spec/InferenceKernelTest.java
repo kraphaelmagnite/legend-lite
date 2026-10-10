@@ -511,7 +511,7 @@ class InferenceKernelTest {
         PureModelContext ctx = ctx();
         InferenceKernel k = new InferenceKernel(ctx);
         InferenceKernel.Resolution r = k.resolveOverload(
-                ctx.findFunction("at"),
+                ctx.findFunction("meta::pure::functions::collection::at"),
                 List.of(et(Type.Primitive.STRING, Multiplicity.Bounded.ZERO_MANY),
                         et(Type.Primitive.INTEGER, Multiplicity.Bounded.ONE)));
         assertEquals(Type.Primitive.STRING, r.output().type());

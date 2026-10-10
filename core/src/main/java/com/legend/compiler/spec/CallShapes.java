@@ -43,10 +43,10 @@ final class CallShapes {
         }
         com.legend.protocol.spec.ValueSpecification source = af.parameters().get(0);
         if (m.lowerBound() == 1 && Integer.valueOf(1).equals(m.upperBound())) {
-            return new AppliedFunction("toOne", java.util.List.of(source));
+            return Calls.platform("toOne", java.util.List.of(source));
         }
         if (m.lowerBound() == 1 && m.upperBound() == null) {
-            return new AppliedFunction("toOneMany", java.util.List.of(source));
+            return Calls.platform("toOneMany", java.util.List.of(source));
         }
         if (m.lowerBound() == 0 && m.upperBound() == null) {
             return source;
@@ -84,9 +84,8 @@ final class CallShapes {
         String e = "_am_" + af.function().replace("::", "_");
         List<ValueSpecification> rest = new ArrayList<>(af.parameters());
         rest.set(0, new Variable(e, null, null, null));
-        AppliedFunction inner = new AppliedFunction(af.function(), rest, af.referents(),
-                af.pos(), false, af.grouped(), af.infix());
-        return t.synth(new AppliedFunction("map", List.of(af.parameters().get(0),
+        AppliedFunction inner = Calls.like(af, rest).asPlainCall();
+        return t.synth(Calls.platform("map", List.of(af.parameters().get(0),
                 new LambdaFunction(List.of(new Variable(e, null, null, null)), List.of(inner)))), env);
     }
 
@@ -167,7 +166,7 @@ final class CallShapes {
         for (int i = 0; i < srcElems.size(); i++) {
             if (com.legend.compiler.element.type.PlatformTypes
                     .printsByOwnToString(typedElems.get(i).info().type())) {
-                out.add(new AppliedFunction("toString", List.of(srcElems.get(i))));
+                out.add(Calls.platform("toString", List.of(srcElems.get(i))));
                 changed = true;
             } else {
                 out.add(srcElems.get(i));

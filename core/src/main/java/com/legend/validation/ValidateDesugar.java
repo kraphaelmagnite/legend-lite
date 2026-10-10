@@ -3,6 +3,7 @@
 
 package com.legend.validation;
 
+import com.legend.compiler.spec.Calls;
 import com.legend.protocol.ConstraintDefinition;
 
 import com.legend.compiler.element.ModelContext;
@@ -190,7 +191,7 @@ public final class ValidateDesugar {
             ValueSpecification one = constraintProject(queryChain, c,
                     userCols, overrides.get(c.name()));
             tds = tds == null ? one
-                    : new AppliedFunction("concatenate", List.of(tds, one));
+                    : Calls.platform("concatenate", List.of(tds, one));
         }
         if (postTds != null) {
             // beta-apply {t|...} over the concatenated violations
@@ -204,7 +205,7 @@ public final class ValidateDesugar {
         // ^RelationalExecutionContext(addDriverTablePkForProject=true) — the
         // option rides the call as a VALUE the one context reader binds
         // (the model compiles whole; the class is in it wherever validate is)
-        return new AppliedFunction("execute", List.of(
+        return Calls.platform("execute", List.of(
                 new LambdaFunction(List.of(), List.of(tds)),
                 mapping, runtime,
                 new com.legend.protocol.spec.NewInstance(
@@ -340,8 +341,8 @@ public final class ValidateDesugar {
                         com.legend.builtin.Pure.NOT__BOOLEAN_1.qualifiedName())
                 && nf.parameters().size() == 1
                 ? nf.parameters().get(0)
-                : new AppliedFunction("not", List.of(body));
-        ValueSpecification filtered = new AppliedFunction("filter", List.of(
+                : Calls.platform("not", List.of(body));
+        ValueSpecification filtered = Calls.platform("filter", List.of(
                 chain,
                 new LambdaFunction(
                         List.of(new Variable("this", null, null)),
@@ -384,7 +385,7 @@ public final class ValidateDesugar {
             fns.add(cf.parameters().get(0));
             names.add(cf.parameters().get(1));
         }
-        return new AppliedFunction("project", List.of(
+        return Calls.platform("project", List.of(
                 filtered, new PureCollection(fns),
                 new PureCollection(names)));
     }

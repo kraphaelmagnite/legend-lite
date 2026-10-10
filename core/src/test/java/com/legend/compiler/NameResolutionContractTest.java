@@ -235,18 +235,6 @@ class NameResolutionContractTest {
         assertSame(once, twice, "an unchanged call is the same object");
     }
 
-    /** Until L7 step 3, a call BUILT after the resolver has no record; the reader still answers it by the rule
-     *  (the same names the resolver would have recorded), so the typer's desugars keep working between the steps. */
-    @Test
-    @DisplayName("a call with no record is still answered by the bare-name rule, until step 3")
-    void aBuiltCallIsAnsweredByTheRule() {
-        var built = new com.legend.protocol.spec.AppliedFunction("map",
-                List.of(new com.legend.protocol.spec.Variable("xs"), new com.legend.protocol.spec.Variable("f")));
-        var resolved = (com.legend.protocol.spec.AppliedFunction)
-                com.legend.compiler.NameResolver.resolveQuery(built);
-        assertEquals(resolved.referents(), com.legend.compiler.ResolvedNames.referents(built),
-                "the rule at a read gives the same names the resolver records");
-    }
 
     /** 4b.1: a name in ONE core package qualifies, and the form that owns that
      *  FQN still dispatches (CoreFn.of by the owned map). */

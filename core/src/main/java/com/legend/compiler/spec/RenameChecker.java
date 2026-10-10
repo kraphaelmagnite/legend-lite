@@ -38,7 +38,7 @@ final class RenameChecker {
             }
             ValueSpecification chain = ps.get(0);
             for (int i = 0; i < olds.colSpecs().size(); i++) {
-                chain = new AppliedFunction(CoreFn.RENAME.parseName(),
+                chain = Calls.form(CoreFn.RENAME,
                         List.of(chain, olds.colSpecs().get(i), news.colSpecs().get(i)));
             }
             return t.synth(chain, env);

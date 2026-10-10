@@ -2,6 +2,7 @@
 
 package com.legend.normalizer;
 
+import com.legend.compiler.spec.Calls;
 import com.legend.builtin.Pure;
 import com.legend.compiler.ModelBuilder;
 import com.legend.compiler.SynthFqn;
@@ -522,7 +523,7 @@ final class AssociationSynthesis {
         // type through the ordinary kernel — no Any punt, no bespoke
         // checker. The resolver reads the tables from the CALL instead of
         // re-deriving them from the classes' mappings.
-        ValueSpecification body = new AppliedFunction(Pure.Lite.LEGACY_ASSOC_PREDICATE, List.of(
+        ValueSpecification body = Calls.exact(Pure.Lite.LEGACY_ASSOC_PREDICATE, List.of(
                 a, b,
                 ViewRelation.sourceRefFor(anchors.a(), model, md),
                 ViewRelation.sourceRefFor(anchors.b(), model, md),

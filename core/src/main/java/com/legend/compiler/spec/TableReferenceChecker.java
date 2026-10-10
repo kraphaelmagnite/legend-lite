@@ -74,8 +74,10 @@ final class TableReferenceChecker {
         // ignored: upstream's tableReference(database:Database[1],
         // schemaName:String[1], tableName:String[1]) — the #>{db.T}# desugar
         // is the 'default' schema spelled once
+        // the island form carries two arguments and the native three (the default schema spelled once below),
+        // so the signature is the FORM's at arity 3, not the call's own record
         InferenceKernel.Resolution sig = t.kernel().resolveOverload(
-                t.model().findFunction(CoreFn.TABLE_REFERENCE.parseName()),
+                t.formCandidates(CoreFn.TABLE_REFERENCE, 3),
                 java.util.List.of(
                         ExprType.one(new Type.ClassType(
                                 com.legend.compiler.element.type.PlatformTypes.DATABASE)),
@@ -175,7 +177,7 @@ final class TableReferenceChecker {
         // denotes (RelationStoreAccessor.sourceElement), proven just above
         // to be a table reference — so the signature sees a Table[1]
         t.kernel().resolveOverload(
-                t.model().findFunction(CoreFn.TABLE_TO_TDS.parseName()),
+                t.formCandidates(CoreFn.TABLE_TO_TDS, 1),
                 List.of(ExprType.one(new Type.ClassType(
                         com.legend.compiler.element.type.PlatformTypes.RELATIONAL_TABLE))));
         return table;

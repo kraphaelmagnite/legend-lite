@@ -50,10 +50,7 @@ final class NewChecker {
             com.legend.protocol.spec.ValueSpecification overrideExpr = key.value();
             if (key.isAdd()) {
                 var propRead = new com.legend.protocol.spec.AppliedProperty(receiver, name);
-                overrideExpr = new com.legend.protocol.spec.AppliedFunction(
-                        "concatenate",
-                        java.util.List.of(propRead, key.value()),
-                        java.util.List.of(), null, false, false, false);
+                overrideExpr = Calls.platform("concatenate", java.util.List.of(propRead, key.value()));
             }
             TypedSpec value = t.synth(overrideExpr, env);
             t.kernel().unify(prop.type(), value.info().type(), new Bindings());

@@ -50,7 +50,7 @@ final class IfChecker {
                     List.of(args.get(0))), args.get(1), env);
         }
         TypedSpec cond = t.synth(args.get(0), env);
-        var ifSigs = t.model().findFunction(CoreFn.IF.parseName());
+        var ifSigs = t.functionCandidates(af);
         if (ifSigs.isEmpty()) {
             throw new TypeInferenceException("no registered signature for 'if'");
         }
