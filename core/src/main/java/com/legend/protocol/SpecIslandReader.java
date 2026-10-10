@@ -345,7 +345,7 @@ final class SpecIslandReader {
             // the engine's grammar refuses ->subType below the root; so does lite's
             noSubTypes(n);
             List<ValueSpecification> args = n.listOrEmpty("parameters", SpecIslandReader::graphArg);
-            out.add(n.done(new GraphFetchLiteral.Node(n.str("property"), n.span(), args, !args.isEmpty(),
+            out.add(n.done(new GraphFetchLiteral.Node(n.str("property"), n.span(), args,
                     n.optStr("alias"), n.optStr("subType"), graphNodes(n.arrOrEmpty("subTrees")))));
         }
         return out;

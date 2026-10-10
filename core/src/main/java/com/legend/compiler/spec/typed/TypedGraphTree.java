@@ -13,20 +13,13 @@ import java.util.Objects;
  */
 public record TypedGraphTree(String property, List<TypedGraphTree> children,
         @com.legend.base.Nullable String alias, List<TypedSpec> args, boolean sweep,
-        @com.legend.base.Nullable String subTypeFqn,
-        boolean qualified) {
+        @com.legend.base.Nullable String subTypeFqn) {
+    // no "qualified" mark: whether `prop()` or `prop` was written is on no wire, and nothing may read it
+    // (leg 8 step 2, with the Compiler Rewrite line)
     public TypedGraphTree {
         Objects.requireNonNull(property, "property");
         children = List.copyOf(children);
         args = args == null ? List.of() : List.copyOf(args);
-    }
-
-    /** Historical arity: parenthesized-ness follows the args. */
-    public TypedGraphTree(String property, List<TypedGraphTree> children,
-            @com.legend.base.Nullable String alias, List<TypedSpec> args, boolean sweep,
-            @com.legend.base.Nullable String subTypeFqn) {
-        this(property, children, alias, args, sweep, subTypeFqn,
-                args != null && !args.isEmpty());
     }
 
     /** Non-subType node (every pre-subType shape). */
