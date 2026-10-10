@@ -1477,8 +1477,10 @@ public final class ConnectionSectionGrammar implements LexableSectionGrammar {
             throw c.error("Redshift needs name, host, port, clusterID"
                     + " and region");
         }
+        // no span: the redshift extension's wire carries none (C12 byte pin;
+        // leg 8 step 2)
         return new Protocol.PRedshiftSpec(clusterID, name, endpointURL, host,
-                port, region, c.spanOf(keywordTok, c.pos() - 1));
+                port, region, null);
     }
 
     /** {@code Athena { region; database?; workGroup?; outputLocation?;

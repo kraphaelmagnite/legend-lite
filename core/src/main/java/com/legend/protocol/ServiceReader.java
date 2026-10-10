@@ -53,7 +53,7 @@ final class ServiceReader {
         return new Protocol.PService(w.str("package"), w.str("name"), DomainReader.stereotypes(w),
                 DomainReader.taggedValues(w), w.optStr("pattern"), w.optStr("title"),
                 owners == null ? List.of() : owners, ownershipKind, ownershipId, users, w.optStr("mcpServer"),
-                w.optStr("documentation"), auto ? Boolean.TRUE : null, execution(w.take("execution")),
+                w.optStr("documentation"), auto, execution(w.take("execution")),
                 legacyTest(w.opt("test")), w.optList("testSuites", ServiceTestReader::testSuite),
                 post.isEmpty() ? null : post, w.span());
     }

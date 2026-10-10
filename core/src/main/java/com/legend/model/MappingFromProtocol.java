@@ -129,7 +129,7 @@ public final class MappingFromProtocol {
         }
         List<MappingInclude> includes = includesOf(m);
         return new CleanSheetMappingDefinition(m.qualifiedName(), includes, bindings,
-                assocBindings, enums, m.testSuitesSource());
+                assocBindings, enums, null);
     }
 
     /** The wire's mutually-exclusive pair becomes the model's sealed
@@ -205,12 +205,13 @@ public final class MappingFromProtocol {
         for (Protocol.PEnumerationMapping em : m.enumerationMappings()) {
             enums.add(enumerationMapping(em));
         }
-        // The model carries testSuites as RAW TEXT — Phase C parses them
-        // lazily — so the protocol record keeps the verbatim slice alongside
-        // the parsed suites. `tests` (the LEGACY test block) has no model
-        // field at all and never had one; the legacy parser drops it too.
+        // The model's testSuitesSource is never read (the suites are on the
+        // record, typed, and the JSON carries only those): always null now,
+        // the field's deletion the Compiler Rewrite line's (leg 8 step 2).
+        // `tests` (the LEGACY test block) has no model field at all and never
+        // had one; the legacy parser drops it too.
         return new LegacyMappingDefinition(m.qualifiedName(), includes,
-                classMappings, associations, enums, m.testSuitesSource());
+                classMappings, associations, enums, null);
     }
 
     // The WIRE discriminators, not the router FQNs: MappingProtocolParser

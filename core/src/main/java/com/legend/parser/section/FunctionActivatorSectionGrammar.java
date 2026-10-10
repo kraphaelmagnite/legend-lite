@@ -270,7 +270,11 @@ public final class FunctionActivatorSectionGrammar
             } else if ("activationConfiguration".equals(key)) {
                 int aS = c.pos();
                 actConn = Protocol.unquotePath(c.parseQualifiedName());
-                actConnSpan = c.spanOf(aS, c.pos() - 1);
+                // only the Snowflake configs' walkers give the pointer a span;
+                // the others' JSON has none (leg 8 step 2)
+                if (kind.startsWith("Snowflake")) {
+                    actConnSpan = c.spanOf(aS, c.pos() - 1);
+                }
             } else if ("HostedService".equals(section)
                     && "contentType".equals(key)) {
                 // parsed and DROPPED by the walker — no wire field

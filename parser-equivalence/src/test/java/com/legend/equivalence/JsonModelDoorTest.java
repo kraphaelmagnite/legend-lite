@@ -7,8 +7,6 @@ import com.legend.model.ImportScope;
 import com.legend.model.ModelFromProtocol;
 import com.legend.model.PackageableElement;
 import com.legend.model.ParsedModel;
-import com.legend.parser.Dialect;
-import com.legend.parser.ElementParser;
 import com.legend.parser.PmcdParser;
 import com.legend.protocol.ModelReader;
 import com.legend.testing.TestOutputs;
@@ -33,8 +31,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * <ol>
  *   <li><b>the hop</b>: the text's records (the engine's dialect, what a client's JSON carries), written as JSON and
  *       read back ({@code ModelReader}), are the same records, field by field, positions included;</li>
- *   <li><b>lite's dialect</b>: the compiler's parsed model from the text at lite's dialect ({@code ElementParser}, as
- *       {@code Compiler.compileModel} parses) equals the door's over the engine's records ({@code ModelFromProtocol}):
+ *   <li><b>lite's dialect</b>: the compiler's parsed model from the text at lite's dialect ({@code Compiler.parseModel},
+ *       as {@code Compiler.compileModel} parses) equals the door's over the engine's records ({@code ModelFromProtocol}):
  *       the same elements, each equal, each element's imports the same.</li>
  * </ol>
  * Together: equal input to the compiler, so the same model and the same errors.
@@ -141,7 +139,7 @@ class JsonModelDoorTest {
         // 2. LITE'S DIALECT: the compiler's input from the text (lite's dialect) is the door's over the engine's records
         ParsedModel fromText;
         try {
-            fromText = ElementParser.parse(text, Dialect.LEGEND_LITE);
+            fromText = com.legend.Compiler.parseModel(text);   // the product's text door (lite's dialect)
         } catch (RuntimeException e) {
             t.textRefused++;
             return;

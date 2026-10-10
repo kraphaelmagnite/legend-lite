@@ -16,8 +16,7 @@ import java.util.function.Function;
  * association mappings, includes, enumeration mappings, the legacy {@code tests} and the
  * {@code testSuites} ({@link MappingTestReader}); class mappings read in {@link ClassMappingReader}.
  *
- * <p>Not on the wire, so absent on read: the mapping's {@code testSuites} source text, and the
- * substitutions of an include with more than one {@code src->tgt} pair (the engine records neither path
+ * <p>Not on the wire, so absent on read: the substitutions of an include with more than one {@code src->tgt} pair (the engine records neither path
  * then); a single pair is its own substitution.
  */
 final class MappingReader {
@@ -34,7 +33,7 @@ final class MappingReader {
                 w.list("classMappings", ClassMappingReader::classMapping),
                 w.listOrEmpty("enumerationMappings", MappingReader::enumerationMapping),
                 w.listOrEmpty("includedMappings", MappingReader::include), suites,
-                w.listOrEmpty("tests", MappingTestReader::legacyTest), null, w.span());
+                w.listOrEmpty("tests", MappingTestReader::legacyTest), w.span());
     }
 
     /** An association mapping's stores: none when older JSON leaves them out, as the engine's AssociationMapping. */

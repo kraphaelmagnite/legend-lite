@@ -212,12 +212,12 @@ final class TailReader {
             s.constant("additionalItemsAllowed", false);
             s.constant("uniqueItems", false);
         }
-        Boolean additional = null;
+        boolean additional = false;
         List<Map.Entry<String, Protocol.PBsonSchema>> properties = new ArrayList<>();
         List<String> required = List.of();
         String title = null;
         if (object) {
-            additional = s.bool("additionalPropertiesAllowed") ? Boolean.TRUE : null;
+            additional = s.bool("additionalPropertiesAllowed");
             for (Json.Node p : s.arr("properties")) {
                 Wire e = Wire.of(p, "BSON property");
                 properties.add(e.done(Map.entry(e.str("key"), bson(e.take("value")))));

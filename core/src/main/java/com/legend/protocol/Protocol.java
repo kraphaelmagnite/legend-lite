@@ -527,7 +527,6 @@ public final class Protocol {
                            List<PMappingInclude> includedMappings,
                            List<PMappingTestSuite> testSuites,
                            List<PLegacyMappingTest> tests,
-                           @com.legend.base.Nullable String testSuitesSource,
                            @com.legend.base.Nullable com.legend.protocol.SourceInfo sourceInformation)
             implements Element {
         public String qualifiedName() {
@@ -595,6 +594,22 @@ public final class Protocol {
                                PExternalFormatData body,
                                @com.legend.base.Nullable com.legend.protocol.SourceInfo responseSpan,
                                @com.legend.base.Nullable com.legend.protocol.SourceInfo sourceInformation) {
+        /** The params by name: the JSON writes each list as a map, its keys sorted, so the order they were written in
+         *  is on no wire (leg 8 step 2). */
+        public PServiceStub {
+            queryParams = byName(queryParams);
+            headerParams = byName(headerParams);
+        }
+
+        private static @com.legend.base.Nullable List<PStubParam> byName(
+                @com.legend.base.Nullable List<PStubParam> params) {
+            if (params == null) {
+                return null;
+            }
+            List<PStubParam> sorted = new java.util.ArrayList<>(params);
+            sorted.sort(java.util.Comparator.comparing(PStubParam::name));
+            return List.copyOf(sorted);
+        }
     }
 
     /** A named request-parameter pattern ({@code name: EqualTo #{...}#}). */
@@ -1145,7 +1160,7 @@ public final class Protocol {
                           List<PTaggedValue> taggedValues,
                           boolean distinct,
                           @com.legend.base.Nullable PViewFilter filter,
-                          @com.legend.base.Nullable List<PRelOp> groupBy,
+                          List<PRelOp> groupBy,
                           List<String> primaryKey,
                           @com.legend.base.Nullable com.legend.protocol.SourceInfo sourceInformation) {
     }
@@ -1206,7 +1221,7 @@ public final class Protocol {
                            @com.legend.base.Nullable List<String> ownershipUsers,
                            @com.legend.base.Nullable String mcpServer,
                            @com.legend.base.Nullable String documentation,
-                           @com.legend.base.Nullable Boolean autoActivateUpdates,
+                           boolean autoActivateUpdates,
                            PServiceExecution execution,
                            @com.legend.base.Nullable PLegacyServiceTest test,
                            @com.legend.base.Nullable List<PServiceTestSuite> testSuites,
@@ -1600,6 +1615,14 @@ public final class Protocol {
                                    @com.legend.base.Nullable com.legend.protocol.spec.ValueSpecification headPath,
                                    List<PPersistenceEntry> entries,
                                    @com.legend.base.Nullable com.legend.protocol.SourceInfo sourceInformation) {
+        /** Entries by key: the JSON writes them as one object's fields, in key order, so the order they were written
+         *  in is on no wire (leg 8 step 2); the composer and the emitter look them up by key. */
+        public PPersistenceNode {
+            List<PPersistenceEntry> byKey = new java.util.ArrayList<>(entries);
+            byKey.sort(java.util.Comparator.comparing(PPersistenceEntry::key));
+            entries = List.copyOf(byKey);
+        }
+
         /** A keyword-headed node (the usual form). */
         public PPersistenceNode(String kind, List<PPersistenceEntry> entries,
                 @com.legend.base.Nullable com.legend.protocol.SourceInfo sourceInformation) {
@@ -1611,7 +1634,8 @@ public final class Protocol {
     public sealed interface PPersistenceEntry {
         String key();
 
-        /** {@code key: 'string' | identifier | true/false;}. */
+        /** {@code key: 'string' | identifier | true/false | 10;} -- {@code quoted}: a string on the wire (a quoted string
+         *  or an identifier); false for a boolean or a number, written bare. */
         record Scalar(String key, String value, boolean quoted)
                 implements PPersistenceEntry {
         }
@@ -1993,7 +2017,7 @@ public final class Protocol {
      *  scalar facets only when spelled, properties in source order
      *  (ZTailProbe "mongo-rich"). */
     public record PBsonSchema(String wireType,
-                              @com.legend.base.Nullable Boolean additionalPropertiesAllowed,
+                              boolean additionalPropertiesAllowed,   // an object node's (the wire's boolean); false on others
                               List<java.util.Map.Entry<String, PBsonSchema>> properties,
                               List<String> required,
                               @com.legend.base.Nullable String title,

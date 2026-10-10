@@ -95,7 +95,12 @@ public final class DataQualityValidationSectionGrammar
                         ctxSecond = c.peek() == TokenType.STRING
                                 ? SectionParse.stringValue(c)
                                 : Protocol.unquotePath(c.parseQualifiedName());
-                        ctxSecondSpan = c.spanOf(s2, c.pos() - 1);
+                        // the runtime POINTER of fromMappingAndRuntime has a
+                        // span on the wire; fromDataSpace's context key is a
+                        // plain string, with none (leg 8 step 2)
+                        if ("fromMappingAndRuntime".equals(ctxKind)) {
+                            ctxSecondSpan = c.spanOf(s2, c.pos() - 1);
+                        }
                     }
                     c.expect(TokenType.PAREN_CLOSE);
                 }

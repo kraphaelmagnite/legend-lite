@@ -589,7 +589,7 @@ public final class DatabaseProtocolParser implements TokenStreamCursor {
         expect(TokenType.PAREN_OPEN);
         boolean distinct = false;
         Protocol.PViewFilter filter = null;
-        List<Protocol.PRelOp> groupBy = null;
+        List<Protocol.PRelOp> groupBy = new ArrayList<>();   // the engine's View starts it empty; the JSON always writes it
         List<Protocol.PViewColumnMapping> mappings = new ArrayList<>();
         List<String> primaryKey = new ArrayList<>();
         while (!atEnd() && peek() != TokenType.PAREN_CLOSE) {

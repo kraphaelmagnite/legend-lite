@@ -117,7 +117,7 @@ public final class ServiceSectionGrammar
         List<String> ownershipUsers = null;
         String mcpServer = null;
         String documentation = null;
-        Boolean autoActivate = null;
+        boolean autoActivate = false;   // the engine's walker: absent is false (ServiceParseTreeWalker:138)
         Protocol.PServiceExecution execution = null;
         Protocol.PLegacyServiceTest test = null;
         List<Protocol.PServiceTestSuite> testSuites = null;
@@ -614,11 +614,11 @@ public final class ServiceSectionGrammar
                             }
                             c.advance();
                         }
-                        com.legend.protocol.spec.ValueSpecification lambda =
-                                com.legend.parser.SpecParser.parse(c.tokens().slice(ls, c.pos()), c.dialect());
+                        com.legend.protocol.spec.ValueSpecification assertion = lambda(
+                                com.legend.parser.SpecParser.parse(c.tokens().slice(ls, c.pos()), c.dialect()));
                         c.expect(TokenType.BRACE_CLOSE);
                         asserts.add(new Protocol.PLegacyServiceTest
-                                .PLegacyAssert(paramValues, lambda,
+                                .PLegacyAssert(paramValues, assertion,
                                         c.spanOf(as, c.pos() - 1)));
                         if (!c.match(TokenType.COMMA)) {
                             break;
@@ -1327,7 +1327,17 @@ public final class ServiceSectionGrammar
         com.legend.protocol.spec.ValueSpecification v =
                 SpecParser.parse(c.tokens().slice(bs, c.pos()), c.dialect());
         c.expect(TokenType.SEMI_COLON);
-        return v;
+        return lambda(v);
+    }
+
+    /** A query or an assertion as the JSON carries it: always a lambda, a
+     *  bare expression wrapped as a zero-parameter one WITHOUT a span
+     *  (ServiceParseTreeWalker.visitLambda:710-731; leg 8 step 2). */
+    private static com.legend.protocol.spec.ValueSpecification lambda(
+            com.legend.protocol.spec.ValueSpecification v) {
+        return v instanceof com.legend.protocol.spec.LambdaFunction ? v
+                : new com.legend.protocol.spec.LambdaFunction(List.of(),
+                        List.of(v), null);
     }
 
     // ============================================================

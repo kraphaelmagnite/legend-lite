@@ -324,6 +324,9 @@ public final class PersistenceSectionGrammar
         // error reports at `Batch`, an auditing error at its ingest-mode
         // block, never at the cursor (position-exactness lane: the
         // Persistence family carried 67 of the 288 line diverges)
+        if (node.sourceInformation() == null) {
+            return;   // a default the parser supplies (withFlatDefaults; spanless, as on the wire): nothing written
+        }
         int line = com.legend.protocol.SourceInfo.parsed(node.sourceInformation()).startLine();
         int col = com.legend.protocol.SourceInfo.parsed(node.sourceInformation()).startColumn();
         List<String> slotKinds = SLOT_KINDS.get(slot);
@@ -507,6 +510,21 @@ public final class PersistenceSectionGrammar
                 c.spanOf(s, c.pos() - 1));
     }
 
+    /** A flat target's and each multi-flat part's entries with the defaults the engine's protocol starts them with
+     *  and its JSON always writes (probed): no deduplication (spanless) and no partition fields, where unwritten
+     *  (leg 8 step 2: the record holds them, as the JSON does). */
+    private static List<Protocol.PPersistenceEntry> withFlatDefaults(List<Protocol.PPersistenceEntry> entries) {
+        List<Protocol.PPersistenceEntry> out = new ArrayList<>(entries);
+        if (entries.stream().noneMatch(e -> "deduplicationStrategy".equals(e.key()))) {
+            out.add(new Protocol.PPersistenceEntry.Node("deduplicationStrategy",
+                    new Protocol.PPersistenceNode("None", List.of(), null)));
+        }
+        if (entries.stream().noneMatch(e -> "partitionFields".equals(e.key()))) {
+            out.add(new Protocol.PPersistenceEntry.Strings("partitionFields", List.of()));
+        }
+        return out;
+    }
+
     private static void parseEntries(TokenStreamCursor c,
             List<Protocol.PPersistenceEntry> out,
             @com.legend.base.Nullable TokenType close) {
@@ -543,7 +561,7 @@ public final class PersistenceSectionGrammar
                             parseEntries(c, pe, TokenType.BRACE_CLOSE);
                             c.expect(TokenType.BRACE_CLOSE);
                             nodes.add(new Protocol.PPersistenceNode("__part__",
-                                    pe, c.spanOf(ps, c.pos() - 1)));
+                                    withFlatDefaults(pe), c.spanOf(ps, c.pos() - 1)));
                             if (!c.match(TokenType.COMMA)) {
                                 break;
                             }
@@ -618,8 +636,12 @@ public final class PersistenceSectionGrammar
                         c.setPos(keyStart);
                         c.parseIdentifier();
                         c.expect(TokenType.COLON);
-                        out.add(new Protocol.PPersistenceEntry.Node(key,
-                                parseNode(c)));
+                        Protocol.PPersistenceNode node = parseNode(c);
+                        if ("targetShape".equals(key) && "Flat".equals(node.kind())) {
+                            node = new Protocol.PPersistenceNode(node.kind(), node.headPath(),
+                                    withFlatDefaults(node.entries()), node.sourceInformation());
+                        }
+                        out.add(new Protocol.PPersistenceEntry.Node(key, node));
                         c.match(TokenType.SEMI_COLON);
                     } else if ("database".equals(key)
                             || "binding".equals(key)) {
@@ -650,9 +672,12 @@ public final class PersistenceSectionGrammar
                                                 ks.endLine(),
                                                 ks.endColumn() + 1))));
                     } else {
+                        // an identifier value (table: TableA, an ALL_CAPS
+                        // enum) is a JSON string, as a quoted one is: quoted
+                        // means "a string on the wire" (leg 8 step 2)
                         c.expect(TokenType.SEMI_COLON);
                         out.add(new Protocol.PPersistenceEntry.Scalar(key,
-                                head, false));
+                                head, true));
                     }
                 }
             }
@@ -676,12 +701,12 @@ public final class PersistenceSectionGrammar
             if (c.peek() == TokenType.BRACE_OPEN) {
                 // a KEYLESS target: strictly `{ }` in the .g4
                 // (BRACE_OPEN BRACE_CLOSE) — the wire omits the
-                // persistenceTarget slot entirely
-                int ts = c.pos();
+                // persistenceTarget slot entirely, so the record has no
+                // span either (leg 8 step 2)
                 c.expect(TokenType.BRACE_OPEN);
                 c.expect(TokenType.BRACE_CLOSE);
                 target = new Protocol.PPersistenceNode("__empty__",
-                        List.of(), c.spanOf(ts, c.pos() - 1));
+                        List.of(), null);
             } else {
                 target = contentAnchoredIslandNode(c);
             }

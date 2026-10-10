@@ -101,15 +101,10 @@ class DropInSurfaceTextRuleTest {
             // the expr text standalone with the tilde-anchor quirk);
             // +1: Relation-island CSV char walk (a raw sub-format the
             // engine also parses from chars)
-            // +1 (phase M): the VERBATIM testSuites slice.
-            // LegacyMappingDefinition stores testSuites as RAW TEXT because
-            // Phase C parses them lazily, and parsed protocol cannot be
-            // turned back into source — so the transform needs the source
-            // span, exactly as MappingGrammarParser:83-88 reconstructs it
-            // today. This is the same necessity as the OVERLAY handoff
-            // above, and it DIES with the legacy mapping parser only if the
-            // model stops storing suites as text.
-            "parser/MappingProtocolParser.java", 3);
+            // 3 -> 2 (2026-10-10, protocol program leg 8 step 2): the
+            // VERBATIM testSuites slice is gone -- the record keeps the
+            // parsed suites only, as the JSON does, and nothing read the text
+            "parser/MappingProtocolParser.java", 2);
 
     @Test
     void regexFamilyIsConfinedToTheFrozenWhitelist() throws IOException {

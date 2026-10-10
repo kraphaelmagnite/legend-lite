@@ -305,9 +305,7 @@ final class TailEmitter {
             b.append(",\"additionalItemsAllowed\":false");
         }
         if (isObject) {
-            b.append(",\"additionalPropertiesAllowed\":").append(
-                    s.additionalPropertiesAllowed() != null
-                            && s.additionalPropertiesAllowed());
+            b.append(",\"additionalPropertiesAllowed\":").append(s.additionalPropertiesAllowed());
         }
         b.append(",\"allOf\":[],\"anyOf\":[]");
         if (s.items() != null) {
@@ -1331,21 +1329,8 @@ final class TailEmitter {
             entries.add(new Protocol.PPersistenceEntry.PathValue("path",
                     java.util.Objects.requireNonNull(n.headPath())));
         }
-        if (("targetShape".equals(slot) && "Flat".equals(n.kind())) || part) {
-            // flatTarget and each MultiFlat part inject defaults (probed)
-            if (entries.stream().noneMatch(e ->
-                    "deduplicationStrategy".equals(e.key()))) {
-                entries.add(new Protocol.PPersistenceEntry.Node(
-                        "deduplicationStrategy",
-                        new Protocol.PPersistenceNode("__noDedup__",
-                                List.of(), n.sourceInformation())));
-            }
-            if (entries.stream().noneMatch(e ->
-                    "partitionFields".equals(e.key()))) {
-                entries.add(new Protocol.PPersistenceEntry.Strings(
-                        "partitionFields", List.of()));
-            }
-        }
+        // a flatTarget's and each MultiFlat part's defaults (no deduplication,
+        // no partition fields; probed) are on the record, as on the wire
         final boolean tgtCtx = tgt;
         final boolean gfPartition = gf
                 && "fieldBasedForGraphFetch".equals(wireType);
@@ -1388,13 +1373,8 @@ final class TailEmitter {
                         ProtocolEmitter.str(b, s.value());
                     }
                 }
-                case Protocol.PPersistenceEntry.Node nd -> {
-                    if ("__noDedup__".equals(nd.node().kind())) {
-                        b.append("{\"_type\":\"noDeduplicationStrategy\"}");
-                    } else {
+                case Protocol.PPersistenceEntry.Node nd ->
                         persistenceNode(b, nd.key(), nd.node(), true, gf, tgt);
-                    }
-                }
                 case Protocol.PPersistenceEntry.Pointer pt -> {
                     if ("binding".equals(pt.key())) {
                         // binding pointers carry NO type tag (DIFF-pinned)
@@ -1496,16 +1476,10 @@ final class TailEmitter {
      *  values; harvest testServiceTestParameters). */
     private static void legacyAssert(StringBuilder b,
             Protocol.PLegacyServiceTest.PLegacyAssert a) {
+        // a BARE expression assert is a parameterless lambda with NO span on
+        // the record, as on the wire (harvest testServiceTestParameters)
         b.append("{\"assert\":");
-        if (a.assertion() instanceof com.legend.protocol.spec.LambdaFunction) {
-            ProtocolEmitter.valueSpec(b, a.assertion());
-        } else {
-            // a BARE expression assert wires wrapped in a parameterless
-            // lambda with NO span (harvest testServiceTestParameters)
-            b.append("{\"_type\":\"lambda\",\"body\":[");
-            ProtocolEmitter.valueSpec(b, a.assertion());
-            b.append("],\"parameters\":[]}");
-        }
+        ProtocolEmitter.valueSpec(b, a.assertion());
         b.append(",\"parametersValues\":[");
         for (int i = 0; i < a.parametersValues().size(); i++) {
             if (i > 0) {
@@ -1718,8 +1692,7 @@ final class TailEmitter {
 
     static void service(StringBuilder b, Protocol.PService sv) {
         b.append("{\"_type\":\"service\"");
-        b.append(",\"autoActivateUpdates\":").append(
-                Boolean.TRUE.equals(sv.autoActivateUpdates()));
+        b.append(",\"autoActivateUpdates\":").append(sv.autoActivateUpdates());
         if (sv.documentation() != null) {
             b.append(",\"documentation\":");
             ProtocolEmitter.str(b, sv.documentation());
@@ -2196,17 +2169,12 @@ final class TailEmitter {
         ProtocolEmitter.valueSpec(b, v);
     }
 
-    /** The wire query is ALWAYS a lambda — a bare expression wraps as a
-     *  zero-parameter lambda WITHOUT sourceInformation (DIFF-pinned). */
+    /** The wire query is ALWAYS a lambda, and so is the record's — a bare
+     *  expression is a zero-parameter lambda WITHOUT sourceInformation
+     *  (DIFF-pinned; wrapped where it is parsed). */
     private static void serviceFunc(StringBuilder b,
             com.legend.protocol.spec.ValueSpecification q) {
-        if (q instanceof com.legend.protocol.spec.LambdaFunction) {
-            ProtocolEmitter.valueSpec(b, q);
-            return;
-        }
-        b.append("{\"_type\":\"lambda\",\"body\":[");
         ProtocolEmitter.valueSpec(b, q);
-        b.append("],\"parameters\":[]}");
     }
 
     /** {@code runtimePointer | engineRuntime} — the embedded form reuses

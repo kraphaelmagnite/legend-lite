@@ -148,7 +148,7 @@ final class MongoComposer {
                     .append(tab(level)).append("]");
         }
         b.append(",\n").append(tab(level)).append(key("additionalProperties"))
-                .append(Boolean.TRUE.equals(node.additionalPropertiesAllowed()) ? "true" : "false");
+                .append(node.additionalPropertiesAllowed() ? "true" : "false");
         return b.toString();
     }
 

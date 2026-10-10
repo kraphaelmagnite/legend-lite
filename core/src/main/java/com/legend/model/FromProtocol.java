@@ -270,10 +270,8 @@ public final class FromProtocol {
                     v.primaryKey().contains(cm.name())));
         }
         List<RelationalOperation> groupBy = new java.util.ArrayList<>();
-        if (v.groupBy() != null) {
-            for (com.legend.protocol.Protocol.PRelOp g : v.groupBy()) {
-                groupBy.add(RelOpFromProtocol.op(g, enclosingDb));
-            }
+        for (com.legend.protocol.Protocol.PRelOp g : v.groupBy()) {
+            groupBy.add(RelOpFromProtocol.op(g, enclosingDb));
         }
         return new DatabaseDefinition.ViewDefinition(v.name(), filterMapping(v.filter()),
                 groupBy, v.distinct(), cms);

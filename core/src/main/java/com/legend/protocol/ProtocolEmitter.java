@@ -759,13 +759,11 @@ public final class ProtocolEmitter {
             b.append('}');
         }
         b.append(",\"groupBy\":[");
-        if (v.groupBy() != null) {
-            for (int i = 0; i < v.groupBy().size(); i++) {
-                if (i > 0) {
-                    b.append(',');
-                }
-                relOp(b, v.groupBy().get(i));
+        for (int i = 0; i < v.groupBy().size(); i++) {
+            if (i > 0) {
+                b.append(',');
             }
+            relOp(b, v.groupBy().get(i));
         }
         b.append(']');
         b.append(",\"name\":");
@@ -1210,8 +1208,8 @@ public final class ProtocolEmitter {
                     .append("\",\"activationConnection\":{\"_type\":"
                             + "\"connectionPointer\",\"connection\":");
             str(b, fa.activationConnection());
-            // only the Snowflake configs walk the pointer span; the
-            // memSql/bigQuery composers drop it (corpus DIFF-pinned)
+            // only the Snowflake configs walk the pointer span (the record
+            // has none for the others: memSql/bigQuery, corpus DIFF-pinned)
             if (fa.kind().startsWith("Snowflake")) {
                 b.append(",\"sourceInformation\":");
                 srcInfo(b, fa.activationConnectionSpan());
