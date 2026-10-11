@@ -30,15 +30,13 @@ import java.util.Objects;
  * @param classBindings        per-class bindings (ref or inline)
  * @param associationBindings  per-association predicate bindings (ref or inline)
  * @param enumerationMappings  per-enumeration mappings
- * @param testSuitesSource     raw {@code testSuites: [...]} text, or {@code null}
  */
 public record CleanSheetMappingDefinition(
         String qualifiedName,
         List<MappingInclude> includes,
         List<ClassBinding> classBindings,
         List<AssociationBinding> associationBindings,
-        List<EnumerationMapping> enumerationMappings,
-        @com.legend.base.Nullable String testSuitesSource)
+        List<EnumerationMapping> enumerationMappings)
         implements PackageableElement {
 
     public CleanSheetMappingDefinition {

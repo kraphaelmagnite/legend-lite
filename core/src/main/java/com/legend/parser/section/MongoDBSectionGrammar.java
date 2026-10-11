@@ -36,9 +36,7 @@ public final class MongoDBSectionGrammar implements ElementwiseSectionGrammar {
 
     @Override
     public com.legend.model.PackageableElement toModel(Protocol.Element element) {
-        Protocol.PMongoDatabase m = (Protocol.PMongoDatabase) element;
-        return new com.legend.model.GenericSectionElementDefinition("MongoDB",
-                "Database", m.qualifiedName(), java.util.Map.of(), null);
+        return com.legend.model.ModelFromProtocol.element(element);
     }
 
     @Override
@@ -269,8 +267,10 @@ public final class MongoDBSectionGrammar implements ElementwiseSectionGrammar {
                 items.add(schemaOf((java.util.Map<?, ?>) o, false, at));
             }
         }
+        // an object node's flag, as the wire's boolean (absent is false); a scalar node has none on the wire
+        boolean objectNode = "schema".equals(wireType) || "objectType".equals(wireType);
         return new Protocol.PBsonSchema(wireType,
-                addl == null ? null : (Boolean) addl, props, required,
+                objectNode && Boolean.TRUE.equals(addl), props, required,
                 (String) m.get("title"), (String) m.get("description"),
                 (Long) m.get("minLength"), (Long) m.get("maxLength"), items);
     }

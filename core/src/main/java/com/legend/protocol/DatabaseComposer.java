@@ -258,7 +258,7 @@ final class DatabaseComposer {
                     filter.joins())).append("\n");
         }
         List<Protocol.PRelOp> groupBy = view.groupBy();
-        if (groupBy != null && !groupBy.isEmpty()) {
+        if (!groupBy.isEmpty()) {
             List<String> gs = new ArrayList<>();
             for (Protocol.PRelOp g : groupBy) {
                 gs.add(tab(indent + 2) + ops.render(g));

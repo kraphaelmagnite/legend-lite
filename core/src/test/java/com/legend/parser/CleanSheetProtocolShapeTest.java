@@ -14,7 +14,6 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
-import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -153,6 +152,5 @@ class CleanSheetProtocolShapeTest {
         var legacy = assertInstanceOf(LegacyMappingDefinition.class, el,
                 "a legacy DSL body must yield the surface tree");
         assertEquals(1, legacy.classMappings().size());
-        assertNull(legacy.testSuitesSource());
     }
 }

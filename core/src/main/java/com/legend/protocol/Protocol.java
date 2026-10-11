@@ -80,7 +80,8 @@ public final class Protocol {
             PDataQualityValidation, PDataQualityRelationValidation,
             PDataQualityRelationComparison, PSchemaSet, PBinding,
             PServiceStoreDefinition,
-            PMapping, PDataElement, PRelationalMapper {
+            PMapping, PDataElement, PRelationalMapper,
+            PNativeFunction, PPrimitive, POpaqueElement, PAssociationProjection {
     }
 
     /** {@code ###Data Data [decorations] qn { <body> }} — {@code _type:
@@ -526,7 +527,6 @@ public final class Protocol {
                            List<PMappingInclude> includedMappings,
                            List<PMappingTestSuite> testSuites,
                            List<PLegacyMappingTest> tests,
-                           @com.legend.base.Nullable String testSuitesSource,
                            @com.legend.base.Nullable com.legend.protocol.SourceInfo sourceInformation)
             implements Element {
         public String qualifiedName() {
@@ -594,6 +594,22 @@ public final class Protocol {
                                PExternalFormatData body,
                                @com.legend.base.Nullable com.legend.protocol.SourceInfo responseSpan,
                                @com.legend.base.Nullable com.legend.protocol.SourceInfo sourceInformation) {
+        /** The params by name: the JSON writes each list as a map, its keys sorted, so the order they were written in
+         *  is on no wire (leg 8 step 2). */
+        public PServiceStub {
+            queryParams = byName(queryParams);
+            headerParams = byName(headerParams);
+        }
+
+        private static @com.legend.base.Nullable List<PStubParam> byName(
+                @com.legend.base.Nullable List<PStubParam> params) {
+            if (params == null) {
+                return null;
+            }
+            List<PStubParam> sorted = new java.util.ArrayList<>(params);
+            sorted.sort(java.util.Comparator.comparing(PStubParam::name));
+            return List.copyOf(sorted);
+        }
     }
 
     /** A named request-parameter pattern ({@code name: EqualTo #{...}#}). */
@@ -1144,7 +1160,7 @@ public final class Protocol {
                           List<PTaggedValue> taggedValues,
                           boolean distinct,
                           @com.legend.base.Nullable PViewFilter filter,
-                          @com.legend.base.Nullable List<PRelOp> groupBy,
+                          List<PRelOp> groupBy,
                           List<String> primaryKey,
                           @com.legend.base.Nullable com.legend.protocol.SourceInfo sourceInformation) {
     }
@@ -1205,7 +1221,7 @@ public final class Protocol {
                            @com.legend.base.Nullable List<String> ownershipUsers,
                            @com.legend.base.Nullable String mcpServer,
                            @com.legend.base.Nullable String documentation,
-                           @com.legend.base.Nullable Boolean autoActivateUpdates,
+                           boolean autoActivateUpdates,
                            PServiceExecution execution,
                            @com.legend.base.Nullable PLegacyServiceTest test,
                            @com.legend.base.Nullable List<PServiceTestSuite> testSuites,
@@ -1599,6 +1615,14 @@ public final class Protocol {
                                    @com.legend.base.Nullable com.legend.protocol.spec.ValueSpecification headPath,
                                    List<PPersistenceEntry> entries,
                                    @com.legend.base.Nullable com.legend.protocol.SourceInfo sourceInformation) {
+        /** Entries by key: the JSON writes them as one object's fields, in key order, so the order they were written
+         *  in is on no wire (leg 8 step 2); the composer and the emitter look them up by key. */
+        public PPersistenceNode {
+            List<PPersistenceEntry> byKey = new java.util.ArrayList<>(entries);
+            byKey.sort(java.util.Comparator.comparing(PPersistenceEntry::key));
+            entries = List.copyOf(byKey);
+        }
+
         /** A keyword-headed node (the usual form). */
         public PPersistenceNode(String kind, List<PPersistenceEntry> entries,
                 @com.legend.base.Nullable com.legend.protocol.SourceInfo sourceInformation) {
@@ -1610,7 +1634,8 @@ public final class Protocol {
     public sealed interface PPersistenceEntry {
         String key();
 
-        /** {@code key: 'string' | identifier | true/false;}. */
+        /** {@code key: 'string' | identifier | true/false | 10;} -- {@code quoted}: a string on the wire (a quoted string
+         *  or an identifier); false for a boolean or a number, written bare. */
         record Scalar(String key, String value, boolean quoted)
                 implements PPersistenceEntry {
         }
@@ -1831,6 +1856,53 @@ public final class Protocol {
         }
     }
 
+    // ---- legend-lite's own records: what its compiler parses that legend-engine's protocol has no element for. The
+    // ---- parser's only output is records (docs/PROTOCOL_PROGRAM_2026_10_05.md, leg 8), so these exist; no wire
+    // ---- carries them -- the emitter refuses each by name, and no JSON reads back into one.
+
+    /** A platform {@code native function} declaration (the platform dialect: the prelude, the system metamodel): its
+     *  signature, no body. */
+    public record PNativeFunction(String qualifiedName,
+                                  List<String> typeParams, List<String> multParams,
+                                  List<com.legend.protocol.ParameterDefinition> parameters,
+                                  com.legend.protocol.TypeExpression returnType,
+                                  com.legend.protocol.Multiplicity returnMultiplicity,
+                                  List<PStereotype> stereotypes, List<PTaggedValue> taggedValues,
+                                  @com.legend.base.Nullable com.legend.protocol.SourceInfo sourceInformation)
+            implements Element {
+        public PNativeFunction {
+            typeParams = List.copyOf(typeParams);
+            multParams = List.copyOf(multParams);
+            parameters = List.copyOf(parameters);
+            stereotypes = List.copyOf(stereotypes);
+            taggedValues = List.copyOf(taggedValues);
+        }
+    }
+
+    /** A {@code Primitive pkg::T<...> extends Base} declaration (lite's and the platform's dialects). */
+    public record PPrimitive(String qualifiedName, String baseTypeName,
+                             List<com.legend.protocol.ParameterDefinition> typeVariables,
+                             @com.legend.base.Nullable com.legend.protocol.SourceInfo sourceInformation)
+            implements Element {
+        public PPrimitive {
+            typeVariables = List.copyOf(typeVariables);
+        }
+    }
+
+    /** A projection association ({@code Association X projects Y<A, B>}, the platform dialect only): registered by its
+     *  name alone, its projected navigation not modelled (it stays loud downstream). */
+    public record PAssociationProjection(String qualifiedName,
+                                         @com.legend.base.Nullable com.legend.protocol.SourceInfo sourceInformation)
+            implements Element {
+    }
+
+    /** An element of a section a foreign grammar owns (an overlay, through the SPI): carried whole, its own JSON as the
+     *  grammar wrote it, never opened by lite. */
+    public record POpaqueElement(String qualifiedName, String sectionName, String protocolJson,
+                                 @com.legend.base.Nullable com.legend.protocol.SourceInfo sourceInformation)
+            implements Element {
+    }
+
     /** {@code ###Text} — {@code Text pkg::T { type: STRING; content: '...' }};
      *  type is optional (ZTailProbe "text"). */
     public record PText(String pkg, String name,
@@ -1945,7 +2017,7 @@ public final class Protocol {
      *  scalar facets only when spelled, properties in source order
      *  (ZTailProbe "mongo-rich"). */
     public record PBsonSchema(String wireType,
-                              @com.legend.base.Nullable Boolean additionalPropertiesAllowed,
+                              boolean additionalPropertiesAllowed,   // an object node's (the wire's boolean); false on others
                               List<java.util.Map.Entry<String, PBsonSchema>> properties,
                               List<String> required,
                               @com.legend.base.Nullable String title,
@@ -3365,6 +3437,65 @@ public final class Protocol {
             }
         }
         return last;
+    }
+
+    /**
+     * The path a section index lists an element under (the engine's {@code PackageableElement.getPath}): its package
+     * and name, a function's name with its signature ({@code PFunction.mangledName}) -- the one rule the parser writes
+     * a section index by and the compiler's door reads one by (docs/PROTOCOL_PROGRAM_2026_10_05.md, leg 8).
+     */
+    public static String pathOf(Element e) {
+        return switch (e) {
+            case PFunction f -> functionPath(f);
+            case PClass c -> c.qualifiedName();
+            case PAssociation a -> a.qualifiedName();
+            case PEnumeration en -> en.qualifiedName();
+            case PProfile p -> p.qualifiedName();
+            case PMeasure m -> m.qualifiedName();
+            case PRuntime r -> r.qualifiedName();
+            case PConnection c -> c.qualifiedName();
+            case PDatabase d -> d.qualifiedName();
+            case PMapping m -> m.qualifiedName();
+            case PService s -> s.qualifiedName();
+            case PExecutionEnvironment x -> x.qualifiedName();
+            case PDataSpace d -> d.qualifiedName();
+            case PPersistence p -> p.qualifiedName();
+            case PPersistenceContext p -> p.qualifiedName();
+            case PFunctionActivator a -> a.qualifiedName();
+            case PDataElement d -> d.qualifiedName();
+            case PDiagram d -> d.qualifiedName();
+            case PText t -> t.qualifiedName();
+            case PGenerationSpecification g -> g.qualifiedName();
+            case PFileGeneration f -> f.qualifiedName();
+            case PDeephavenDatabase d -> d.qualifiedName();
+            case PElasticsearch7Cluster s -> s.qualifiedName();
+            case PMongoDatabase m -> m.qualifiedName();
+            case PDataQualityValidation v -> v.qualifiedName();
+            case PDataQualityRelationValidation v -> v.qualifiedName();
+            case PDataQualityRelationComparison v -> v.qualifiedName();
+            case PSchemaSet s -> s.qualifiedName();
+            case PBinding b -> b.qualifiedName();
+            case PServiceStoreDefinition s -> s.qualifiedName();
+            case PRelationalMapper m -> m.qualifiedName();
+            case PNativeFunction n -> n.qualifiedName();
+            case PPrimitive p -> p.qualifiedName();
+            case POpaqueElement o -> o.qualifiedName();
+            case PAssociationProjection a -> a.qualifiedName();
+            case PSectionIndex i -> i.pkg().isEmpty() ? i.name() : i.pkg() + "::" + i.name();
+        };
+    }
+
+    /** A function's path: its name with its signature, as the engine names it; a signature the engine has no name for
+     *  (a multiplicity parameter: lite's and the platform's dialects only, never in the engine's JSON) by its qualified
+     *  name, which the parser and the compiler's door compute alike. */
+    private static String functionPath(PFunction f) {
+        String name;
+        try {
+            name = f.mangledName();
+        } catch (UnsupportedOperationException noEngineName) {
+            return f.qualifiedName();
+        }
+        return f.pkg().isEmpty() ? name : f.pkg() + "::" + name;
     }
 
     /** Public form for REFERENCE positions that also unquote (stereotype/tag

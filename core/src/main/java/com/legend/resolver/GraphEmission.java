@@ -919,7 +919,7 @@ final class GraphEmission {
             if (implicit != null) {
                 return graphChild(cs, new TypedGraphTree(node.property(),
                         implicit, node.alias(), node.args(), node.sweep(),
-                        node.subTypeFqn(), node.qualified()),
+                        node.subTypeFqn()),
                         context, parentRowVar, parentRowType, parentPipeline);
             }
             throw new NotImplementedException("graph child '" + node.property()
@@ -1815,14 +1815,14 @@ final class GraphEmission {
         return fns.get(0);
     }
 
-    /** The serialized key for a CLASS child: a QUALIFIED spelling with
-     * empty parens over a milestoned target spells the RESOLVED context
-     * date — the engine serializes the source call spelling with the
-     * propagated date filled in
-     * ({@code synonyms(2023-10-15T00:00:00+0000)}). */
+    /** The serialized key for a CLASS child: a child with no date
+     * arguments over a milestoned target spells the RESOLVED context
+     * date — the engine serializes the call with the propagated date
+     * filled in ({@code synonyms(2023-10-15T00:00:00+0000)}), whether
+     * {@code synonyms()} or {@code synonyms} was written: its JSON has
+     * no mark for the parentheses (leg 8 step 2). */
     private String childKey(TypedGraphTree node, String childFqn) {
-        if (node.alias() == null && node.qualified()
-                && node.args().isEmpty()) {
+        if (node.alias() == null && node.args().isEmpty()) {
             MilestoningStrategy strat = temporal.temporalStrategy(childFqn);
             TypedSpec d = strat == null ? null
                     : temporal.rootContextDate(

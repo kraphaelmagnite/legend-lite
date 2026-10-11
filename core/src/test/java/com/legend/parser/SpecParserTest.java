@@ -2724,7 +2724,7 @@ final class SpecParserTest {
 
     private static com.legend.protocol.spec.GraphFetchLiteral.Node gfNode(String property,
             com.legend.protocol.spec.GraphFetchLiteral.Node... children) {
-        return new com.legend.protocol.spec.GraphFetchLiteral.Node(property, null, List.of(), false,
+        return new com.legend.protocol.spec.GraphFetchLiteral.Node(property, null, List.of(),
                 null, null, List.of(children));
     }
 
@@ -2734,7 +2734,7 @@ final class SpecParserTest {
         // colon is a graph alias; the engine serializes the node under
         // it, so the node CARRIES it (task #78).
         assertEquals(tree("Person", new com.legend.protocol.spec.GraphFetchLiteral.Node(
-                        "name", null, List.of(), false, "alias", null, List.of())),
+                        "name", null, List.of(), "alias", null, List.of())),
                 com.legend.testing.Platform.spec("#{Person {'alias': name}}#"));
     }
 
@@ -2744,12 +2744,13 @@ final class SpecParserTest {
         // REAL expressions and ride the node (qualifier args inline
         // derived bodies, task #78); the CHECKER still drops them for
         // non-derived properties (milestoning threading is its own
-        // feature). The node records its parentheses.
+        // feature). The node keeps its arguments (no mark for the
+        // parentheses: `name()` is `name`, as on the wire).
         var gf = assertInstanceOf(com.legend.protocol.spec.GraphFetchLiteral.class,
                 com.legend.testing.Platform.spec("#{Person {name(%2024-01-01)}}#"));
         var n = gf.subTrees().get(0);
         assertEquals("name", n.property());
-        assertTrue(n.qualified());
+        assertEquals(1, n.parameters().size());
         assertEquals(new PureDateLiteral.StrictDate(2024, 1, 1),
                 assertInstanceOf(CDate.class, n.parameters().get(0)).value());
     }

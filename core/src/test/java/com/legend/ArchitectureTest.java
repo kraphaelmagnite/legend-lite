@@ -489,6 +489,23 @@ final class ArchitectureTest {
             .check(CORE_PROD_CLASSES);
     }
 
+    /**
+     * Invariant 12's record side (2026-10-10, the protocol program's leg 8: the parser's output is records only, so
+     * the overlay seam mints a {@code Protocol.POpaqueElement} and the compiler's door carries it as the model's
+     * opaque element): only {@code OverlayElementSink} constructs one; the protocol package names it in its exhaustive
+     * switches (the emitter refuses it), the model's door converts it.
+     */
+    @Test
+    void opaqueRecordIsLockedToTheOverlaySeam() {
+        com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses()
+            .that().resideOutsideOfPackages("com.legend.protocol..", "com.legend.model..")
+            .and().haveSimpleNameNotContaining("OverlayElementSink")
+            .should().dependOnClassesThat()
+                    .haveSimpleName("POpaqueElement")
+            .as("Invariant 12: only the OVERLAY seam mints opaque records")
+            .check(CORE_PROD_CLASSES);
+    }
+
     @Test
     void execIsABackend() {
         noClasses()

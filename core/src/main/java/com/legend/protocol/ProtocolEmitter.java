@@ -126,6 +126,13 @@ public final class ProtocolEmitter {
         return finish(b);
     }
 
+    /** One of legend-lite's own records (Protocol's lite-only elements), refused by name: legend-engine's protocol has
+     *  no element for it, so no JSON is written for one. */
+    static IllegalArgumentException liteOnly(String what, String qualifiedName) {
+        return new IllegalArgumentException(what + " (" + qualifiedName
+                + ") is legend-lite's own dialect: legend-engine's protocol has no element for it");
+    }
+
     /** Exhaustive over {@link Element}. No {@code default} arm — a new variant must land here. */
     private static void element(StringBuilder b, Element e) {
         switch (e) {
@@ -171,6 +178,11 @@ public final class ProtocolEmitter {
             case Protocol.PDiagram dg -> TailEmitter.diagram(b, dg);
             case Protocol.PMapping m -> MappingEmitter.mapping(b, m);
             case Protocol.PRelationalMapper rm -> relationalMapper(b, rm);
+            case Protocol.PNativeFunction n -> throw liteOnly("a native function declaration", n.qualifiedName());
+            case Protocol.PPrimitive p -> throw liteOnly("a Primitive declaration", p.qualifiedName());
+            case Protocol.POpaqueElement o -> throw liteOnly("an element of the foreign section '" + o.sectionName() + "'",
+                    o.qualifiedName());
+            case Protocol.PAssociationProjection a -> throw liteOnly("a projection association", a.qualifiedName());
             case Protocol.PDataElement de -> {
                 b.append("{\"_type\":\"dataElement\"");
                 if (de.body().value() != null) {
@@ -747,13 +759,11 @@ public final class ProtocolEmitter {
             b.append('}');
         }
         b.append(",\"groupBy\":[");
-        if (v.groupBy() != null) {
-            for (int i = 0; i < v.groupBy().size(); i++) {
-                if (i > 0) {
-                    b.append(',');
-                }
-                relOp(b, v.groupBy().get(i));
+        for (int i = 0; i < v.groupBy().size(); i++) {
+            if (i > 0) {
+                b.append(',');
             }
+            relOp(b, v.groupBy().get(i));
         }
         b.append(']');
         b.append(",\"name\":");
@@ -1198,8 +1208,8 @@ public final class ProtocolEmitter {
                     .append("\",\"activationConnection\":{\"_type\":"
                             + "\"connectionPointer\",\"connection\":");
             str(b, fa.activationConnection());
-            // only the Snowflake configs walk the pointer span; the
-            // memSql/bigQuery composers drop it (corpus DIFF-pinned)
+            // only the Snowflake configs walk the pointer span (the record
+            // has none for the others: memSql/bigQuery, corpus DIFF-pinned)
             if (fa.kind().startsWith("Snowflake")) {
                 b.append(",\"sourceInformation\":");
                 srcInfo(b, fa.activationConnectionSpan());

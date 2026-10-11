@@ -68,7 +68,7 @@ class WithChildrenFieldPreservationTest {
         // fixed 2026-09-30 (was a W1.2 known defect): the tree's children are its call
         // arguments, and withChildren puts them back into the same tree
         var sub = List.of(new GraphFetchLiteral.SubTypeNode("m::Emp", A, List.of(
-                new GraphFetchLiteral.Node("id", A, List.of(new CInteger(1L)), true, null, null, List.of()))));
+                new GraphFetchLiteral.Node("id", A, List.of(new CInteger(1L)), null, null, List.of()))));
         var gf = new GraphFetchLiteral("m::Person", List.of(), sub, A);
         GraphFetchLiteral r = (GraphFetchLiteral) rebuild(gf);
         assertEquals(A, r.pos());

@@ -396,6 +396,6 @@ final class StoreSubstitutionRewrite {
                 out.classMappings(),
                 out.associationMappings().stream()
                         .map(am -> applyAssoc(am, q)).toList(),
-                out.enumerationMappings(), out.testSuitesSource());
+                out.enumerationMappings());
     }
 }

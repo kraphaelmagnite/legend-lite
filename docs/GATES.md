@@ -8523,3 +8523,41 @@ path to the change -- product, core, checks, parser_equivalence, warehouse, data
 jobs); the PCT, corpus, stress and sdlc lanes not run: the change adds a route and its writer on `pure_v1` and
 DataCube's own code, and alters no compile path they use. Pushed to main as `0cee56761`, a fast-forward (main unmoved
 since the run), on the user's "do the audit and everything else".
+
+## 2026-10-11 — the protocol program's leg 8, step 1 and step 2's first part: one parser, the records as the JSON has them (the Studio / SDLC / Depot line)
+
+`docs/PROTOCOL_PROGRAM_2026_10_05.md` leg 8, its "Reordered" steps and as-built note. **One parser:** the compiler's
+text goes text → records (`PmcdParser.parse(text, dialect)`, the engine's section walk and import scoping at every
+dialect) → `ModelFromProtocol` → the compiler, and `ElementParser.parse` is the door over it; its own top-level
+assembly is deleted. Lite-only records (`PNativeFunction`, `PPrimitive`, `POpaqueElement`, `PAssociationProjection`)
+carry what the compiler parsed with no record, and the emitter refuses each by name. An element's error position is
+`ParsedModel.position(key)`. Behaviour changes, each reviewed by the Compiler Rewrite line: imports bound to their
+section (the bazel_smoke trading fixture relied on the leak); the engine's dialect refuses a stray `)`; a
+non-wildcard import and an unknown top-level keyword say "Unexpected token"; a plain string before a declaration
+names the multi-line documentation literal. **Step 2 so far** (each its own commit): the records mirror the engine's
+JSON -- where the compiler's input does not change (a view's groupBy, plain booleans, persistence entries and stub
+params by key, a flat target's defaults, a bare service query a lambda, spans no JSON carries, the mapping's raw
+test-suite text deleted from the record and the model), and where it does, at the engine's and lite's dialects only
+(the platform dialect keeps legend-pure's meaning): `$x.f()` is `$x.f` (the typer's zero-argument qualified-property
+lift takes a parameterized class, as the call route did); a graph-fetch `prop()` is `prop` (no `qualified` mark;
+`GraphEmission.childKey` spells a milestoned child's date either way -- inferred from the engine's JSON having no
+mark for the parentheses, not probed); `^Pair`, `^BasicColumnSpecification`, `^TdsOlapRank` are the calls the engine
+writes. Recorded, not changed: a persistence node is validated in its entries' key order, so which of several errors
+in one node is reported can differ (the parity lane's message and position tiers did not move).
+
+**Measured.** The new oracle (`JsonModelDoorTest`, in `//parser-equivalence:round_trip_proof`; pinned: matched up,
+failed down): the JSON round trip loses 401 of the engine collection's texts (821 before step 2; the rest is step 2's
+work list), none of lite's 166 project files or the showcase's 123. Against main's baseline at every change, rebuilt
+after L7 landed (430ff7420): the six corpus passes identical, the census within its ceilings (27 walls, 1,120
+failing bodies), the shadow probe's candidate rows identical, the reference lane byte-identical, PCT 17 of 17. Two
+of the judges' findings were fixed before their commits: legend-pure's `$s.toString()` beside a function-valued
+`toString` (router_routing.pure; hence the platform dialect's own meaning) and `Pair<A,B>.toString()` (PCT
+essential). Ledgers, shrink only: DropInSurfaceTextRuleTest's `ElementParser` 6 → 3 and `MappingProtocolParser` 3 → 2;
+`REFUSAL_ALLOW_TOTAL` 8 → 7 (a row of `docs/refusal-allowlist.tsv` removed); `MAX_MSG_GENUINE_MISMATCH` 254 → 205;
+`MSG_RICHER_FLOOR` 1240 → 1150, rows that moved to verbatim (main and branch measured, in its note).
+
+**Checked.** Audited (no blocker; 4 should-fix -- the oracle unpinned, an element its model's section index does not
+list given every section's imports, a skip of any spanless node, the validation order above -- and 6 notes, each
+fixed or recorded here). //core/... and //parser-equivalence/... 69 of 69; local gate: //gates:local green (328
+tests). CI run 38113792128 on `ci/leg8-land` (da876129d), the full gate.yml on every platform: green on every job, 50
+of 50 (2026-10-11, 05:07 to 05:37 UTC). Pushed to main with this record, the user's "Land it now".

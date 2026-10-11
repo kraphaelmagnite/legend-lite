@@ -231,14 +231,14 @@ final class GraphFetchChecker {
                 : (sweep ? n.property() : null);
         if (!hasSubTree(n)) {
             return new TypedGraphTree(propName, List.of(), alias,
-                    targs, sweep, null, n.qualified());
+                    targs, sweep, null);
         }
         if (!(prop.type() instanceof Type.ClassType nestedClass)) {
             throw new TypeInferenceException(fn + " tree: property '" + n.property()
                     + "' is not class-typed and cannot carry a sub-tree");
         }
         return new TypedGraphTree(propName, subTree(t, nestedClass.fqn(), n, fn, env),
-                alias, targs, sweep, null, n.qualified());
+                alias, targs, sweep, null);
     }
 
     /**

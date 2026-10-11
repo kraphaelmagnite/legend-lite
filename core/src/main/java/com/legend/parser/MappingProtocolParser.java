@@ -358,7 +358,6 @@ public final class MappingProtocolParser implements TokenStreamCursor {
         List<Protocol.PEnumerationMapping> enums = new ArrayList<>();
         List<Protocol.PMappingInclude> includes = new ArrayList<>();
         List<Protocol.PMappingTestSuite> suites = new ArrayList<>();
-        String testSuitesSource = null;
         List<Protocol.PLegacyMappingTest> legacyTests = new ArrayList<>();
         // The mapping BODY is an ordered prefix too:
         //   mapping: MAPPING qualifiedName PAREN_OPEN (includeMapping)*
@@ -389,21 +388,12 @@ public final class MappingProtocolParser implements TokenStreamCursor {
                         "testSuites");
                 advance();
                 expect(TokenType.COLON);
-                int suitesOpen = pos;
                 expect(TokenType.BRACKET_OPEN);
                 while (!atEnd() && peek() != TokenType.BRACKET_CLOSE) {
                     suites.add(parseTestSuite(qn));
                     match(TokenType.COMMA);
                 }
                 expect(TokenType.BRACKET_CLOSE);
-                // The MODEL stores testSuites as RAW TEXT (Phase C parses
-                // them lazily), and parsed protocol cannot be turned back
-                // into source. Capture the verbatim slice here, over the
-                // same span the legacy parser reconstructs
-                // (MappingGrammarParser:83-88). Carried on the record, never
-                // emitted — the wire has the PARSED suites.
-                testSuitesSource = tokens.source().substring(
-                        tokens.start(suitesOpen), tokens.end(pos - 1));
                 continue;
             }
             bodyRank = bodySection(bodyRank,
@@ -413,7 +403,7 @@ public final class MappingProtocolParser implements TokenStreamCursor {
         }
         expect(TokenType.PAREN_CLOSE);
         return new Protocol.PMapping(pkg, name, assocMappings, classMappings,
-                enums, includes, suites, legacyTests, testSuitesSource,
+                enums, includes, suites, legacyTests,
                 spanOf(declStart, pos - 1));
     }
 
@@ -3094,8 +3084,16 @@ public final class MappingProtocolParser implements TokenStreamCursor {
         List<Protocol.PPurePropertyMapping> aggPms = new ArrayList<>();
         if (mainCm instanceof Protocol.PClassMappingPure pu) {
             // Pure main mappings COPY their pms onto the agg node
-            // (walker:92-95, probe agg-pure-nested)
-            aggPms.addAll(pu.propertyMappings());
+            // (walker:92-95, probe agg-pure-nested) as
+            // AggregationAwarePropertyMapping: property, source, target and
+            // span only, as the JSON carries them (walker:201-211; leg 8
+            // step 2: the transform stays on the main mapping's own line)
+            for (Protocol.PPurePropertyMapping pm : pu.propertyMappings()) {
+                aggPms.add(new Protocol.PPurePropertyMapping(pm.ownerClass(),
+                        pm.property(), pm.propertySourceInformation(), null,
+                        false, null, List.of(), pm.source(), pm.target(),
+                        pm.sourceInformation()));
+            }
         }
         return new Protocol.PClassMappingAggregationAware(target, outerId,
                 asis, mainCm, aggPms, root, spanOf(memberStart, close), extendsId);

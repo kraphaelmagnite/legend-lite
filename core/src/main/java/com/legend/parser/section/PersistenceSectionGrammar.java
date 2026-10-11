@@ -55,7 +55,7 @@ public final class PersistenceSectionGrammar
 
     @Override
     public com.legend.model.PackageableElement toModel(Protocol.Element element) {
-        return com.legend.model.FromProtocol.toPersistenceElement(element);
+        return com.legend.model.ModelFromProtocol.element(element);
     }
 
     /** One element: {@code Persistence} or {@code PersistenceContext}. */
@@ -317,8 +317,19 @@ public final class PersistenceSectionGrammar
                     "validityMilestoning", List.of("DateTime"),
                     "target", List.of("Relational", "__empty__"));
 
+    /** The two nodes the parser makes that nobody wrote, spanless as on the wire (leg 8 step 2): a flat target's
+     *  default deduplication (withFlatDefaults) and a keyless {@code { }} target. Nothing of the author's to
+     *  validate in either; every other node carries its span, which validation anchors at. */
+    private static final Protocol.PPersistenceNode NO_DEDUPLICATION =
+            new Protocol.PPersistenceNode("None", List.of(), null);
+    private static final Protocol.PPersistenceNode KEYLESS_TARGET =
+            new Protocol.PPersistenceNode("__empty__", List.of(), null);
+
     private static void validateNode(TokenStreamCursor c, String slot,
             Protocol.PPersistenceNode node) {
+        if (node == NO_DEDUPLICATION || node == KEYLESS_TARGET) {
+            return;
+        }
         // ANCHORED at the NODE's own span start — the engine walker passes
         // each definition ctx to validateAndExtract, so a persister-level
         // error reports at `Batch`, an auditing error at its ingest-mode
@@ -507,6 +518,20 @@ public final class PersistenceSectionGrammar
                 c.spanOf(s, c.pos() - 1));
     }
 
+    /** A flat target's and each multi-flat part's entries with the defaults the engine's protocol starts them with
+     *  and its JSON always writes (probed): no deduplication (spanless) and no partition fields, where unwritten
+     *  (leg 8 step 2: the record holds them, as the JSON does). */
+    private static List<Protocol.PPersistenceEntry> withFlatDefaults(List<Protocol.PPersistenceEntry> entries) {
+        List<Protocol.PPersistenceEntry> out = new ArrayList<>(entries);
+        if (entries.stream().noneMatch(e -> "deduplicationStrategy".equals(e.key()))) {
+            out.add(new Protocol.PPersistenceEntry.Node("deduplicationStrategy", NO_DEDUPLICATION));
+        }
+        if (entries.stream().noneMatch(e -> "partitionFields".equals(e.key()))) {
+            out.add(new Protocol.PPersistenceEntry.Strings("partitionFields", List.of()));
+        }
+        return out;
+    }
+
     private static void parseEntries(TokenStreamCursor c,
             List<Protocol.PPersistenceEntry> out,
             @com.legend.base.Nullable TokenType close) {
@@ -543,7 +568,7 @@ public final class PersistenceSectionGrammar
                             parseEntries(c, pe, TokenType.BRACE_CLOSE);
                             c.expect(TokenType.BRACE_CLOSE);
                             nodes.add(new Protocol.PPersistenceNode("__part__",
-                                    pe, c.spanOf(ps, c.pos() - 1)));
+                                    withFlatDefaults(pe), c.spanOf(ps, c.pos() - 1)));
                             if (!c.match(TokenType.COMMA)) {
                                 break;
                             }
@@ -618,8 +643,12 @@ public final class PersistenceSectionGrammar
                         c.setPos(keyStart);
                         c.parseIdentifier();
                         c.expect(TokenType.COLON);
-                        out.add(new Protocol.PPersistenceEntry.Node(key,
-                                parseNode(c)));
+                        Protocol.PPersistenceNode node = parseNode(c);
+                        if ("targetShape".equals(key) && "Flat".equals(node.kind())) {
+                            node = new Protocol.PPersistenceNode(node.kind(), node.headPath(),
+                                    withFlatDefaults(node.entries()), node.sourceInformation());
+                        }
+                        out.add(new Protocol.PPersistenceEntry.Node(key, node));
                         c.match(TokenType.SEMI_COLON);
                     } else if ("database".equals(key)
                             || "binding".equals(key)) {
@@ -650,9 +679,12 @@ public final class PersistenceSectionGrammar
                                                 ks.endLine(),
                                                 ks.endColumn() + 1))));
                     } else {
+                        // an identifier value (table: TableA, an ALL_CAPS
+                        // enum) is a JSON string, as a quoted one is: quoted
+                        // means "a string on the wire" (leg 8 step 2)
                         c.expect(TokenType.SEMI_COLON);
                         out.add(new Protocol.PPersistenceEntry.Scalar(key,
-                                head, false));
+                                head, true));
                     }
                 }
             }
@@ -676,12 +708,11 @@ public final class PersistenceSectionGrammar
             if (c.peek() == TokenType.BRACE_OPEN) {
                 // a KEYLESS target: strictly `{ }` in the .g4
                 // (BRACE_OPEN BRACE_CLOSE) — the wire omits the
-                // persistenceTarget slot entirely
-                int ts = c.pos();
+                // persistenceTarget slot entirely, so the record has no
+                // span either (leg 8 step 2)
                 c.expect(TokenType.BRACE_OPEN);
                 c.expect(TokenType.BRACE_CLOSE);
-                target = new Protocol.PPersistenceNode("__empty__",
-                        List.of(), c.spanOf(ts, c.pos() - 1));
+                target = KEYLESS_TARGET;
             } else {
                 target = contentAnchoredIslandNode(c);
             }

@@ -54,17 +54,15 @@ public record GraphFetchLiteral(
     }
 
     /**
-     * One property node: name, its token span, call arguments, whether it is spelled with
-     * parentheses ({@code prop()} serializes a milestoned child under its resolved date; the wire
-     * cannot tell it from {@code prop}), optional alias ({@code 'nick' : prop}), optional subtype
-     * view ({@code prop->subType(@X)}, whose children read X's properties), nested nodes.
-     * Subtype ENTRIES ({@code ->subType(@X) {...}}) exist only at the root, as the engine's
-     * grammar has it.
+     * One property node: name, its token span, call arguments (none for {@code prop()} as for
+     * {@code prop}: the wire cannot tell them apart, and nothing may; leg 8 step 2), optional alias
+     * ({@code 'nick' : prop}), optional subtype view ({@code prop->subType(@X)}, whose children read
+     * X's properties), nested nodes. Subtype ENTRIES ({@code ->subType(@X) {...}}) exist only at the
+     * root, as the engine's grammar has it.
      */
     public record Node(String property,
                        @com.legend.base.Nullable com.legend.protocol.SourceInfo pos,
                        List<ValueSpecification> parameters,
-                       boolean qualified,
                        @com.legend.base.Nullable String alias,
                        @com.legend.base.Nullable String subType,
                        List<Node> subTrees) {
@@ -78,13 +76,13 @@ public record GraphFetchLiteral(
         public boolean equals(Object o) {
             return o instanceof Node other
                     && property.equals(other.property()) && parameters.equals(other.parameters())
-                    && qualified == other.qualified() && Objects.equals(alias, other.alias())
+                    && Objects.equals(alias, other.alias())
                     && Objects.equals(subType, other.subType()) && subTrees.equals(other.subTrees());
         }
 
         @Override
         public int hashCode() {
-            return Objects.hash(property, parameters, qualified, alias, subType, subTrees);
+            return Objects.hash(property, parameters, alias, subType, subTrees);
         }
     }
 
@@ -125,7 +123,7 @@ public record GraphFetchLiteral(
     private static List<Node> renamed(List<Node> nodes, java.util.function.UnaryOperator<String> rename) {
         List<Node> out = new ArrayList<>(nodes.size());
         for (Node n : nodes) {
-            out.add(new Node(n.property(), n.pos(), n.parameters(), n.qualified(), n.alias(),
+            out.add(new Node(n.property(), n.pos(), n.parameters(), n.alias(),
                     n.subType() == null ? null : rename.apply(n.subType()), renamed(n.subTrees(), rename)));
         }
         return out;
@@ -143,7 +141,7 @@ public record GraphFetchLiteral(
         for (Node n : nodes) {
             List<ValueSpecification> params = args.subList(next[0], next[0] + n.parameters().size());
             next[0] += n.parameters().size();
-            out.add(new Node(n.property(), n.pos(), params, n.qualified(), n.alias(), n.subType(),
+            out.add(new Node(n.property(), n.pos(), params, n.alias(), n.subType(),
                     replace(n.subTrees(), args, next)));
         }
         return out;

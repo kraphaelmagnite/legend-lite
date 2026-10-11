@@ -29,7 +29,6 @@ import java.util.Objects;
  * @param associationBindings  per-association predicate-function bindings
  * @param enumerationMappings  per-enumeration mappings (inline static tables &mdash;
  *                             data, not expressions, so they stay structural)
- * @param testSuitesSource     raw {@code testSuites: [...]} text, or {@code null}
  */
 public record MappingDefinition(
         String qualifiedName,
@@ -37,7 +36,6 @@ public record MappingDefinition(
         List<ClassBinding> classBindings,
         List<AssociationBinding> associationBindings,
         List<EnumerationMapping> enumerationMappings,
-        @com.legend.base.Nullable String testSuitesSource,
         java.util.Map<String, String> resolvedStores,
         NormalizationFacts facts)
         implements PackageableElement {
@@ -47,10 +45,9 @@ public record MappingDefinition(
             List<MappingInclude> includes,
             List<ClassBinding> classBindings,
             List<AssociationBinding> associationBindings,
-            List<EnumerationMapping> enumerationMappings,
-            @com.legend.base.Nullable String testSuitesSource) {
+            List<EnumerationMapping> enumerationMappings) {
         this(qualifiedName, includes, classBindings, associationBindings,
-                enumerationMappings, testSuitesSource, java.util.Map.of(),
+                enumerationMappings, java.util.Map.of(),
                 NormalizationFacts.NONE);
     }
 

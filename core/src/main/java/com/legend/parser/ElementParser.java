@@ -1,6 +1,7 @@
 package com.legend.parser;
 
 import com.legend.protocol.Multiplicity;
+import com.legend.protocol.Protocol;
 import com.legend.protocol.TypeExpression;
 import com.legend.model.ParsedModel;
 import com.legend.model.ImportScope;
@@ -33,8 +34,9 @@ import java.util.Map;
 import java.util.Objects;
 
 /**
- * Hand-rolled recursive-descent parser for Pure top-level element
- * declarations &mdash; the driver for step B of the pipeline.
+ * Pure's domain grammar (the {@code ###Pure} section's elements: classes, enumerations, profiles, associations,
+ * functions, and the platform dialect's native declarations and {@code Primitive}s), each element parsed into its
+ * protocol record, and step B's entry for a whole text.
  *
  * <h2>Usage</h2>
  * <pre>
@@ -42,41 +44,12 @@ import java.util.Objects;
  *   // ONE entry, the caller names the level — see {@link Dialect}
  * </pre>
  *
- * <h2>Status (Phase B.4a)</h2>
- * Handles:
- * <ul>
- *   <li>{@code import} statements (wildcard and specific).</li>
- *   <li>{@code Class} (regular and {@code native}) with stereotypes, tagged
- *       values, generic type parameters, superclasses, properties,
- *       derived properties (body parsed eagerly into {@link ValueSpecification}
- *       statements), and class-level constraints (expression parsed eagerly).</li>
- *   <li>{@code Association} &mdash; exactly two ends.</li>
- *   <li>{@code Enum} &mdash; one or more value names.</li>
- *   <li>{@code Profile} &mdash; stereotypes and tags.</li>
- *   <li>{@code function} &mdash; signature plus body parsed eagerly into a
- *       {@code List<ValueSpecification>} via {@link SpecParser#parseCodeBlock}.</li>
- *   <li>{@code Service} &mdash; pattern, doc, execution (query parsed eagerly as a
- *       single {@link ValueSpecification}; mapping/runtime as FQN refs),
- *       and {@code testSuites} block captured as raw text (decision D-3 &mdash;
- *       still deferred until the test-suite grammar lands).</li>
- *   <li>{@code Runtime} (and {@code SingleConnectionRuntime}) &mdash; mappings,
- *       connection bindings, embedded {@code JsonModelConnection} islands.</li>
- *   <li>{@code RelationalDatabaseConnection} &mdash; store, type, specification,
- *       authentication.</li>
- * </ul>
- *
- * <p>B.4a (this slice) adds {@code Database} with the full relational
- * expression sub-AST &mdash; column refs, target columns, literals,
- * function calls, comparisons, boolean combinations, null tests, groups,
- * array literals, and join-navigation chains. Used by {@code Join},
- * {@code Filter}, {@code MultiGrainFilter}, and view column expressions.
- *
- * <p>NOT yet supported (sub-slices B.4b-f):
- * <ul>
- *   <li>{@code Mapping} (next: B.4b Relational class mappings, then
- *       Association / Enum / M2M class mappings / test-suites).</li>
- * </ul>
- * Encountering an unsupported keyword raises a {@link ParseException}.
+ * <p>{@link #parse(String, Dialect)} is the door over the one parser (docs/PROTOCOL_PROGRAM_2026_10_05.md, leg 8):
+ * the text into its records by {@link PmcdParser} (the engine's section walk and import scoping at every dialect,
+ * each {@code ###Pure} element through this class, every other section through its grammar), then the records into
+ * the compiler's model by {@code ModelFromProtocol} -- the same door a model given as JSON goes through. A section
+ * nothing claims is refused, or recorded and skipped at the platform dialect; an unsupported keyword raises a
+ * {@link ParseException}.
  *
  * <h2>Deliberate divergences from engine</h2>
  * <ul>
@@ -98,9 +71,9 @@ import java.util.Objects;
  * </ul>
  *
  * <h2>Stateful only during parse</h2>
- * A parser instance is allocated per call to {@link #parse(TokenStream)},
- * driven to completion, then discarded. The resulting {@link ParsedModel}
- * is the only object that survives.
+ * A parser instance is allocated for each element the one parser hands it,
+ * driven to completion, then discarded. The element's record is the only
+ * object that survives.
  *
  * <p>Ported from engine's {@code com.gs.legend.parser.PureModelParser},
  * keeping the same recursive-descent shape and identifier-token set
@@ -217,14 +190,31 @@ public final class ElementParser implements TokenStreamCursor {
      *  it in production trips the guardrail; Pure.java is the one
      *  consumer). */
     public static ParsedModel parse(String source, Dialect dialect) {
-        return parse(Lexer.tokenize(
-                Objects.requireNonNull(source, "source")), dialect);
+        // THE ONE PARSER (docs/PROTOCOL_PROGRAM_2026_10_05.md, leg 8): the text into its records (PmcdParser, the
+        // engine's section walk and import scoping at every dialect), then the compiler's one door -- the same door a
+        // model given as JSON goes through
+        PmcdParser.Parsed parsed = PmcdParser.parse(Objects.requireNonNull(source, "source"),
+                Objects.requireNonNull(dialect, "dialect"));
+        List<ParsedModel.UnclaimedSection> unclaimed = new ArrayList<>();
+        for (PmcdParser.UnclaimedSection u : parsed.unclaimed()) {
+            unclaimed.add(new ParsedModel.UnclaimedSection(u.name(), u.startOffset(), u.endOffset()));
+        }
+        try {
+            return com.legend.model.ModelFromProtocol.of(parsed.model(), source, unclaimed);
+        } catch (com.legend.model.ModelFromProtocol.Unrepresentable u) {
+            // a shape the compiler's model cannot represent is the text's error, at the element (every element
+            // parsed from a text has its span: one without is the parser's bug, never placed at 1:1)
+            ParsedModel.Position at = u.at();
+            if (at == null) {
+                throw new IllegalStateException(u.path() + " was parsed without a span: " + u.reason(), u);
+            }
+            throw new ParseException(u.reason(), at.line(), at.column());
+        }
     }
 
-    /** Pre-lexed variant of {@link #parse(String, Dialect)}. */
+    /** Pre-lexed variant of {@link #parse(String, Dialect)}: the one parser reads the stream's text. */
     public static ParsedModel parse(TokenStream tokens, Dialect dialect) {
-        return new ElementParser(Objects.requireNonNull(tokens, "tokens"),
-                Objects.requireNonNull(dialect, "dialect")).parseModel();
+        return parse(Objects.requireNonNull(tokens, "tokens").source(), dialect);
     }
 
     /**
@@ -265,222 +255,6 @@ public final class ElementParser implements TokenStreamCursor {
     // Top-level
     // ============================================================
 
-    private ParsedModel parseModel() {
-        List<PackageableElement> elements = new ArrayList<>();
-        ImportScope.Builder imports = new ImportScope.Builder();
-        Map<String, Integer> offsets = new HashMap<>();
-        // SECTION-scoped imports (real pure): an import following elements
-        // opens a NEW section scope; each element records the scope active
-        // where it was declared.
-        Map<String, ImportScope> elementImports = new HashMap<>();
-        ImportScope.Builder sectionImports = new ImportScope.Builder();
-        boolean sawElementSinceImport = false;
-
-        // Registry-routed section dispatch (§2.6): a LEXABLE section whose
-        // registered grammar is REAL (not the BuiltIn stub) parses as a
-        // WHOLE through that grammar — the same routing an overlay gets —
-        // instead of element-by-element through this switch.
-        java.util.List<ClaimedSection> claimed = claimedSections();
-        int nextClaimed = 0;
-        int lastElementStart = -1;
-
-        while (!atEnd()) {
-            while (nextClaimed < claimed.size() && tokens.start(pos)
-                    >= claimed.get(nextClaimed).contentStart()) {
-                lastElementStart = claimed.get(nextClaimed).contentStart();
-                parseClaimedSection(claimed.get(nextClaimed++), elements,
-                        offsets, elementImports, imports);
-                sawElementSinceImport = true;   // a section is a scope boundary
-            }
-            if (atEnd()) {
-                break;
-            }
-            if (peek() == TokenType.IMPORT) {
-                if (sawElementSinceImport) {
-                    // BOTH references bind imports to a SECTION START:
-                    // engine sections are `imports (element)*`, pure M3 is
-                    // `imports (element)* EOF`. An import after an element
-                    // is legal ONLY across a ### boundary; the old
-                    // anywhere-import scope reset was a lite-only
-                    // invention (invention census batch 2).
-                    if (!sectionBoundaryBetween(lastElementStart,
-                            tokens.start(pos))) {
-                        error("imports are only allowed at the start of a"
-                                + " section (before its first element)");
-                    }
-                    sectionImports = new ImportScope.Builder();
-                    sawElementSinceImport = false;
-                }
-                String imp = parseImportStatement();
-                imports.add(imp);
-                sectionImports.add(imp);
-            } else if (skipTopLevelNonElement()) {
-                sawElementSinceImport = true;
-                lastElementStart = tokens.start(Math.max(0, pos - 1));
-            } else {
-                int at = tokens.start(pos);
-                PackageableElement e = parseSingleElement();
-                sawElementSinceImport = true;
-                lastElementStart = at;
-                String key = ParsedModel.keyOf(e);
-                elementImports.putIfAbsent(key, sectionImports.build());
-                offsets.putIfAbsent(key, at);
-                elements.add(e);
-            }
-        }
-        // claimed sections the token walk never reached (empty, or at EOF)
-        while (nextClaimed < claimed.size()) {
-            parseClaimedSection(claimed.get(nextClaimed++), elements, offsets,
-                    elementImports, imports);
-        }
-
-        // Sections the lexer raw-skipped, adjudicated by THE registry — and
-        // the two surfaces answer DIFFERENTLY, on purpose.
-        //
-        // The DROP-IN surface refuses an unregistered section in the engine's
-        // own words (PureGrammarParser:160). It has to: accepting a file whose
-        // sections we cannot read is not tolerance, it is silence — the
-        // elements inside simply vanish, and arbitrary nonsense in that
-        // section is swallowed as happily as valid grammar.
-        //
-        // The INTERNAL pipeline keeps reading. Real Legend models routinely
-        // mix ###Service / ###DataSpace / ###Persistence with the sections we
-        // implement, and legend-lite has to load those models to compile the
-        // parts it DOES own — refusing them cost the relational corpus its
-        // whole library layer (296 verified -> 0). The skip is recorded on the
-        // model rather than silent, so a caller can surface it.
-        //
-        // Either way, the honest way to make a section acceptable is to
-        // REGISTER a grammar for it — the same escape hatch the engine offers.
-        java.util.List<com.legend.model.ParsedModel.UnclaimedSection> unclaimed =
-                new java.util.ArrayList<>();
-        for (var sk : tokens.skippedSections()) {
-            var g = SectionGrammarRegistry.lookup(sk.name());
-            if (g.isEmpty()) {
-                if (dialect.refusesPlatformDialect()) {
-                    throw new ParseException("'" + sk.name() + "' is not a known"
-                            + " section parser",
-                            tokens.lineOf(sk.nameOffset()),
-                            tokens.columnOf(sk.nameOffset()));
-                }
-                unclaimed.add(new com.legend.model.ParsedModel.UnclaimedSection(
-                        sk.name(), sk.startOffset(), sk.endOffset()));
-            } else if (g.get() instanceof com.legend.parser.section
-                    .RawSectionGrammar raw) {
-                // a BUILT-IN raw grammar (Diagram): typed elements from raw
-                // text — the same claimed-seam routing lexable sections get
-                var parsed = raw.parseRaw(new com.legend.spi.SectionSource(
-                        sk.name(), tokens.source().substring(sk.startOffset(),
-                                sk.endOffset()),
-                        sk.startOffset(), sk.endOffset(),
-                        tokens.lineOf(sk.startOffset())), dialect);
-                ImportScope.Builder scope = new ImportScope.Builder();
-                for (String imp : parsed.imports()) {
-                    scope.add(imp);
-                    imports.add(imp);
-                }
-                ImportScope sectionScope = scope.build();
-                for (var pe : parsed.elements()) {
-                    PackageableElement el;
-                    try {
-                        el = raw.toModel(pe.protocol());
-                    } catch (com.legend.parser.section.LexableSectionGrammar
-                            .UnsupportedElementShape u) {
-                        throw error(u.reason());
-                    }
-                    elements.add(el);
-                    String key = ParsedModel.keyOf(el);
-                    offsets.putIfAbsent(key, sk.startOffset() + pe.startOffset());
-                    elementImports.putIfAbsent(key, sectionScope);
-                }
-            } else if (!g.get().lexable()) {
-                // an OVERLAY grammar owns this opaque section: hand it the
-                // raw text (foreign grammars never adopt our lexer); its
-                // elements enter the MODEL as the sealed opaque carrier —
-                // indexed and routed like any element, never opened
-                g.get().parse(new com.legend.spi.SectionSource(sk.name(),
-                                tokens.source().substring(sk.startOffset(),
-                                        sk.endOffset()),
-                                sk.startOffset(), sk.endOffset(),
-                                tokens.lineOf(sk.startOffset())),
-                        new OverlayElementSink(sk.name(), elements));
-            } else {
-                // a LEXABLE registered grammar whose section the lexer
-                // nonetheless raw-skipped: lexer/registry drift. The old
-                // chain had no arm here and the content VANISHED silently
-                // (adversarial audit, ElementParser finding 1) — the exact
-                // failure mode the Elasticsearch 2026-08-10 incident hit.
-                throw new ParseException("section '" + sk.name()
-                        + "' has a lexable grammar registered but was"
-                        + " raw-skipped by the lexer — lexer/registry drift;"
-                        + " add it to Lexer.lexableSections()",
-                        tokens.lineOf(sk.nameOffset()),
-                        tokens.columnOf(sk.nameOffset()));
-            }
-        }
-        return new ParsedModel(elements, imports.build(), tokens.source(),
-                offsets, elementImports, java.util.Map.of(), unclaimed);
-    }
-
-    /** A lexable section owned by a REAL registered grammar: its whole token
-     *  range parses through the registry, never this file's switch. {@code
-     *  end} is the char offset of the next {@code ###} header (or EOF). */
-    private record ClaimedSection(
-            com.legend.parser.section.LexableSectionGrammar grammar,
-            int contentStart, int end) {
-    }
-
-    private java.util.List<ClaimedSection> claimedSections() {
-        var headers = tokens.sectionHeaders();
-        if (headers.isEmpty()) {
-            return java.util.List.of();
-        }
-        var out = new java.util.ArrayList<ClaimedSection>();
-        for (int i = 0; i < headers.size(); i++) {
-            var h = headers.get(i);
-            PmcdParser.requireCleanHeader(h);
-            var g = SectionGrammarRegistry.lookup(h.name()).orElse(null);
-            if (g instanceof com.legend.parser.section.LexableSectionGrammar lg) {
-                // a FILE-final section runs to EOF — every remaining token
-                // is inside it, so an unbounded end needs no source re-read
-                int end = i + 1 < headers.size()
-                        ? headers.get(i + 1).nameOffset() - 3   // its '###'
-                        : Integer.MAX_VALUE;
-                out.add(new ClaimedSection(lg, h.contentStartOffset(), end));
-            }
-        }
-        return out;
-    }
-
-    /** One claimed section through its grammar: protocol elements out, the
-     *  transform on the {@code FromProtocol} side, section-scoped imports
-     *  (engine's built-in sections are import-aware). */
-    private void parseClaimedSection(ClaimedSection c,
-            List<PackageableElement> elements, Map<String, Integer> offsets,
-            Map<String, ImportScope> elementImports,
-            ImportScope.Builder fileImports) {
-        var parsed = c.grammar().parseSection(this, c.end());
-        ImportScope.Builder scope = new ImportScope.Builder();
-        for (String imp : parsed.imports()) {
-            scope.add(imp);
-            fileImports.add(imp);
-        }
-        ImportScope sectionScope = scope.build();
-        for (var pe : parsed.elements()) {
-            PackageableElement el;
-            try {
-                el = c.grammar().toModel(pe.protocol());
-            } catch (com.legend.parser.section.LexableSectionGrammar
-                    .UnsupportedElementShape u) {
-                throw error(u.reason());
-            }
-            elements.add(el);
-            String key = ParsedModel.keyOf(el);
-            offsets.putIfAbsent(key, pe.startOffset());
-            elementImports.putIfAbsent(key, sectionScope);
-        }
-    }
-
     /**
      * Non-model top-level artifacts real pure files carry — {@code Diagram
      * fqn(w,h) { ... }} blocks and top-level {@code ^Instance(...)}
@@ -504,10 +278,10 @@ public final class ElementParser implements TokenStreamCursor {
         parseDecorations();
         parseQualifiedName();
         skipBalancedBlock();         // { <body> }
-        return new com.legend.model.DataDefinition(de.qualifiedName(), de);
+        return com.legend.model.ModelFromProtocol.element(de);
     }
 
-    private boolean skipTopLevelNonElement() {
+    boolean skipTopLevelNonElement() {
         if (isIdentifierToken(peek()) && "Diagram".equals(text())) {
             advance();
             parseQualifiedName();       // the diagram's name — anything else
@@ -620,21 +394,6 @@ public final class ElementParser implements TokenStreamCursor {
         };
     }
 
-    /** Whether a {@code ###} section header opens between two char offsets
-     *  — the import-legality lookup ({@code (from, to)} exclusive/inclusive;
-     *  {@code from < 0} means file start, where imports are always legal). */
-    private boolean sectionBoundaryBetween(int from, int to) {
-        if (from < 0) {
-            return true;
-        }
-        for (var h : tokens.sectionHeaders()) {
-            if (h.nameOffset() > from && h.nameOffset() <= to) {
-                return true;
-            }
-        }
-        return false;
-    }
-
     /** Char ranges of NON-Pure lexed sections — the strict section-binding
      *  gate's lookup (lazy; only strict parses consult it). */
     private long @com.legend.base.Nullable [][] nonPureRanges;
@@ -675,6 +434,11 @@ public final class ElementParser implements TokenStreamCursor {
      *  {@code nativeFunction: documentation? NATIVE FUNCTION ...}), so it
      *  is read here and handed to the arm. */
     private PackageableElement nativeElement() {
+        return com.legend.model.ModelFromProtocol.element(parseNativeProtocol());
+    }
+
+    /** A {@code native Class} or {@code native function} declaration (the platform dialect only) as its record. */
+    Protocol.Element parseNativeProtocol() {
         int declStart = pos;
         Documentation doc = parseDocumentation();
         if (dialect.refusesPlatformDialect()) {
@@ -684,9 +448,8 @@ public final class ElementParser implements TokenStreamCursor {
         }
         advance();                                  // consume 'native'
         return switch (peek()) {
-            case CLASS -> com.legend.model.FromProtocol.toClassDefinition(
-                    parseClassDefinition(true, declStart, doc));
-            case FUNCTION -> nativeFunctionElement(declStart, doc);
+            case CLASS -> parseClassDefinition(true, declStart, doc);
+            case FUNCTION -> parseNativeFunctionProtocol(declStart, doc);
             default -> throw error("expected 'Class' or 'function' after"
                     + " 'native', got " + peek() + " ('" + safeText() + "')");
         };
@@ -1318,6 +1081,15 @@ public final class ElementParser implements TokenStreamCursor {
     /** {@code Primitive fqn extends Base} with an optional dropped constraint block. */
     /** STRAIGHT-TO-MODEL — not yet migrated; see docs/PROTOCOL_MIGRATION_CENSUS.md. */
     private PackageableElement primitiveElement() {
+        return com.legend.model.ModelFromProtocol.element(parsePrimitiveProtocol());
+    }
+
+    /** {@code Primitive pkg::T<...> extends Base} (lite's and the platform's dialects) as legend-lite's own record. */
+    Protocol.PPrimitive parsePrimitiveProtocol() {
+        if (dialect.refusesLiteExtensions()) {
+            throw error("Primitive type declarations are not supported");
+        }
+        int start = pos;
         advance();   // 'Primitive'
         String fqn = parseQualifiedName();
         List<com.legend.protocol.ParameterDefinition> typeVariables = parseTypeVariableDeclarations();
@@ -1331,35 +1103,36 @@ public final class ElementParser implements TokenStreamCursor {
         if (peek() == TokenType.BRACKET_OPEN) {
             skipBalancedBlock();
         }
-        return new com.legend.model.PrimitiveExtensionDefinition(fqn, base, typeVariables);
+        return new Protocol.PPrimitive(fqn, base, typeVariables, spanOf(start, pos - 1));
     }
 
     // ============================================================
     // Association
     // ============================================================
 
-    /** {@code Association <<stereos>> {tags} qualifiedName { end1; end2; }} */
+    /** {@code Association <<stereos>> {tags} qualifiedName { end1; end2; }}: the record
+     *  ({@link #parseAssociationDefinition}, a projection's own at the platform dialect), through the door. */
     /** PROTOCOL-FIRST. */
     private PackageableElement associationElement() {
+        return com.legend.model.ModelFromProtocol.element(parseAssociationDefinition());
+    }
+
+    /** Parses one non-projection {@code Association} at the cursor into its protocol
+     *  record — the per-element protocol entry point (see {@link #at}). */
+    public com.legend.protocol.Protocol.Element parseAssociationDefinition() {
         int declStart = pos;
         Documentation doc = parseDocumentation();
         expect(TokenType.ASSOCIATION);
-        // CAPTURED, not dropped: the wire carries association annotations
-        // (ProbeWireShapes "association").
         List<com.legend.protocol.Protocol.PStereotype> stereotypes = parseStereotypes();
         List<com.legend.protocol.Protocol.PTaggedValue> taggedValues =
                 taggedValuesWithDocumentation(doc, parseTaggedValues());
         String qualifiedName = parseQualifiedName();
-        // PROJECTION association: `Association X projects Y<A, B>` — a
-        // nominal registration only (like projection classes); the
-        // projected navigation semantics stay loud downstream.
         if (peek() == TokenType.VALID_STRING && "projects".equals(safeText())) {
             if (dialect.refusesPlatformDialect()) {
-                // align with parseAssociationDefinition (the protocol path
-                // already refused; this model path accepted and returned
-                // the WRONG element kind — adversarial audit EP finding 3)
-                throw error("association projections are not supported by the engine");
+                throw error("projection associations are a legend-lite-local form with no"
+                        + " protocol shape (engine rejects 'projects')");
             }
+            // the platform dialect: a projection registers its name only (its projected navigation is not modelled)
             advance();
             parseQualifiedName();
             if (peek() == TokenType.LESS_THAN) {
@@ -1372,27 +1145,7 @@ public final class ElementParser implements TokenStreamCursor {
                     advance();
                 }
             }
-            return new ClassDefinition(qualifiedName, List.of(), List.of(),
-                    List.of(), List.of(), List.of(), List.of(), List.of(),
-                    false);
-        }
-        return com.legend.model.FromProtocol.toAssociationDefinition(
-                parseAssociationBody(declStart, stereotypes, taggedValues, qualifiedName));
-    }
-
-    /** Parses one non-projection {@code Association} at the cursor into its protocol
-     *  record — the per-element protocol entry point (see {@link #at}). */
-    public com.legend.protocol.Protocol.PAssociation parseAssociationDefinition() {
-        int declStart = pos;
-        Documentation doc = parseDocumentation();
-        expect(TokenType.ASSOCIATION);
-        List<com.legend.protocol.Protocol.PStereotype> stereotypes = parseStereotypes();
-        List<com.legend.protocol.Protocol.PTaggedValue> taggedValues =
-                taggedValuesWithDocumentation(doc, parseTaggedValues());
-        String qualifiedName = parseQualifiedName();
-        if (peek() == TokenType.VALID_STRING && "projects".equals(safeText())) {
-            throw error("projection associations are a legend-lite-local form with no"
-                    + " protocol shape (engine rejects 'projects')");
+            return new Protocol.PAssociationProjection(qualifiedName, spanOf(declStart, pos - 1));
         }
         return parseAssociationBody(declStart, stereotypes, taggedValues, qualifiedName);
     }
@@ -2504,17 +2257,14 @@ public final class ElementParser implements TokenStreamCursor {
      *       my::pkg::fn&lt;T,V|m,n&gt;(p1:T1[m1], p2:T2[m2]):R[m];
      * </pre>
      */
-    /** STRAIGHT-TO-MODEL — not yet migrated; see docs/PROTOCOL_MIGRATION_CENSUS.md. */
-    private NativeFunctionDefinition nativeFunctionElement(int declStart,
+    /** PROTOCOL-FIRST: legend-lite's own record ({@code Protocol.PNativeFunction}; no wire carries it). */
+    private Protocol.PNativeFunction parseNativeFunctionProtocol(int declStart,
             @com.legend.base.Nullable Documentation doc) {
         FunctionSignature sig = parseFunctionSignature(declStart, doc);
         expect(TokenType.SEMI_COLON);
-        return new NativeFunctionDefinition(
-                sig.qualifiedName(), sig.typeParams(), sig.multParams(),
-                com.legend.model.FromProtocol.toFunctionParams(sig.params()),
-                sig.returnType(), sig.returnMult(),
-                com.legend.model.FromProtocol.stereotypes(sig.stereotypes()),
-                com.legend.model.FromProtocol.taggedValues(sig.taggedValues()));
+        return new Protocol.PNativeFunction(sig.qualifiedName(), sig.typeParams(), sig.multParams(), sig.params(),
+                sig.returnType(), sig.returnMult(), sig.stereotypes(), sig.taggedValues(),
+                spanOf(declStart, pos - 1));
     }
 
     private com.legend.protocol.ParameterDefinition parseFunctionParameter() {

@@ -102,7 +102,6 @@ final class ResolvedMapping {
     List<MappingInclude> includes() { return md.includes(); }
     List<AssociationMapping> associationMappings() { return md.associationMappings(); }
     List<EnumerationMapping> enumerationMappings() { return md.enumerationMappings(); }
-    @com.legend.base.Nullable String testSuitesSource() { return md.testSuitesSource(); }
 
     // ---- identities -----------------------------------------------------
 

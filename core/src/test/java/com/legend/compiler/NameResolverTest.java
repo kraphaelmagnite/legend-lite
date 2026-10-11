@@ -450,7 +450,7 @@ class NameResolverTest {
                 null, false, List.of(), List.of(), List.of(),
                 /* sourceUrl */ null, java.util.Map.of(), null);
         var md = new LegacyMappingDefinition("mapping::M", List.of(),
-                List.of(rel), List.of(), List.of(), null);
+                List.of(rel), List.of(), List.of());
         ImportScope both = new ImportScope.Builder()
                 .add("model::*").add("store::*").build();
         var r = (LegacyMappingDefinition) resolveOne(md, both, FQNS);
@@ -464,7 +464,7 @@ class NameResolverTest {
         var pure = new ClassMapping.Pure("Person", "p_set", null, true,
                 "Firm", null, List.of());
         var md = new LegacyMappingDefinition("mapping::M", List.of(),
-                List.of(pure), List.of(), List.of(), null);
+                List.of(pure), List.of(), List.of());
         var r = (LegacyMappingDefinition) resolveOne(md);
         var rp = (ClassMapping.Pure) r.classMappings().get(0);
         assertEquals("model::Person", rp.className());
@@ -476,7 +476,7 @@ class NameResolverTest {
         var inc = new MappingInclude("PersonMapping", List.of());
         ImportScope imp = new ImportScope.Builder().add("mapping::*").build();
         var md = new LegacyMappingDefinition("mapping::M", List.of(inc),
-                List.of(), List.of(), List.of(), null);
+                List.of(), List.of(), List.of());
         var r = (LegacyMappingDefinition) resolveOne(md, imp, FQNS);
         assertEquals("mapping::PersonMapping", r.includes().get(0).mappingPath());
     }
@@ -487,7 +487,7 @@ class NameResolverTest {
         Set<String> fqns = Set.of("model::Employment");
         var am = new AssociationMapping.Relational("Employment", List.of());
         var md = new LegacyMappingDefinition("mapping::M", List.of(), List.of(),
-                List.of(am), List.of(), null);
+                List.of(am), List.of());
         var r = (LegacyMappingDefinition) resolveOne(md, imp, fqns);
         var ram = (AssociationMapping.Relational) r.associationMappings().get(0);
         assertEquals("model::Employment", ram.associationName());
@@ -506,7 +506,7 @@ class NameResolverTest {
                 null, false, List.of(), List.of(), List.of(col),
                 /* sourceUrl */ null, java.util.Map.of(), null);
         var md = new LegacyMappingDefinition("mapping::M", List.of(),
-                List.of(rel), List.of(), List.of(), null);
+                List.of(rel), List.of(), List.of());
         var r = (LegacyMappingDefinition) resolveOne(md, WILDCARD_STORE, FQNS);
         var rrel = (ClassMapping.Relational) r.classMappings().get(0);
         var rcol = (PropertyMapping.Column) rrel.propertyMappings().get(0);
@@ -524,7 +524,7 @@ class NameResolverTest {
                 null, false, List.of(), List.of(), List.of(lp),
                 /* sourceUrl */ null, java.util.Map.of(), null);
         var md = new LegacyMappingDefinition("mapping::M", List.of(),
-                List.of(rel), List.of(), List.of(), null);
+                List.of(rel), List.of(), List.of());
         ImportScope both = new ImportScope.Builder()
                 .add("model::*").add("store::*").build();
         var r = (LegacyMappingDefinition) resolveOne(md, both, FQNS);
@@ -908,7 +908,7 @@ class NameResolverTest {
                 null, false, List.of(), List.of(), List.of(pm),
                 /* sourceUrl */ null, java.util.Map.of(), null);
         return new LegacyMappingDefinition("mapping::M", List.of(),
-                List.of(rel), List.of(), List.of(), null);
+                List.of(rel), List.of(), List.of());
     }
 
     private static PropertyMapping firstPm(LegacyMappingDefinition md) {
@@ -1118,7 +1118,7 @@ class NameResolverTest {
                 fm, false, List.of(), List.of(), List.of(),
                 /* sourceUrl */ null, java.util.Map.of(), null);
         var md = new LegacyMappingDefinition("mapping::M", List.of(),
-                List.of(rel), List.of(), List.of(), null);
+                List.of(rel), List.of(), List.of());
         var r = (LegacyMappingDefinition) resolveOne(md, WILDCARD_STORE, FQNS);
         var rrel = (ClassMapping.Relational) r.classMappings().get(0);
         assertSame(fm, rrel.filter(), "Direct(Local) has no FQN refs; same instance");
@@ -1133,7 +1133,7 @@ class NameResolverTest {
                 fm, false, List.of(), List.of(), List.of(),
                 /* sourceUrl */ null, java.util.Map.of(), null);
         var md = new LegacyMappingDefinition("mapping::M", List.of(),
-                List.of(rel), List.of(), List.of(), null);
+                List.of(rel), List.of(), List.of());
         var r = (LegacyMappingDefinition) resolveOne(md, WILDCARD_STORE, FQNS);
         var rrel = (ClassMapping.Relational) r.classMappings().get(0);
         var rfm = (FilterMapping.Direct) rrel.filter();
@@ -1153,7 +1153,7 @@ class NameResolverTest {
                 fm, false, List.of(), List.of(), List.of(),
                 /* sourceUrl */ null, java.util.Map.of(), null);
         var md = new LegacyMappingDefinition("mapping::M", List.of(),
-                List.of(rel), List.of(), List.of(), null);
+                List.of(rel), List.of(), List.of());
         var r = (LegacyMappingDefinition) resolveOne(md, WILDCARD_STORE, FQNS);
         var rrel = (ClassMapping.Relational) r.classMappings().get(0);
         var rfm = (FilterMapping.JoinMediated) rrel.filter();
@@ -1174,7 +1174,7 @@ class NameResolverTest {
         ImportScope imp = new ImportScope.Builder()
                 .add("mapping::*").add("store::*").build();
         var md = new LegacyMappingDefinition("mapping::M", List.of(inc),
-                List.of(), List.of(), List.of(), null);
+                List.of(), List.of(), List.of());
         var r = (LegacyMappingDefinition) resolveOne(md, imp, FQNS);
         var rinc = r.includes().get(0);
         assertEquals("mapping::PersonMapping", rinc.mappingPath());
@@ -1202,7 +1202,7 @@ class NameResolverTest {
         var pure = new ClassMapping.Pure("Person", "p_set", null, true,
                 "Firm", null, List.of()); // sourceClass = Firm
         var md = new LegacyMappingDefinition("mapping::M", List.of(),
-                List.of(pure), List.of(), List.of(), null);
+                List.of(pure), List.of(), List.of());
         var r = (LegacyMappingDefinition) resolveOne(md);
         var rp = (ClassMapping.Pure) r.classMappings().get(0);
         assertEquals("model::Person", rp.className());
@@ -1361,7 +1361,7 @@ class NameResolverTest {
                 null, false, List.of(), List.of(), List.of(),
                 /* sourceUrl */ null, java.util.Map.of(), null);
         var md = new LegacyMappingDefinition("mapping::M", List.of(),
-                List.of(rel), List.of(), List.of(), null);
+                List.of(rel), List.of(), List.of());
         var r = (LegacyMappingDefinition) resolveOne(md, imp, trickyFqns);
         var rrel = (ClassMapping.Relational) r.classMappings().get(0);
         assertEquals("p_set", rrel.setId(), "setId is a local id; never resolved");
@@ -1386,7 +1386,7 @@ class NameResolverTest {
         var assocBinding = new com.legend.model.CleanSheetMappingDefinition.AssociationBinding(
                 "Person_Firm", new com.legend.protocol.Realization.Ref("personFirmMatch"));
         var md = new com.legend.model.CleanSheetMappingDefinition("acme::M", List.of(),
-                List.of(classBinding), List.of(assocBinding), List.of(), null);
+                List.of(classBinding), List.of(assocBinding), List.of());
 
         var r = (com.legend.model.CleanSheetMappingDefinition) resolveOne(md, imp, fqns);
         var cb = r.classBindings().get(0);
@@ -1416,7 +1416,7 @@ class NameResolverTest {
                         null, null, true,
                         new com.legend.protocol.Realization.Ref("acme::personMapping"),
                         List.of())),
-                List.of(), List.of(), null);
+                List.of(), List.of());
         assertSame(md, resolveOne(md, imp, fqns),
                 "already-FQN bindings round-trip without allocating a new record");
     }
@@ -1676,7 +1676,7 @@ class NameResolverTest {
                 List.of(pmCol, pmJoin),
                 /* sourceUrl */ null, java.util.Map.of(), null);
         var md = new LegacyMappingDefinition("mapping::M", List.of(),
-                List.of(rel), List.of(), List.of(), null);
+                List.of(rel), List.of(), List.of());
         var r = (LegacyMappingDefinition) resolveOne(md, both, FQNS);
         var rrel = (ClassMapping.Relational) r.classMappings().get(0);
         assertEquals("model::Person", rrel.className());
@@ -1706,7 +1706,7 @@ class NameResolverTest {
                 List.of(new EnumValueMapping("ACTIVE",
                         List.of(new SourceValue.StringValue("A")))));
         var md = new LegacyMappingDefinition("mapping::M", List.of(),
-                List.of(), List.of(), List.of(em), null);
+                List.of(), List.of(), List.of(em));
         var r = (LegacyMappingDefinition) resolveOne(md, imp, fqns);
         assertEquals("model::Status",
                 r.enumerationMappings().get(0).enumName(),
@@ -1724,7 +1724,7 @@ class NameResolverTest {
         var em = new EnumerationMapping("Status", "status_set",
                 List.of(new EnumValueMapping("ACTIVE", List.of(ref))));
         var md = new LegacyMappingDefinition("mapping::M", List.of(),
-                List.of(), List.of(), List.of(em), null);
+                List.of(), List.of(), List.of(em));
         var r = (LegacyMappingDefinition) resolveOne(md, imp, fqns);
         var rref = (SourceValue.EnumRef) r.enumerationMappings().get(0)
                 .valueMappings().get(0).sourceValues().get(0);
@@ -1743,7 +1743,7 @@ class NameResolverTest {
         var em = new EnumerationMapping("model::Status", "status_set",
                 List.of(new EnumValueMapping("ACTIVE", List.of(sv1, sv2))));
         var md = new LegacyMappingDefinition("mapping::M", List.of(),
-                List.of(), List.of(), List.of(em), null);
+                List.of(), List.of(), List.of(em));
         var r = (LegacyMappingDefinition) resolveOne(md, imp, fqns);
         var values = r.enumerationMappings().get(0).valueMappings().get(0).sourceValues();
         assertSame(sv1, values.get(0));
@@ -1757,7 +1757,7 @@ class NameResolverTest {
                 List.of(new EnumValueMapping("ACTIVE",
                         List.of(new SourceValue.EnumRef("model::Source", "X")))));
         var md = new LegacyMappingDefinition("mapping::M", List.of(),
-                List.of(), List.of(), List.of(em), null);
+                List.of(), List.of(), List.of(em));
         var r = resolveOne(md);
         assertSame(md, r, "fully-FQN enumeration mapping round-trips unchanged");
     }

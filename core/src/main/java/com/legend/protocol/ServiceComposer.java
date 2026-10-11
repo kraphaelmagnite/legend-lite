@@ -56,7 +56,7 @@ final class ServiceComposer {
         }
         String documentation = s.documentation();
         b.append(TAB).append("documentation: ").append(convertString(documentation != null ? documentation : "", true)).append(";\n");
-        b.append(TAB).append("autoActivateUpdates: ").append(Boolean.TRUE.equals(s.autoActivateUpdates()) ? "true" : "false").append(";\n");
+        b.append(TAB).append("autoActivateUpdates: ").append(s.autoActivateUpdates() ? "true" : "false").append(";\n");
         b.append(TAB).append("execution: ").append(execution(s.execution(), style));
         if (s.testSuites() != null) {
             List<String> suites = new ArrayList<>();

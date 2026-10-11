@@ -1336,9 +1336,14 @@ final class Typer {
             }
         }
         // a zero-arg DERIVED read IS a call of its externalized body —
-        // route and β-inline so downstream sees plain navigation
-        if (source.info().type() instanceof Type.ClassType ct
-                && ctx.findProperty(ct.fqn(), ap.property()).orElse(null)
+        // route and β-inline so downstream sees plain navigation. The
+        // owner is a class or a PARAMETERIZED class (Pair<A,B>.toString(),
+        // which the call spelling reached by its raw class and, since leg 8
+        // step 2, the property spelling does: `$p.toString()` is `$p.toString`)
+        String derivedOwner = source.info().type() instanceof Type.ClassType oct ? oct.fqn()
+                : source.info().type() instanceof Type.GenericType og ? og.rawFqn() : null;
+        if (derivedOwner != null
+                && ctx.findProperty(derivedOwner, ap.property()).orElse(null)
                         instanceof Property.Derived d
                 && d.parameters().isEmpty()) {
             // AUTO-MAP (real pure — map.pure grammarDoc: "map is auto

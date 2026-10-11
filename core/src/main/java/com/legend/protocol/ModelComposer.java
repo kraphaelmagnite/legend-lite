@@ -214,6 +214,13 @@ public final class ModelComposer {
             case Protocol.PMapping x -> x.qualifiedName();
             case Protocol.PDataElement x -> x.qualifiedName();
             case Protocol.PRelationalMapper x -> x.qualifiedName();
+            case Protocol.PNativeFunction x -> throw ProtocolEmitter.liteOnly("a native function declaration",
+                    x.qualifiedName());
+            case Protocol.PPrimitive x -> throw ProtocolEmitter.liteOnly("a Primitive declaration", x.qualifiedName());
+            case Protocol.POpaqueElement x -> throw ProtocolEmitter.liteOnly(
+                    "an element of the foreign section '" + x.sectionName() + "'", x.qualifiedName());
+            case Protocol.PAssociationProjection x -> throw ProtocolEmitter.liteOnly("a projection association",
+                    x.qualifiedName());
         };
     }
 

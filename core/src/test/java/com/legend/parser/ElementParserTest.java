@@ -170,7 +170,9 @@ final class ElementParserTest {
         // lite-only invention (invention census batch 2)
         ParseException ex = assertThrows(ParseException.class,
                 () -> com.legend.testing.Platform.model("import simple::model::Firm;"));
-        assertTrue(String.valueOf(ex.getMessage()).contains("::*"));
+        // refused as the engine's grammar refuses it, at the token that is not the wildcard (leg 8: one parser, the
+        // engine's section walk and its refusals at every dialect)
+        assertTrue(String.valueOf(ex.getMessage()).contains("Unexpected token"), ex.getMessage());
     }
 
     @Test
@@ -503,10 +505,11 @@ final class ElementParserTest {
         // names the offending TEXT, which is what a user can act on.
         // ('Measure' was this test's example until 2026-08-09, when it
         // became a supported element — see measureElementParses.)
+        // (leg 8, one parser: refused as the engine's section walk refuses an unknown declaration head)
         ParseException e = assertThrows(ParseException.class,
                 () -> com.legend.testing.Platform.model("Persistence my::P ( )"));
-        assertTrue(String.valueOf(e.getMessage()).toLowerCase(java.util.Locale.ROOT).contains("unsupported"),
-                () -> "expected 'unsupported' in message, got: " + e.getMessage());
+        assertTrue(String.valueOf(e.getMessage()).contains("Unexpected token"),
+                () -> "expected the engine's refusal, got: " + e.getMessage());
         assertTrue(e.getMessage().contains("Persistence"),
                 () -> "error should name the offending text, got: " + e.getMessage());
     }
@@ -739,15 +742,15 @@ final class ElementParserTest {
         // REFUTED by the inline-snippet corpus: the ENGINE parses 1- and 3-end
         // associations and serializes what it read — arity is a COMPILE error.
         // The parser stays total; both forms round the protocol layer.
-        assertEquals(1, com.legend.testing.Engine.at(
+        assertEquals(1, ((com.legend.protocol.Protocol.PAssociation) com.legend.testing.Engine.at(
                 com.legend.lexer.Lexer.tokenize("Association A { only: B[1]; }"),
                 0)
-                .parseAssociationDefinition().properties().size());
-        assertEquals(3, com.legend.testing.Engine.at(
+                .parseAssociationDefinition()).properties().size());
+        assertEquals(3, ((com.legend.protocol.Protocol.PAssociation) com.legend.testing.Engine.at(
                 com.legend.lexer.Lexer.tokenize(
                         "Association A { a: B[1]; b: C[1]; c: D[1]; }"),
                 0)
-                .parseAssociationDefinition().properties().size());
+                .parseAssociationDefinition()).properties().size());
     }
 
     // ===============================================================
@@ -3383,16 +3386,29 @@ final class ElementParserTest {
     }
 
     // ===============================================================
-    // B.4f — Mapping test suites (raw-text capture, D-3 deferred)
+    // B.4f — Mapping test suites (parsed onto the record, as the JSON carries them)
     // ===============================================================
 
+    /** The mapping's record from the text: its test suites as the JSON carries them, typed (leg 8 step 2: the raw
+     *  text the record kept beside them was on no wire). */
+    private static com.legend.protocol.Protocol.PMapping mappingRecord(String body) {
+        return mappingIn("###Mapping\n" + body);
+    }
+
+    private static com.legend.protocol.Protocol.PMapping mappingIn(String text) {
+        return com.legend.parser.PmcdParser.parseModel(text).elements().stream()
+                .filter(e -> e instanceof com.legend.protocol.Protocol.PMapping)
+                .map(e -> (com.legend.protocol.Protocol.PMapping) e)
+                .findFirst().orElseThrow();
+    }
+
     @Test
-    void mappingWithoutTestSuitesHasNullSource() {
-        LegacyMappingDefinition md = (LegacyMappingDefinition) com.legend.testing.Platform.model(
+    void mappingWithoutTestSuitesHasNone() {
+        com.legend.protocol.Protocol.PMapping m = mappingIn(
                 "\n###Mapping\nMapping my::M ( "
                 + "*model::P: Relational { ~mainTable [db::DB] T  x: T.X } "
-                + ")").elements().get(0);
-        assertNull(md.testSuitesSource());
+                + ")");
+        assertTrue(m.testSuites().isEmpty());
     }
 
     /** A testSuites block shaped like the corpus's own (personMapping.pure):
@@ -3415,35 +3431,30 @@ final class ElementParserTest {
             + "] ";
 
     @Test
-    void mappingTestSuitesBlockCapturedVerbatim() {
-        LegacyMappingDefinition md = (LegacyMappingDefinition) com.legend.testing.Platform.model(
+    void mappingTestSuitesParsedOntoTheRecord() {
+        com.legend.protocol.Protocol.PMapping m = mappingRecord(
                 "Mapping my::M ( "
                 + "*model::P: Relational { ~mainTable [db::DB] T  x: T.X } "
                 + PERSON_SUITE
-                + ")").elements().get(0);
-        assertNotNull(md.testSuitesSource());
-        assertTrue(md.testSuitesSource().contains("PersonSuite"));
-        assertTrue(md.testSuitesSource().contains("graphFetch"));
-        // Outer brackets included in capture.
-        assertTrue(md.testSuitesSource().startsWith("["));
-        assertTrue(md.testSuitesSource().endsWith("]"));
+                + ")");
+        assertEquals(1, m.testSuites().size());
+        assertEquals("PersonSuite", m.testSuites().get(0).id());
+        assertEquals("Test1", m.testSuites().get(0).tests().get(0).id());
     }
 
     @Test
     void mappingTestSuitesInteriorBracesBalanced() {
-        // Nested braces and brackets must balance correctly inside capture.
+        // Nested braces and brackets inside the suites end where the block ends.
         // testSuites is the LAST thing in a mapping body — engine's rule is
         // `(mappingElement)* (tests)? (mappingTestableDefinition)?`, so the
         // class mapping goes before it, not after.
-        LegacyMappingDefinition md = (LegacyMappingDefinition) com.legend.testing.Platform.model(
+        com.legend.protocol.Protocol.PMapping m = mappingRecord(
                 "Mapping my::M ( "
                 + "*model::P: Relational { ~mainTable [db::DB] T  x: T.X } "
                 + PERSON_SUITE
-                + ")").elements().get(0);
-        assertNotNull(md.testSuitesSource());
-        assertTrue(md.testSuitesSource().contains("[1, 2, 3]"),
-                () -> "captured: " + md.testSuitesSource());
-        assertEquals(1, md.classMappings().size());
+                + ")");
+        assertEquals(1, m.classMappings().size());
+        assertEquals(1, m.testSuites().get(0).tests().get(0).assertions().size());
     }
 
     @Test

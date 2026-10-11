@@ -48,15 +48,7 @@ public final class DataQualityValidationSectionGrammar
 
     @Override
     public com.legend.model.PackageableElement toModel(Protocol.Element element) {
-        String kind = switch (element) {
-            case Protocol.PDataQualityValidation v -> "DataQualityValidation";
-            case Protocol.PDataQualityRelationValidation v ->
-                    "DataQualityRelationValidation";
-            default -> "DataQualityRelationComparison";
-        };
-        return new com.legend.model.GenericSectionElementDefinition(
-                "DataQualityValidation", kind, qualifiedNameOf(element),
-                java.util.Map.of(), null);
+        return com.legend.model.ModelFromProtocol.element(element);
     }
 
     @Override
@@ -103,7 +95,12 @@ public final class DataQualityValidationSectionGrammar
                         ctxSecond = c.peek() == TokenType.STRING
                                 ? SectionParse.stringValue(c)
                                 : Protocol.unquotePath(c.parseQualifiedName());
-                        ctxSecondSpan = c.spanOf(s2, c.pos() - 1);
+                        // the runtime POINTER of fromMappingAndRuntime has a
+                        // span on the wire; fromDataSpace's context key is a
+                        // plain string, with none (leg 8 step 2)
+                        if ("fromMappingAndRuntime".equals(ctxKind)) {
+                            ctxSecondSpan = c.spanOf(s2, c.pos() - 1);
+                        }
                     }
                     c.expect(TokenType.PAREN_CLOSE);
                 }

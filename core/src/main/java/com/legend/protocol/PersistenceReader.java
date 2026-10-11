@@ -22,8 +22,8 @@ import java.util.Map;
  *
  * <p>What the wire does not carry reads back as the parser's absent value: annotations (never written),
  * an unspelled notifier, output targets or tests ({@code null}), an unspelled target ({@code __empty__}).
- * Defaults the emitter injects (a flat target's {@code noDeduplicationStrategy} and empty
- * {@code partitionFields}) read back as the spelled entries they print as -- the same bytes.
+ * A flat target's defaults ({@code noDeduplicationStrategy} and empty {@code partitionFields}) read as
+ * entries, as the parser holds them where they are not written (leg 8 step 2).
  */
 final class PersistenceReader {
 

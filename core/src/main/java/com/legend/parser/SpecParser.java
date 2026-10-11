@@ -1404,6 +1404,14 @@ public final class SpecParser implements TokenStreamCursor {
         int nameEnd = pos - 1;
         if (!atEnd() && peek() == TokenType.PAREN_OPEN) {
             List<ValueSpecification> args = parseArgList();
+            if (args.isEmpty() && dialect.refusesPlatformDialect()) {
+                // `$x.f()` IS `$x.f` at the engine's and lite's dialects: one property node on the
+                // engine's wire, spanning the name, which cannot tell them apart (leg 8 step 2) -- the
+                // typer looks for the property, then a zero-argument qualified property. legend-pure
+                // (the platform dialect) keeps the parentheses' meaning: `$s.toString()` is
+                // RoutingStrategy's qualified property where `$s.toString` is its function-valued one
+                return new AppliedProperty(receiver, name, spanOf(nameStart, nameEnd));
+            }
             List<ValueSpecification> params = new ArrayList<>(1 + args.size());
             params.add(receiver);
             params.addAll(args);
@@ -1704,11 +1712,23 @@ public final class SpecParser implements TokenStreamCursor {
             List<TypeExpression> typeArgs,
             List<String> typeMultArgs,
             List<com.legend.protocol.spec.NewInstance.KeyBinding> properties) {
-        return new AppliedFunction(
-                AppliedFunction.NEW,
-                List.of(
-                        receiver,
-                        new NewInstance(className, typeArgs, typeMultArgs, properties)));
+        NewInstance ni = new NewInstance(className, typeArgs, typeMultArgs, properties);
+        if (dialect.refusesPlatformDialect() && receiver instanceof PackageableElementPtr) {
+            // ^Pair / ^BasicColumnSpecification / ^TdsOlapRank are the calls the engine's walker writes for
+            // them (pair(a, b), col(f, n), tds::func(f); their type arguments dropped, as the engine drops
+            // them): the JSON has no `new` for them, so neither does the record (leg 8 step 2). legend-pure
+            // (the platform dialect) keeps its `^`
+            AppliedFunction special;
+            try {
+                special = com.legend.protocol.CaretSpecials.call(ni);
+            } catch (UnsupportedOperationException missingKey) {
+                throw error(String.valueOf(missingKey.getMessage()));
+            }
+            if (special != null) {
+                return special;
+            }
+        }
+        return new AppliedFunction(AppliedFunction.NEW, List.of(receiver, ni));
     }
 
     /**
@@ -3355,10 +3375,10 @@ public final class SpecParser implements TokenStreamCursor {
         String property = text();
         com.legend.protocol.SourceInfo namePos = spanOf(pos, pos);
         pos++;
+        // `prop()` is `prop`: the engine's reading and the only one its JSON carries (a property graph-fetch
+        // tree has parameters and no mark for the parentheses; leg 8 step 2)
         List<ValueSpecification> args = List.of();
-        boolean qualified = false;
         if (!atEnd() && peek() == TokenType.PAREN_OPEN) {
-            qualified = true;
             args = parseArgList();
         }
         // prop->subType(@Sub) { ... } — the PROPERTY-LEVEL subtype view
@@ -3366,7 +3386,7 @@ public final class SpecParser implements TokenStreamCursor {
         String subType = atSubTypeArrow() ? parseSubTypeView().className() : null;
         List<com.legend.protocol.spec.GraphFetchLiteral.Node> children =
                 !atEnd() && peek() == TokenType.BRACE_OPEN ? parseGraphDefinition(null) : List.of();
-        nodes.add(new com.legend.protocol.spec.GraphFetchLiteral.Node(property, namePos, args, qualified,
+        nodes.add(new com.legend.protocol.spec.GraphFetchLiteral.Node(property, namePos, args,
                 alias, subType, children));
     }
 

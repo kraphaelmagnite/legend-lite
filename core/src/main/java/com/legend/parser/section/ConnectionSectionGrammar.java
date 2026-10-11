@@ -94,8 +94,7 @@ public final class ConnectionSectionGrammar implements LexableSectionGrammar {
     @Override
     public com.legend.model.PackageableElement toModel(Protocol.Element element) {
         try {
-            return com.legend.model.FromProtocol.toConnectionElement(
-                    (Protocol.PConnection) element);
+            return com.legend.model.ModelFromProtocol.element(element);
         } catch (com.legend.model.FromProtocol.UnsupportedConnectionShape u) {
             throw new UnsupportedElementShape(u.reason());
         }
@@ -1478,8 +1477,10 @@ public final class ConnectionSectionGrammar implements LexableSectionGrammar {
             throw c.error("Redshift needs name, host, port, clusterID"
                     + " and region");
         }
+        // no span: the redshift extension's wire carries none (C12 byte pin;
+        // leg 8 step 2)
         return new Protocol.PRedshiftSpec(clusterID, name, endpointURL, host,
-                port, region, c.spanOf(keywordTok, c.pos() - 1));
+                port, region, null);
     }
 
     /** {@code Athena { region; database?; workGroup?; outputLocation?;
