@@ -27,6 +27,7 @@ import { SheetTabs } from '../ui/sheet-tabs.ts';
 import type { MenuGroup, MenuItem } from '../ui/menu.ts';
 import { tiles } from '../layout/bands.ts';
 import { pageToJson, writePageOf, type PageDocument, type PageViews } from '../page-document.ts';
+import type { PageModelRef } from '../page-model.ts';
 import type { CubeDocument } from '../cube-document.ts';
 import type { CubeSnapshot } from '../snapshot.ts';
 import type { CubeConfiguration } from '../config.ts';
@@ -87,6 +88,13 @@ export interface PageAppOptions {
   readonly onSettingsChanged?: (values: SettingValues) => void;
   /** Hand a file to the user: Export ▸ Page File. */
   readonly download?: (name: string, mime: string, content: string) => void;
+  /**
+   * Why the page cannot be exported as a file now, when the host says it cannot: its classes are in this browser's
+   * project, which a file cannot carry yet (docs/DATACUBE_MODEL_DESIGN_2026_10_10.md §15.3). Said, and nothing written.
+   */
+  readonly exportRefusal?: () => string | undefined;
+  /** Say a refusal to the person (the host's way: a page of its own alerts). */
+  readonly refuse?: (text: string) => void;
   /**
    * The host's readout (where the planner runs, what went wrong), at the right of the page's FIRST grid's status bar
    * -- it moves when another grid becomes the first -- on each of that bar's renders.
@@ -517,14 +525,15 @@ export class PageApp {
   }
 
   /**
-   * THE PAGE AS IT IS SAVED (page-document.ts, version 3): one cube per grid -- on the board, then kept off it for a
-   * detached chart -- each the grid's own cube document, under the grid's id; the views and the sheets. `unknown`:
-   * fields a newer writer put in the page and in each cube, written back as they were. Undefined when a grid cannot
-   * say its source, or there is nothing on the page.
+   * THE PAGE AS IT IS SAVED (page-document.ts, version 4): one cube per grid -- on the board, then kept off it for a
+   * detached chart -- each the grid's own cube document, under the grid's id; the views and the sheets; the page's
+   * model (where its classes are), when it has one. `unknown`: fields a newer writer put in the page and in each cube,
+   * written back as they were. Undefined when a grid cannot say its source, or there is nothing on the page.
    */
   document(name: string, unknown?: {
     readonly page?: Readonly<Record<string, unknown>>;
     readonly cubes?: ReadonlyMap<string, Readonly<Record<string, unknown>>>;
+    readonly model?: PageModelRef;
   }): PageDocument | undefined {
     const ids = this.cubes;
     if (ids.length === 0) return undefined;
@@ -534,7 +543,11 @@ export class PageApp {
       if (!cube) return undefined;
       cubes.push({ id, cube });
     }
-    return writePageOf({ name, cubes, views: this.views(), ...(unknown?.page ? { unknown: unknown.page } : {}) });
+    return writePageOf({
+      name, cubes, views: this.views(),
+      ...(unknown?.model ? { model: unknown.model } : {}),
+      ...(unknown?.page ? { unknown: unknown.page } : {}),
+    });
   }
 
   /** Why the page cannot be saved now, if it cannot: nothing on it, or a grid's own reason, named. */
@@ -722,6 +735,11 @@ export class PageApp {
         this.#page.setEditing(!this.#page.editing);
         return;
       case 'page.export': {
+        const refused = this.#options.exportRefusal?.();
+        if (refused !== undefined) {
+          this.#options.refuse?.(refused);
+          return;
+        }
         const name = this.suggestedName || 'page';
         const doc = this.document(name);
         if (doc) this.#options.download?.(`${name}.page.json`, 'application/json', pageToJson(doc));

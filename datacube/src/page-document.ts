@@ -29,14 +29,16 @@ import { ExactNumber, fromJson, toJson as protocolJson } from '../../pure-protoc
 import { CHART_MARKS, DEFAULT_OPTIONS, type ChartSpec } from './chart-spec.ts';
 import { CUBE_KIND, cubeToJson, definitionText, readCube, type CubeDocument } from './cube-document.ts';
 import { type Bands, type Node, fromCells, problems, tiles as tilesOf } from './layout/bands.ts';
+import type { PageModelRef } from './page-model.ts';
 import type { FilterNode } from './snapshot.ts';
 
 export const PAGE_KIND = 'datacube.page';
 /**
- * 3: sheets, each its own bands (2026-10-09, docs/DATACUBE_PAGES_DESIGN_2026_10_09.md §7.3). 2: one layout, as bands.
- * 1: tiles on a 12-column grid.
+ * 4: the page's model, where its classes are (2026-10-10, docs/DATACUBE_MODEL_DESIGN_2026_10_10.md §15.3). 3: sheets,
+ * each its own bands (2026-10-09, docs/DATACUBE_PAGES_DESIGN_2026_10_09.md §7.3). 2: one layout, as bands. 1: tiles on
+ * a 12-column grid.
  */
-export const PAGE_VERSION = 3;
+export const PAGE_VERSION = 4;
 /** The sheet a page of one sheet has: a version 1 or 2 page's, and a cube alone's. */
 export const FIRST_SHEET = 'sheet-1';
 /** A version 1 page's grid: its rows to a screenful (the board it was saved from). */
@@ -89,6 +91,8 @@ export interface PageDocument extends PageViews {
   readonly version: number;
   readonly name: string;
   readonly cubes: readonly { readonly id: string; readonly cube: CubeDocument }[];
+  /** Where the page's classes are (Create a Class…): its project in the model home; none until its first class. */
+  readonly model?: PageModelRef;
   /** Top-level fields a newer writer added, kept verbatim. */
   readonly unknown?: Readonly<Record<string, unknown>>;
 }
@@ -101,7 +105,7 @@ export class PageDocumentError extends Error {
 }
 
 // `layout`: a version 1 or 2 page's, read into its one sheet (and not written back beside the sheets)
-const KNOWN = new Set(['kind', 'version', 'name', 'cubes', 'views', 'sheets', 'layout']);
+const KNOWN = new Set(['kind', 'version', 'name', 'cubes', 'views', 'sheets', 'layout', 'model']);
 
 /** The one cube of a step-1 page. */
 export const PAGE_CUBE = 'cube';
@@ -112,6 +116,7 @@ export function writePage(o: {
   readonly name: string;
   readonly cube: CubeDocument;
   readonly views: PageViews;
+  readonly model?: PageModelRef;
   readonly unknown?: Readonly<Record<string, unknown>>;
 }): PageDocument {
   return {
@@ -122,6 +127,7 @@ export function writePage(o: {
     cubes: [{ id: PAGE_CUBE, cube: { ...o.cube, name: o.name } }],
     views: o.views.views,
     sheets: o.views.sheets,
+    ...(o.model ? { model: keptFor(o.model, [{ id: PAGE_CUBE }]) } : {}),
     ...(o.unknown && Object.keys(o.unknown).length > 0 ? { unknown: o.unknown } : {}),
   };
 }
@@ -134,6 +140,7 @@ export function writePageOf(o: {
   readonly name: string;
   readonly cubes: readonly { readonly id: string; readonly cube: CubeDocument }[];
   readonly views: PageViews;
+  readonly model?: PageModelRef;
   readonly unknown?: Readonly<Record<string, unknown>>;
 }): PageDocument {
   return {
@@ -144,8 +151,21 @@ export function writePageOf(o: {
     cubes: o.cubes.map((c) => ({ id: c.id, cube: { ...c.cube, name: o.name } })),
     views: o.views.views,
     sheets: o.views.sheets,
+    ...(o.model ? { model: keptFor(o.model, o.cubes) } : {}),
     ...(o.unknown && Object.keys(o.unknown).length > 0 ? { unknown: o.unknown } : {}),
   };
+}
+
+/**
+ * The page's model as the page writes it: its tables kept for the cubes the page holds, and only those -- a grid
+ * removed since its class was made takes its table's name with it, as the reader holds every kept name to a cube of
+ * the page (the audit's B1: a page written otherwise would never open again).
+ */
+function keptFor(model: PageModelRef, cubes: readonly { readonly id: string }[]): PageModelRef {
+  const ids = new Set(cubes.map((c) => c.id));
+  const tables: Record<string, string> = {};
+  for (const [cube, table] of Object.entries(model.tables)) if (ids.has(cube)) tables[cube] = table;
+  return { ...model, tables };
 }
 
 /** The page as a JSON-ready object: each cube as its own document writes itself. */
@@ -173,6 +193,8 @@ export function pageDefinitionText(page: PageDocument): string {
     cubes: page.cubes.map((c) => definitionText(c.cube)),
     views: page.views,
     sheets: page.sheets,
+    // its classes' project: made, or a grid's table kept, the page has changed
+    ...(page.model ? { model: page.model } : {}),
   });
 }
 
@@ -233,6 +255,7 @@ export function readPage(input: string | unknown): PageDocument {
 
   const unknown: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(raw)) if (!KNOWN.has(k)) unknown[k] = plain(v);
+  const model = raw['model'] === undefined ? undefined : readModel(plain(raw['model']), ids);
 
   return {
     kind: PAGE_KIND,
@@ -241,8 +264,26 @@ export function readPage(input: string | unknown): PageDocument {
     cubes,
     views,
     sheets,
+    ...(model ? { model } : {}),
     ...(Object.keys(unknown).length > 0 ? { unknown } : {}),
   };
+}
+
+/** The page's model: its project, its workspace, its package, and each grid's table (`ids`: the page's cubes). */
+function readModel(raw: unknown, ids: ReadonlySet<string>): PageModelRef {
+  if (!isObject(raw)) throw new PageDocumentError("'model' is not an object");
+  const { project, workspace, package: pkg, tables } = raw;
+  for (const [field, value] of [['project', project], ['workspace', workspace], ['package', pkg]] as const) {
+    if (typeof value !== 'string' || value === '') throw new PageDocumentError(`'model' has no ${field}`);
+  }
+  if (!isObject(tables)) throw new PageDocumentError("'model' has no tables");
+  const kept: Record<string, string> = {};
+  for (const [cube, table] of Object.entries(tables)) {
+    if (!ids.has(cube)) throw new PageDocumentError(`'model' keeps a table for ${cube}, which is no cube of the page`);
+    if (typeof table !== 'string' || table === '') throw new PageDocumentError(`'model' keeps no table name for ${cube}`);
+    kept[cube] = table;
+  }
+  return { project: project as string, workspace: workspace as string, package: pkg as string, tables: kept };
 }
 
 function readSheets(raw: unknown, views: ReadonlySet<string>): readonly PageSheet[] {

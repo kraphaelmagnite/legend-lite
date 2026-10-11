@@ -122,7 +122,30 @@ describe('a saved page', () => {
     const back = readPage(JSON.stringify(withMore));
     assert.deepEqual(back.unknown, { variables: [{ name: 'asOf' }] });
     assert.deepEqual(JSON.parse(pageToJson(back)).variables, [{ name: 'asOf' }]);
-    assert.throws(() => readPage(JSON.stringify({ ...raw, version: 4 })), /newer version \(4 > 3\)/);
+    assert.throws(() => readPage(JSON.stringify({ ...raw, version: 5 })), /newer version \(5 > 4\)/);
+  });
+
+  it('keeps where its classes are -- its project, its workspace, its package, each grid\'s table -- strictly', () => {
+    // writePage's one cube is PAGE_CUBE ('cube')
+    const model = { project: 'datacube:trades', workspace: 'datacube', package: 'trades', tables: { cube: 'trades_2' } };
+    const base = page();
+    const made = writePage({ name: 'Q3 page', cube: CUBE, views: VIEWS, model });
+    const back = readPage(pageToJson(made));
+    assert.deepEqual(back.model, model);
+    assert.equal(base.model, undefined, 'a page with no class has no model');
+    assert.notEqual(pageDefinitionText(back), pageDefinitionText(base), 'a class made: the page has changed');
+    const raw = JSON.parse(pageToJson(made));
+    assert.throws(() => readPage(JSON.stringify({ ...raw, model: { ...model, project: '' } })), /'model' has no project/);
+    assert.throws(() => readPage(JSON.stringify({ ...raw, model: { ...model, tables: { nope: 't' } } })),
+      /keeps a table for nope, which is no cube of the page/);
+    assert.throws(() => readPage(JSON.stringify({ ...raw, model: 'datacube:trades' })), /'model' is not an object/);
+  });
+
+  it('writes a table kept only for a cube it holds: a grid removed since its class was made, the page still opens', () => {
+    const model = { project: 'datacube:trades', workspace: 'datacube', package: 'trades', tables: { cube: 'trades_2', gone: 'customers' } };
+    const written = writePage({ name: 'Q3 page', cube: CUBE, views: VIEWS, model });
+    assert.deepEqual(written.model?.tables, { cube: 'trades_2' });
+    assert.deepEqual(readPage(pageToJson(written)).model, { ...model, tables: { cube: 'trades_2' } });
   });
 
   it('says what is wrong with a page it cannot read', () => {
@@ -189,7 +212,7 @@ describe('a saved page', () => {
     };
     const back = readPage(pageToJson(writePage({ name: 'Q3 page', cube: CUBE, views: sheets })));
     assert.deepEqual(back.sheets, sheets.sheets);
-    assert.equal(back.version, 3);
+    assert.equal(back.version, 4);
   });
 
   it('holds a stack of tiles in one place: its tiles in their tabs\' order, read back as they were', () => {
@@ -208,19 +231,19 @@ describe('a saved page', () => {
     /a stack of 1 tile/);
   });
 
-  it('opens a page saved as version 2 (one layout) as one sheet, and writes it back as version 3', () => {
+  it('opens a page saved as version 2 (one layout) as one sheet, and writes it back as version 4', () => {
     const raw = JSON.parse(pageToJson(page()));
     const { sheets: _sheets, ...rest } = raw;
     const v2 = { ...rest, version: 2, layout: LAYOUT };
     const back = readPage(JSON.stringify(v2));
-    assert.equal(back.version, 3);
+    assert.equal(back.version, 4);
     assert.deepEqual(back.sheets, [{ id: FIRST_SHEET, layout: LAYOUT }]);
     const written = JSON.parse(pageToJson(back));
-    assert.equal(written.version, 3);
+    assert.equal(written.version, 4);
     assert.equal(written.layout, undefined, 'its layout is in its one sheet, not beside it');
   });
 
-  it('opens a page saved as version 1 (tiles on a 12-column grid) as one sheet of bands, and writes it back as version 3', () => {
+  it('opens a page saved as version 1 (tiles on a 12-column grid) as one sheet of bands, and writes it back as version 4', () => {
     const { sheets: _sheets, ...raw } = JSON.parse(pageToJson(page()));
     const v1 = { ...raw, version: 1, layout: { kind: 'grid', cols: 12, arranged: true, tiles: [
       { id: 'grid', x: 0, y: 0, w: 8, h: 14 },
@@ -228,12 +251,12 @@ describe('a saved page', () => {
       { id: 'chart-2', x: 0, y: 14, w: 12, h: 10 },
     ] } };
     const back = readPage(JSON.stringify(v1));
-    assert.equal(back.version, 3);
+    assert.equal(back.version, 4);
     assert.deepEqual(back.sheets, oneSheet({ kind: 'bands', fit: false, bands: [
       { height: 14 / 24, node: { split: 'row', parts: [{ node: { tile: 'grid' }, size: 8 / 12 }, { node: { tile: 'chart-1' }, size: 4 / 12 }] } },
       { height: 10 / 24, node: { tile: 'chart-2' } },
     ] }));
-    assert.equal(JSON.parse(pageToJson(back)).version, 3);
+    assert.equal(JSON.parse(pageToJson(back)).version, 4);
     // a version 1 page's grid that is wrong is still refused by name
     assert.throws(() => readPage(JSON.stringify({ ...v1, layout: { ...v1.layout, tiles: [{ id: 'grid', x: -1, y: 0, w: 1, h: 1 }] } })),
       /not an id and a place/);

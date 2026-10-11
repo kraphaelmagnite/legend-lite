@@ -1307,6 +1307,10 @@ class JavaEvalLedgerTest {
                             "DiagramService.java",
                             "LegendHttpServer.java", "OutputFormat.java",
                             "PureLspServer.java",
+                            // 2026-10-10, DataCube's Create a Class… (docs/DATACUBE_MODEL_DESIGN_2026_10_10.md
+                            // §15.6): a relation written as a class's files -- parse, compile, plan and print only;
+                            // no connection, no JDBC, no value computed
+                            "PromoteRelationToModel.java",
                             // 2026-09-27, legend-engine's pure/v1 calls: parse, emit,
                             // compile and PLAN only -- no connection, no JDBC, no value
                             // computed; the plan's SQL is the database's to run

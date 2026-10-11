@@ -14,7 +14,7 @@ in DataCube, said in code (docs/DATACUBE_PYTHON_PAGES_DESIGN_2026_10_09.md).
     page.save('q3.page.json')           # DataCube's own page document (Export > Page File writes the same)
     again = ll.Page.load('q3.page.json', frames={'trades': trades_df})
 
-A page IS its document: DataCube's page document (version 3; datacube/src/page-document.ts), the one copy of it. Its
+A page IS its document: DataCube's page document (version 4; datacube/src/page-document.ts), the one copy of it. Its
 grids, charts and sheets are handles onto it -- each its id -- whose methods edit it in place, each edit checked at the
 line that makes it (a column the frame has, a calculated column the compiler types, a word DataCube's vocabulary has).
 So whatever DataCube writes in a page is kept as it is, read back from where it is open by taking the open page's
@@ -63,7 +63,8 @@ MAX_COLUMNS = 4
 SCREEN_BANDS = 3
 
 PAGE_KIND = 'datacube.page'
-PAGE_VERSION = 3
+# 4: the page's model, where its classes are (DataCube's Create a Class…); a page of Python's has none yet
+PAGE_VERSION = 4
 CUBE_KIND = 'datacube.cube'
 CUBE_VERSION = 1
 # the operators that take no value, those that take a list of them, and those that compare to another column
@@ -839,7 +840,7 @@ class Page:
     # -- the document --------------------------------------------------------------------------------------------------
 
     def to_dict(self) -> dict[str, Any]:
-        """The page as DataCube's page document (version 3), a copy: what is done to it is not done to the page. A
+        """The page as DataCube's page document (version 4), a copy: what is done to it is not done to the page. A
         calculated column's numbers are exact (``Decimal``), as the compiler writes them: ``to_json`` and ``save`` write
         them so."""
         return _copied(self._doc)
@@ -1017,7 +1018,7 @@ def _ids(doc: dict[str, Any]) -> set[str]:
 
 
 def _check(doc: Any) -> None:
-    """Refused, saying why, unless ``doc`` is a page document Python can work on: DataCube's (version 3), each cube over a
+    """Refused, saying why, unless ``doc`` is a page document Python can work on: DataCube's (version 4), each cube over a
     frame, each id once, each view of one of its cubes and on one sheet, each layout of the shape Python edits. What else
     DataCube's reader asks of a page (page-document.ts: a chart's mark, a sheet's name), it asks when the page is shown:
     Python keeps no second copy of its rules."""

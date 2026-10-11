@@ -25,10 +25,11 @@ import java.util.function.Supplier;
  * (docs/UPSTREAM_ENDPOINTS_DESIGN_2026_09_27.md; the user's ruling of 2026-09-27: lite's
  * client surface is upstream's APIs and nothing of its own). Each call is a pure function
  * of its request -- text in, a status and JSON out -- so it is tested without HTTP;
- * {@code LegendHttpServer} only carries it, through {@link #route}. One route is legend-lite's own, beside them
- * ({@code /api/lite/v1/compilation/compile}, every error where legend-engine's answers the first: the user's decision
- * of 2026-10-10, docs/PROTOCOL_PROGRAM_2026_10_05.md leg 6), routed by the same dispatcher, so each host that calls
- * {@link #route} answers it (lite's server, the tab, Python's library).
+ * {@code LegendHttpServer} only carries it, through {@link #route}. Two routes are legend-lite's own, beside them --
+ * {@code /api/lite/v1/compilation/compile} (every error where legend-engine's answers the first: the user's decision
+ * of 2026-10-10, docs/PROTOCOL_PROGRAM_2026_10_05.md leg 6) and {@code /api/lite/v1/relational/promoteRelationToModel}
+ * (DataCube's Create a Class…, {@link #promoteRelationToModel}) -- routed by the same dispatcher, so each host that
+ * calls {@link #route} answers them (lite's server, the tab, Python's library).
  *
  * <p>THE PLAN SIDE ({@code //core:pure_v1}): no database and no driver, so the compiler's
  * boundary answers with this same code -- Python's engine serves DataCube through it
@@ -107,6 +108,7 @@ public final class PureV1Api {
             case "/api/pure/v1/execution/generatePlan" -> generatePlan(body);
             case "/api/pure/v1/execution/execute" -> execute(body, runner);
             case "/api/lite/v1/compilation/compile" -> compileEveryError(body);
+            case "/api/lite/v1/relational/promoteRelationToModel" -> promoteRelationToModel(body);
             default -> error(404, null, (path.startsWith("/api/lite/") ? "no such legend-lite API: "
                     : "no such legend-engine API in legend-lite: ") + path);
         };
@@ -233,6 +235,20 @@ public final class PureV1Api {
                 errors.add(Map.of("message", message));
             }
             return Json.toCompact(Map.of("errors", errors));
+        });
+    }
+
+    /**
+     * legend-lite's own {@code /api/lite/v1/relational/promoteRelationToModel}, named after legend-engine's REPL command
+     * (docs/DATACUBE_MODEL_DESIGN_2026_10_10.md §15.6, agreed with the Studio line 2026-10-10): a relation made a class
+     * of the model, with everything it needs to run, answered as the files to write in the SDLC's own change shape
+     * ({@link PromoteRelationToModel}). The model is a model context, read as {@link #compile} reads it; what cannot be
+     * a class is answered as a model that does not compile is, 400 COMPILATION.
+     */
+    public static Answer promoteRelationToModel(String body) {
+        return answer(400, "COMPILATION", () -> {
+            Json.Obj request = request(body);
+            return Json.toCompact(PromoteRelationToModel.promote(modelText(request.getObj("model")), request));
         });
     }
 

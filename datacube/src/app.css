@@ -3472,6 +3472,36 @@
 }
 .dc-save-spacer { flex: 1; }
 
+/* ---- Create a Class… (ui/class-dialog.ts), in the Save window's style ---- */
+.dc-picker.dc-class { width: min(720px, 100%); }
+.dc-class-names { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
+.dc-class-doc { margin: 10px 0 14px; }
+.dc-class-columns { margin-bottom: 12px; max-height: 260px; overflow-y: auto; }
+.dc-class-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.dc-class-table th { text-align: left; font-weight: 600; color: var(--tw-neutral-500); padding: 2px 6px 6px; }
+.dc-class-table td { padding: 3px 6px; vertical-align: middle; color: var(--tw-neutral-700); }
+.dc-class-table .dc-picker-input { padding: 4px 8px; font-size: 12px; width: 100%; box-sizing: border-box; }
+.dc-class-column { font-family: var(--dc-mono, ui-monospace, monospace); white-space: nowrap; }
+.dc-class-type { color: var(--tw-neutral-500); white-space: nowrap; }
+.dc-class-left-out .dc-class-column, .dc-class-left-out .dc-class-type { color: var(--tw-neutral-400); text-decoration: line-through; }
+.dc-class-file-list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 3px; }
+.dc-class-file-line {
+  display: flex; align-items: center; gap: 8px; width: 100%; padding: 2px 0;
+  border: 0; background: none; font: inherit; text-align: left; cursor: pointer; color: var(--tw-neutral-700);
+}
+.dc-class-path { font-family: var(--dc-mono, ui-monospace, monospace); font-size: 12px; }
+.dc-class-change {
+  flex: none; min-width: 52px; padding: 0 6px; border-radius: 4px; font-size: 10px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.04em; text-align: center;
+}
+.dc-class-create { background: var(--tw-green-50, #f0fdf4); color: var(--tw-green-700, #15803d); }
+.dc-class-modify { background: var(--tw-amber-50, #fffbeb); color: var(--tw-amber-700, #b45309); }
+.dc-class-pure {
+  margin: 4px 0 8px; padding: 8px 10px; max-height: 220px; overflow: auto; border-radius: 6px;
+  background: var(--tw-white); border: 1px solid var(--tw-neutral-200); font-size: 11px; line-height: 16px;
+}
+.dc-class-studio { margin-left: 10px; font-weight: 600; color: var(--tw-sky-700, #0369a1); }
+
 /* ---- Open… (demo): the saved cubes in a window of their own, as the picker and Save are ---- */
 .dc-picker.dc-open { width: min(760px, 100%); height: min(600px, 100%); }
 .dc-open-body { flex: 1; min-height: 0; overflow-y: auto; padding: 16px 20px 20px; text-align: left; }

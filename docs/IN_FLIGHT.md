@@ -133,8 +133,21 @@ with the compiler's plan/execution split**, in this order:
    dashboards are built on them), its steps in order: 1 compile once everywhere; 2 Make a class; 3 dashboards on
    classes (the charts' batch 1 page filters land here); 4 combining in prep (every join form); 5 the model view; 6
    projects and publishing; 7 measures in the model.
-   **Step 1 landed 2026-10-10 (fe7961b7b; run 38090412797; GATES "Compile once, plan many").** Next: step 2, Make a
-   class (its design first, for the user). **Step 1 as announced (rule 5): a cross-area edit in `core/`, amended before landing** -- compile once, plan
+   **Step 1 landed 2026-10-10 (fe7961b7b; run 38090412797; GATES "Compile once, plan many").** **Step 2's first
+   landing, Create a Class…, landed 2026-10-11 (0cee56761; run 38109599876; GATES "Create a Class…")** -- no file
+   touched beyond the announced list; next in step 2: Create an Association…, Create a Data Space…, Python's
+   create_class. **Step 2, Create a Class… (the design's §15, agreed with the user; branch `datacube-m2`), announced
+   2026-10-10 (rule 5): a cross-area edit in `core/`** -- legend-lite's route `/api/lite/v1/relational/promoteRelationToModel` (§15.6, agreed with the
+   Studio line: a relation made a class of the model, its files answered in the SDLC's change shape). Core files:
+   `core/src/main/java/com/legend/server/PromoteRelationToModel.java` (new: the writer, printed by `ModelComposer`),
+   `server/PureV1Api.java` (one route case and its method), `core/BUILD.bazel` (`pure_v1`'s srcs gain the writer, its
+   deps `:compiler`; `server_lib` excludes it), `tools/deps/core-layers.txt` (`pure_v1` reaches `compiler`, dated),
+   `core/src/test/.../JavaEvalLedgerTest.java` (the server register's row), the test
+   `core/src/test/java/com/legend/server/PromoteRelationToModelTest.java`, parser-equivalence's `ratchets.tsv` (the
+   test's snippets). Reviewed by the Compiler Rewrite line (the BUILD lines) and Plan Gen / Exec Split (the planner's
+   route call). The rest is this line's: `datacube/` (the window, the page's project in the model home, page document
+   version 4; `datacube/BUILD.bazel`'s `:src_base` gains `//sdlc-client:sdlc_client`) and `python/legend_lite/page.py`
+   (version 4). **Step 1 as announced (rule 5): a cross-area edit in `core/`, amended before landing** -- compile once, plan
    many (the design's §9, reviewed by the Compiler Rewrite and Plan Gen / Exec Split lines: a held `PureModelContext` is
    safe, one thread at a time). Core files: `core/src/main/java/com/legend/cache/HeldStore.java` (new: a generic store of
    values held by their users, keyed by a content `Hash` -- Invariant 3 -- each hold its own handle, a value built

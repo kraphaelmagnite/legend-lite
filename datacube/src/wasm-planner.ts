@@ -28,6 +28,7 @@ import { element, fn, fromJson, lambda, readLambda, readValueSpecification, toJs
 import type { Planner } from './cube.ts';
 import type { CatalogColumn, InferOptions, InferredModel, TableModels } from './infer.ts';
 import { PlanError, type ModelOptions } from './planner.ts';
+import type { PromoteAnswer, PromoteRequest } from './promote.ts';
 import type { PrintStyle } from '../../engine-client/src/pure-v1.ts';
 import { relationColumns, type Plan, type PlanColumn } from '../../engine-client/src/relation-type.ts';
 import type { SeedTable, TableSeed } from '../../engine-client/src/model-data.ts';
@@ -491,6 +492,30 @@ export class WasmPlanner implements Planner, TableModels {
       ? await this.#ask({ kind: 'pureV1', path, query, body })
       : (await this.#load()).exports.pureV1OrError(path, query, body);
     return pureV1Body(decode(answer, subject), subject);
+  }
+
+  /**
+   * legend-lite's `promoteRelationToModel` (docs/DATACUBE_MODEL_DESIGN_2026_10_10.md §15.6), asked through pure/v1's
+   * routing as every compiler question is: `query` -- the relation this planner's model reads -- made a class of the
+   * project, its files answered in the SDLC's change shape. `project` is the project's own files' text: the model
+   * the route reads is it and this planner's model (the source the relation reads) together. Nothing is held: a class
+   * is made once, against the model as it is then.
+   */
+  async promoteRelationToModel(query: Lambda, project: string, request: PromoteRequest): Promise<PromoteAnswer> {
+    // the planner's model after the project's files: under a section header of its own, since text before a model's
+    // first header is Pure's, and after the project's files it would be read as the last file's section (the Plan Gen
+    // line's review, 2026-10-10)
+    const own = this.#options.model;
+    const code = project === '' ? own : `${project}\n${own.trimStart().startsWith('###') ? own : `###Pure\n${own}`}`;
+    // the lambda's JSON spliced in as toJson wrote it, so its numbers keep their digits
+    const fields = JSON.stringify({ model: { _type: 'text', code }, ...request });
+    const body = `{"lambda":${toJson(query)},${fields.slice(1)}`;
+    return JSON.parse(await this.#pureV1('/api/lite/v1/relational/promoteRelationToModel', '', body, query)) as PromoteAnswer;
+  }
+
+  /** This planner's runtime: the one its source runs on now. */
+  get runtime(): string {
+    return this.#options.runtime;
   }
 
   /** E4 (`grammar/jsonToGrammar/lambda`): a query as Pure text, as upstream prints it. */

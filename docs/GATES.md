@@ -8466,3 +8466,60 @@ anchor are deleted in this commit.
    the old pattern had gone blind to; the literal stays until step 5 spells it by the declaration); NAME_CUTTING
    106 → 107 and SIGNATURE_ID_CUTTING 1 → 2 (the bare id's base resolution moved into the resolver, once); the construction guard's rows re-pinned at the other protocol nodes'
    measured counts with `Calls` excluded.
+
+## 2026-10-11 — Create a Class…: a DataCube grid's rows made a class of the page's project (the DataCube + Python line)
+
+The DataCube model plan's step 2, its first landing (`docs/DATACUBE_MODEL_DESIGN_2026_10_10.md` §15; announced in
+IN_FLIGHT, a5a4eb7c4). A grid's rows become a Pure class with everything it needs to run, written to the page's project
+in the model home (the page's own SDLC, Studio's), so Studio opens it and Query reads it once a review commits it.
+Landed as one fast-forward, `a5a4eb7c4..0cee56761` (nine commits, four of them the design's):
+
+1. **core**: legend-lite's second route of its own, `/api/lite/v1/relational/promoteRelationToModel`, in
+   `PureV1Api.route` beside `/api/lite/v1/compilation/compile` (§15.6, agreed with the Studio line). The writer,
+   `com.legend.server.PromoteRelationToModel` (new, on `//core:pure_v1`; the server package's closed register), follows
+   legend-engine's REPL promotion: the relation's function typed as its own columns, a class (upstream's makeCamelCase,
+   made total), a `Relation { ~func }` mapping, key-only columns as local properties; and what the class needs to run:
+   ONE store for the place the rows are (`<pkg>::store::Browser`, a table per source -- lite plans over two stores only
+   when one connection serves both; the user's ruling), its connection (a path-less DuckDB written `':memory:'`, which
+   upstream's printer requires), the runtime naming `<pkg>::mapping::Model` alone (which includes each class's mapping
+   and will hold the associations), and the source's first rows as a `Data` element (named after its table as it is,
+   `trades_2` `Trades_2Sample`). Refused by name: a relation reading a store its place does not write, a class's or a
+   sample's name taken by another table's, a pivot, a name Pure reads as a word of its own. Answered as the SDLC's own
+   changes (`{type: CREATE|MODIFY, path, pureCode}`), each file printed by `ModelComposer` and read back as itself, the
+   model they make compiled whole and the class planned before answering. The mapping test waits for a mapping-test
+   runner (none in lite; the user's ruling).
+2. **The tab**: a grid's menu offers Create a Class… (the window: names, each column a property, a key only or left
+   out, the files shown); `WasmPlanner.promoteRelationToModel` asks the route through pure/v1's routing; the page's
+   project (`page-model.ts`) is made with its first class, saved over the revision read (a stale save made again
+   once), its workspace made again when a commit in Studio closed it; the page document's version 4 keeps it, and each
+   grid's table name, written for the grids the page holds, reserved while the page opens (Python's page at version 4
+   too: its reader reads its own version only); a page file is refused while its classes are only in this browser
+   (§15.3, until the Studio line's S23). **A new edge between two lines' modules: `datacube` depends on
+   `//sdlc-client:sdlc_client`** (`:src_base`; the Compiler Rewrite line's review).
+
+**Budget decision**: the grid-only page's startup script 383,000 -> 386,000 bytes gzipped (`bundle-budget.test.ts`),
+measured 385,251, main before it 381,890 (+3,361): the menu entry and its checks, the route call, the page's model in
+the page document, the kept and reserved table names and the page file's refusal at startup; the window, the page's model and the SDLC client are a chunk
+fetched the first time a class is made (`create-class.ts` imports nothing the page loads at startup, so no startup
+module moves into a shared chunk).
+
+What judges it: `//core:core_tests_server` (PromoteRelationToModelTest: the files pinned; the project alone compiles and
+plans; the sample loads as a service test's data through `ServiceTestRunner` on DuckDB and the class reads it; a second
+source joins the store; made again changes nothing; the refusals; four mutations each caught), `//core:guardrails`,
+`//core:census`, `//tools/deps:core_layering_test` (`pure_v1` reaches `compiler`, dated), `//parser-equivalence/...`
+(ratchet 2804 -> 2813, the test's snippets), `//datacube:create_class_test` (names, the class's query, the source's
+table, the page's model: a stale save made again once then said, the workspace made again),
+`//datacube:promote_route_test` (WASM: the route through the tab's module; the planner's model under its own section
+header -- the Plan Gen line's review, the test failing without the fix), `//datacube:verify_class_test` (Chromium: two
+classes of two grids, the first read back by the second; the page file refused, the share link saying so; saved,
+reloaded and reopened, each grid's table under its kept name), `//datacube:class_dialog_test` (a create the window's
+last word), `//datacube:page_document_test`, `//python:all`. Tried end
+to end on the one-origin site: DataCube writes the project; Studio opens it (0 errors), its review committed; Query
+opens the class by name at HEAD and runs it over the sample. Reviewed by the Compiler Rewrite line (the BUILD lines:
+`pure_v1`'s `:compiler` dep named, not dodged) and Plan Gen / Exec Split (the route call; one fix, made); audited (1 blocker -- a page keeping a removed grid's table name could never open again -- 9 should-fix and 7 notes, each fixed with a test or answered).
+Local gate: 338 of 338 before the audit's fixes; after them 339 of 340, the bundle budget 251 bytes over (the fixes' startup code), re-set to 386,000 and green. CI run 38109599876 on `ci/datacube-m2` (the
+final commit; a run on the commit before the audit's fixes, 38108046487, was green too), green on the lanes with a
+path to the change -- product, core, checks, parser_equivalence, warehouse, datacube, ui -- on every platform (27
+jobs); the PCT, corpus, stress and sdlc lanes not run: the change adds a route and its writer on `pure_v1` and
+DataCube's own code, and alters no compile path they use. Pushed to main as `0cee56761`, a fast-forward (main unmoved
+since the run), on the user's "do the audit and everything else".

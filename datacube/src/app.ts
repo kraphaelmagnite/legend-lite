@@ -3933,6 +3933,9 @@ export class CubeApp {
         { id: 'chart.plot', label: 'Visualization', ...cubeOnly },
         { id: 'grid.new', label: 'Copy of Grid', ...cubeOnly },
       ] }] },
+      // a host's entries on this grid's rows (Create a Class…): a group only when there are some -- each group is
+      // drawn with its separator
+      ...(this.#hostItems('data').length > 0 ? [{ label: '', items: this.#hostItems('data') }] : []),
       { label: '', items: this.#undoItems() },
       { label: '', items: this.#outputItems() },
       { label: '', items: this.#viewItems() },

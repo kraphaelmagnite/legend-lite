@@ -134,9 +134,9 @@ const V1_LINK = 'p1.1VvJbsIwEP2ViDNQZyUcOeRQCaRCpV4qZNlZeqCliNBWHPrvHTvBSewEskr0
   'WvwXWURMACoV_SqJb6XShdFpcrryQHrVLk4Tb2XClTpRCnUqLCrs6Js-_sH';
 
 describe('a link made before bands still opens', () => {
-  it('as its page, its 12-column layout read as one sheet of bands, written back as version 3', () => {
+  it('as its page, its 12-column layout read as one sheet of bands, written back as version 4', () => {
     const got = readPageFragment(V1_LINK);
-    assert.equal(got.version, 3);
+    assert.equal(got.version, 4);
     assert.equal(got.name, 'Rates book, Q3 by desk');
     assert.deepEqual(got.views.map((v) => v.id), ['grid', 'pnl-by-desk']);
     assert.deepEqual(got.sheets, oneSheet({ kind: 'bands', fit: false, bands: [{ height: 0.25, node: { split: 'row', parts: [

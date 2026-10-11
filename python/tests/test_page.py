@@ -70,7 +70,7 @@ class Document(Paged):
     def test_a_page_is_datacubes_own_document_one_cube_per_grid_over_its_frame(self):
         page, grid, chart = self.built()
         doc = page.to_dict()
-        self.assertEqual((doc['kind'], doc['version'], doc['name']), ('datacube.page', 3, 'Q3 review'))
+        self.assertEqual((doc['kind'], doc['version'], doc['name']), ('datacube.page', 4, 'Q3 review'))
         cube = doc['cubes'][0]
         self.assertEqual(cube['id'], grid.id)
         self.assertEqual(cube['cube']['source']['_type'], 'frame')

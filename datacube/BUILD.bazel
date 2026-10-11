@@ -61,6 +61,9 @@ js_library(
         "//pure-protocol:pure_protocol",
         # saved queries: the one client, and the store answered in the page (query-store/README.md)
         "//query-store:query_store",
+        # the page's model (src/page-model.ts, Create a Class…: docs/DATACUBE_MODEL_DESIGN_2026_10_10.md §15.3): the
+        # SDLC's client, over the page's own SDLC (Studio's) or a server's
+        "//sdlc-client:sdlc_client",
         # where a query runs: the engine interface, results, the type reader, DuckDB, the warehouse,
         # pure/v1 (engine-client/README.md; moved out of here 2026-10-04)
         "//engine-client:engine_client",
@@ -215,6 +218,8 @@ _WASM_TESTS = [
     "saved-queries",
     # a page's model: classes over relation functions, related by a ModelJoin (docs/DATACUBE_MODEL_DESIGN_2026_10_10.md §11)
     "model-join",
+    # Create a Class…'s route, asked of the tab's module (docs/DATACUBE_MODEL_DESIGN_2026_10_10.md §15.6)
+    "promote-route",
 ]
 
 # node:test files, each its own node_test (tools/js/defs.bzl: types stripped, the spec and strict reporters, a
@@ -1102,6 +1107,7 @@ _HARNESSES = [
     "torture",
     "verify-calc-vocabulary",
     "verify-charts",
+    "verify-class",
     "verify-cubes",
     "verify-engine",
     "verify-engine-differential",
@@ -1121,6 +1127,8 @@ _HARNESSES = [
 _BROWSER_TESTS = {
     "run-stress": "enormous",
     "verify-charts": "large",
+    # Create a Class… (docs/DATACUBE_MODEL_DESIGN_2026_10_10.md §15.7): two classes of two grids, in the page's SDLC
+    "verify-class": "large",
     "verify-cubes": "large",
     "verify-layout": "large",
     "verify-page": "large",

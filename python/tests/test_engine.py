@@ -365,7 +365,7 @@ class Page(Cube):
     """page.json: a page it serves (Python's ll.Page; docs/DATACUBE_PYTHON_PAGES_DESIGN_2026_10_09.md) -- its document
     and its version -- and version.json for a page: its own version and each of its frames'."""
 
-    DOC = {'kind': 'datacube.page', 'version': 3, 'name': 'Q3',
+    DOC = {'kind': 'datacube.page', 'version': 4, 'name': 'Q3',
            'cubes': [{'id': 'grid-1', 'cube': {'source': {'_type': 'frame', 'name': 'trades', 'columns': []}}}],
            'views': [], 'sheets': []}
 
@@ -414,7 +414,7 @@ class Page(Cube):
         body = self.get('/page.json?page=q3', {'Authorization': self.server.authorization})[2].decode('utf-8')
         self.assertIn('12.30', body)
         self.assertIn(str(2 ** 70), body)
-        said = ('{"kind": "datacube.page", "version": 3, "name": "Q3", "cubes": [], "views": [], "sheets": [],'
+        said = ('{"kind": "datacube.page", "version": 4, "name": "Q3", "cubes": [], "views": [], "sheets": [],'
                 ' "lambda": {"_type": "lambda", "body": [{"_type": "decimal", "value": 12.30}]}}')
         self.assertEqual(engine.answer('POST', '/page.json', 'page=q3&version=1', said).status, 204)
         self.assertEqual(str(engine.read_page('q3')['lambda']['body'][0]['value']), '12.30')
