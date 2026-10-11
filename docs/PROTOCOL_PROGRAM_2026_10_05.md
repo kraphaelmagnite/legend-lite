@@ -493,6 +493,33 @@ not be written back, so it is refused.
    3. **The door and the routes** (built on branch `leg8-records`). The oracle then holds by construction, its
       pins at no difference.
    The parser returning protocol only (7c) stays last, with the callers' move.
+   **As built, step 1 and step 2's first part (landed 2026-10-11, the user: "Land it now"; GATES 2026-10-11).**
+   One parser: `PmcdParser.parse(text, dialect)` is the one section walk and import scoping at every dialect, and
+   `ElementParser.parse(text, dialect)` is the door over it (`ModelFromProtocol.of`, one converter per record kind);
+   its own top-level assembly is deleted. What the compiler parsed with no record has a lite-only one
+   (`PNativeFunction`, `PPrimitive`, `POpaqueElement`, `PAssociationProjection`), which the emitter refuses by name.
+   An element's error position comes from `ParsedModel.position(key)`: its offset in a text model, its span in a JSON
+   one. Behaviour changes, each reviewed by the Compiler Rewrite line: imports are bound to their section (one
+   fixture relied on the leak); the engine's dialect refuses a stray `)`; a non-wildcard import and an unknown
+   top-level keyword say "Unexpected token", the engine's words; a plain string before a declaration names the
+   multi-line literal documentation needs. Step 2 so far: the records mirror the engine's JSON where the compiler's
+   input does not change (a view's groupBy always a list; plain booleans; persistence entries and stub params by key;
+   a flat target's defaults; a bare service query a lambda; spans no JSON carries dropped; a mapping's test suites
+   typed only, the model's raw text deleted), and where it does, at the engine's and lite's dialects, as the engine
+   reads them (the platform dialect keeps legend-pure's meaning): `$x.f()` is `$x.f`; a graph-fetch `prop()` is
+   `prop`; `^Pair`, `^BasicColumnSpecification` and `^TdsOlapRank` are the calls the engine writes. The oracle
+   (`JsonModelDoorTest`): the JSON round trip loses 401 of the engine collection's texts (821 before step 2), none
+   of lite's projects or the showcase. Judged against main's baseline at each change: the six corpus passes
+   identical, the census within its ceilings, the shadow probe and the reference lane unchanged, PCT 17 of 17.
+   **Still open in step 2:** a relation column without a multiplicity is `[0..1]` (the engine and legend-pure; lite
+   says `[1]`); the typer deciding a decimal by its node kind, `CDecimal.written` deleted; the compiler no longer
+   reading how an operator was spelled (`infix`); spans and orders the parser still keeps that no JSON has. And one
+   decision for the user, before code: text the engine's grammar accepts and its parser then drops (function
+   pre-constraints, an include's several store substitutions, an Operation mapping's `extends`, a generic supertype's
+   type arguments, a dotted `^X(a.b = ..)` key, all but the first term of `^X(s = 'a' + $v)`, `Result<Any|m>`): the
+   engine's JSON has no place for most of them, so an include's several substitutions and an Operation mapping's
+   `extends` cannot survive the hop as step 2's text above says (one substitution, and an ordinary class mapping's
+   `extends`, do); which rule lite follows is the user's to choose.
 9. **Imports and comments through the round trip** (added 2026-10-10, the user: "add a leg to design/implement
    imports and comments too so we don't forget"). Today a model's text keeps both only because lite's own SDLC
    stores the text itself (`docs/STUDIO_DESIGN_2026_10_02.md` S13, S5), and imports are refused at save, as

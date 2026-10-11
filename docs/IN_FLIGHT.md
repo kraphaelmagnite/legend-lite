@@ -548,7 +548,15 @@ own top-level assembly deleted; `parse` the door over the one parser), `core/...
 ModelReader}.java` (lite-only records for native functions, `Primitive` and a foreign grammar's opaque elements, which
 the emitter refuses by name; then the JSON hop made lossless), `core/.../model/FromProtocol.java` (their converters).
 Nothing in `compiler/` without the Compiler Rewrite line first. Its last step (the parser returning protocol only,
-`ElementParser.parse`'s callers moved) is announced on its own after L7 step 3. Then leg 9, imports and comments
+`ElementParser.parse`'s callers moved) is announced on its own after L7 step 3. **Landed 2026-10-11: step 1 and step
+2's first part** (GATES 2026-10-11; the program doc's as-built note), after L7: the one parser, the door, the lite-only
+records, and the records mirroring the engine's JSON where it was cut so far -- beyond the files above, in
+`compiler/` with the Compiler Rewrite line's review: `spec/Typer.java` (the zero-argument qualified-property lift
+takes a parameterized class), `spec/GraphFetchChecker.java`, `spec/typed/TypedGraphTree.java` and
+`resolver/GraphEmission.java` (no `qualified` mark), `NameResolver.java` and `normalizer/` (the mapping's dead
+`testSuitesSource`). Step 2 continues on `leg8-records`: a relation column's `[0..1]`, a decimal decided by its kind,
+the operator spelling (each with the Compiler Rewrite line, judged as before), and the dropped-text rule, the user's
+to decide first. Then leg 9, imports and comments
 (added by the user, design first). Open, and not yet in the plan's legs: printing lite-only
 mappings (a class mapping by function, a function association), which needs a design first.
 **Planned landings, in this order** (each: the local gate, one CI run on the branch, then a fast-forward of `main`):
