@@ -141,7 +141,9 @@ public class CorpusSweepTest {
     // 205 / 2372 -- the rows that left "richer" went to "verbatim": the document surface now refuses as the compiler's
     // path did, in the engine's own words (a native declaration's "Unsupported syntax", ...), no message got worse
     private static final int MSG_RICHER_FLOOR = 1150;   // 2026-08-15: oracle-degenerate rows (NPE-text/null/generic) where ours is a positioned specific diagnostic; 1277 -> 1240 on 2026-09-10 (upstream boundary batch 1): the SOURCE pin moved from 4.137.0+36 back to the 4.138.2 TAG — 57 manifest rows left (8,891 -> 8,834, mostly C4 engine-inline snippets from the 20 newer commits), and 37 of them were oracle-degenerate rows; a denominator move (GENUINE mismatches unchanged)
-    private static final int MAX_MSG_GENUINE_MISMATCH = 254;   // 2026-08-15 first pin: the REAL error-voice divergence tail — adjudicate down
+    // 254 -> 205 (2026-10-11, the protocol program's leg 8, the audit's note): the measured tail, 205 on leg8-records
+    // (206 on main b1a9529f0), pinned so a new divergence fails here
+    private static final int MAX_MSG_GENUINE_MISMATCH = 205;   // 2026-08-15 first pin: the REAL error-voice divergence tail — adjudicate down
 
     private static final double M3_CALIBRATION_FLOOR = 95.0;
 

@@ -317,16 +317,24 @@ public final class PersistenceSectionGrammar
                     "validityMilestoning", List.of("DateTime"),
                     "target", List.of("Relational", "__empty__"));
 
+    /** The two nodes the parser makes that nobody wrote, spanless as on the wire (leg 8 step 2): a flat target's
+     *  default deduplication (withFlatDefaults) and a keyless {@code { }} target. Nothing of the author's to
+     *  validate in either; every other node carries its span, which validation anchors at. */
+    private static final Protocol.PPersistenceNode NO_DEDUPLICATION =
+            new Protocol.PPersistenceNode("None", List.of(), null);
+    private static final Protocol.PPersistenceNode KEYLESS_TARGET =
+            new Protocol.PPersistenceNode("__empty__", List.of(), null);
+
     private static void validateNode(TokenStreamCursor c, String slot,
             Protocol.PPersistenceNode node) {
+        if (node == NO_DEDUPLICATION || node == KEYLESS_TARGET) {
+            return;
+        }
         // ANCHORED at the NODE's own span start — the engine walker passes
         // each definition ctx to validateAndExtract, so a persister-level
         // error reports at `Batch`, an auditing error at its ingest-mode
         // block, never at the cursor (position-exactness lane: the
         // Persistence family carried 67 of the 288 line diverges)
-        if (node.sourceInformation() == null) {
-            return;   // a default the parser supplies (withFlatDefaults; spanless, as on the wire): nothing written
-        }
         int line = com.legend.protocol.SourceInfo.parsed(node.sourceInformation()).startLine();
         int col = com.legend.protocol.SourceInfo.parsed(node.sourceInformation()).startColumn();
         List<String> slotKinds = SLOT_KINDS.get(slot);
@@ -516,8 +524,7 @@ public final class PersistenceSectionGrammar
     private static List<Protocol.PPersistenceEntry> withFlatDefaults(List<Protocol.PPersistenceEntry> entries) {
         List<Protocol.PPersistenceEntry> out = new ArrayList<>(entries);
         if (entries.stream().noneMatch(e -> "deduplicationStrategy".equals(e.key()))) {
-            out.add(new Protocol.PPersistenceEntry.Node("deduplicationStrategy",
-                    new Protocol.PPersistenceNode("None", List.of(), null)));
+            out.add(new Protocol.PPersistenceEntry.Node("deduplicationStrategy", NO_DEDUPLICATION));
         }
         if (entries.stream().noneMatch(e -> "partitionFields".equals(e.key()))) {
             out.add(new Protocol.PPersistenceEntry.Strings("partitionFields", List.of()));
@@ -705,8 +712,7 @@ public final class PersistenceSectionGrammar
                 // span either (leg 8 step 2)
                 c.expect(TokenType.BRACE_OPEN);
                 c.expect(TokenType.BRACE_CLOSE);
-                target = new Protocol.PPersistenceNode("__empty__",
-                        List.of(), null);
+                target = KEYLESS_TARGET;
             } else {
                 target = contentAnchoredIslandNode(c);
             }

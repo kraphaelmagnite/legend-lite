@@ -34,8 +34,9 @@ import java.util.Map;
 import java.util.Objects;
 
 /**
- * Hand-rolled recursive-descent parser for Pure top-level element
- * declarations &mdash; the driver for step B of the pipeline.
+ * Pure's domain grammar (the {@code ###Pure} section's elements: classes, enumerations, profiles, associations,
+ * functions, and the platform dialect's native declarations and {@code Primitive}s), each element parsed into its
+ * protocol record, and step B's entry for a whole text.
  *
  * <h2>Usage</h2>
  * <pre>
@@ -43,41 +44,12 @@ import java.util.Objects;
  *   // ONE entry, the caller names the level — see {@link Dialect}
  * </pre>
  *
- * <h2>Status (Phase B.4a)</h2>
- * Handles:
- * <ul>
- *   <li>{@code import} statements (wildcard and specific).</li>
- *   <li>{@code Class} (regular and {@code native}) with stereotypes, tagged
- *       values, generic type parameters, superclasses, properties,
- *       derived properties (body parsed eagerly into {@link ValueSpecification}
- *       statements), and class-level constraints (expression parsed eagerly).</li>
- *   <li>{@code Association} &mdash; exactly two ends.</li>
- *   <li>{@code Enum} &mdash; one or more value names.</li>
- *   <li>{@code Profile} &mdash; stereotypes and tags.</li>
- *   <li>{@code function} &mdash; signature plus body parsed eagerly into a
- *       {@code List<ValueSpecification>} via {@link SpecParser#parseCodeBlock}.</li>
- *   <li>{@code Service} &mdash; pattern, doc, execution (query parsed eagerly as a
- *       single {@link ValueSpecification}; mapping/runtime as FQN refs),
- *       and {@code testSuites} block captured as raw text (decision D-3 &mdash;
- *       still deferred until the test-suite grammar lands).</li>
- *   <li>{@code Runtime} (and {@code SingleConnectionRuntime}) &mdash; mappings,
- *       connection bindings, embedded {@code JsonModelConnection} islands.</li>
- *   <li>{@code RelationalDatabaseConnection} &mdash; store, type, specification,
- *       authentication.</li>
- * </ul>
- *
- * <p>B.4a (this slice) adds {@code Database} with the full relational
- * expression sub-AST &mdash; column refs, target columns, literals,
- * function calls, comparisons, boolean combinations, null tests, groups,
- * array literals, and join-navigation chains. Used by {@code Join},
- * {@code Filter}, {@code MultiGrainFilter}, and view column expressions.
- *
- * <p>NOT yet supported (sub-slices B.4b-f):
- * <ul>
- *   <li>{@code Mapping} (next: B.4b Relational class mappings, then
- *       Association / Enum / M2M class mappings / test-suites).</li>
- * </ul>
- * Encountering an unsupported keyword raises a {@link ParseException}.
+ * <p>{@link #parse(String, Dialect)} is the door over the one parser (docs/PROTOCOL_PROGRAM_2026_10_05.md, leg 8):
+ * the text into its records by {@link PmcdParser} (the engine's section walk and import scoping at every dialect,
+ * each {@code ###Pure} element through this class, every other section through its grammar), then the records into
+ * the compiler's model by {@code ModelFromProtocol} -- the same door a model given as JSON goes through. A section
+ * nothing claims is refused, or recorded and skipped at the platform dialect; an unsupported keyword raises a
+ * {@link ParseException}.
  *
  * <h2>Deliberate divergences from engine</h2>
  * <ul>
@@ -99,9 +71,9 @@ import java.util.Objects;
  * </ul>
  *
  * <h2>Stateful only during parse</h2>
- * A parser instance is allocated per call to {@link #parse(TokenStream)},
- * driven to completion, then discarded. The resulting {@link ParsedModel}
- * is the only object that survives.
+ * A parser instance is allocated for each element the one parser hands it,
+ * driven to completion, then discarded. The element's record is the only
+ * object that survives.
  *
  * <p>Ported from engine's {@code com.gs.legend.parser.PureModelParser},
  * keeping the same recursive-descent shape and identifier-token set
@@ -230,10 +202,13 @@ public final class ElementParser implements TokenStreamCursor {
         try {
             return com.legend.model.ModelFromProtocol.of(parsed.model(), source, unclaimed);
         } catch (com.legend.model.ModelFromProtocol.Unrepresentable u) {
-            // a shape the compiler's model cannot represent is the text's error, at the element
+            // a shape the compiler's model cannot represent is the text's error, at the element (every element
+            // parsed from a text has its span: one without is the parser's bug, never placed at 1:1)
             ParsedModel.Position at = u.at();
-            throw at == null ? new ParseException(u.reason(), 1, 1)
-                    : new ParseException(u.reason(), at.line(), at.column());
+            if (at == null) {
+                throw new IllegalStateException(u.path() + " was parsed without a span: " + u.reason(), u);
+            }
+            throw new ParseException(u.reason(), at.line(), at.column());
         }
     }
 

@@ -39,8 +39,10 @@ public final class ModelFromProtocol {
         Map<String, Protocol.PSection> sectionOf = new HashMap<>();
         // the model's whole import scope: every section's, a section with no element included
         ImportScope.Builder all = new ImportScope.Builder();
+        boolean indexed = false;
         for (Protocol.Element e : model.elements()) {
             if (e instanceof Protocol.PSectionIndex index) {
+                indexed = true;
                 for (Protocol.PSection s : index.sections()) {
                     for (String pkg : s.imports()) {
                         all.add(pkg + "::*");
@@ -64,6 +66,12 @@ public final class ModelFromProtocol {
             elements.add(el);
             String key = ParsedModel.keyOf(el);
             Protocol.PSection section = sectionOf.get(pathOf(e));
+            if (section == null && indexed) {
+                // a model with a section index lists each element in the section whose imports it reads; one it
+                // does not list would fall back to every section's imports, the leak the one parser removed --
+                // refused by name (a path spelled otherwise than lite's, e.g. another mangling of a function's)
+                throw unrepresentable(e, "the model's section index lists no section for it");
+            }
             if (section != null) {
                 ImportScope.Builder own = new ImportScope.Builder();
                 for (String pkg : section.imports()) {
@@ -84,9 +92,14 @@ public final class ModelFromProtocol {
             int[] lineStarts = lineStarts(source);
             for (Map.Entry<String, ParsedModel.Position> p : spans.entrySet()) {
                 int line = p.getValue().line();
-                if (line >= 1 && line <= lineStarts.length) {
-                    offsets.put(p.getKey(), Math.min(source.length(), lineStarts[line - 1] + p.getValue().column() - 1));
+                int offset = line >= 1 && line <= lineStarts.length
+                        ? lineStarts[line - 1] + p.getValue().column() - 1 : -1;
+                if (offset < 0 || offset > source.length()) {
+                    // the spans were parsed from this text: one outside it is the parser's bug, never clamped
+                    throw new IllegalStateException(p.getKey() + "'s span " + line + ":" + p.getValue().column()
+                            + " is outside the text it was parsed from");
                 }
+                offsets.put(p.getKey(), offset);
             }
             return new ParsedModel(elements, all.build(), source, offsets, elementImports, Map.of(), unclaimed,
                     Map.of());
