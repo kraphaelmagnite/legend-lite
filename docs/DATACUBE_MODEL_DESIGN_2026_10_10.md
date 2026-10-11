@@ -538,6 +538,58 @@ another table's rows likewise.
   (PROTOCOL_PROGRAM invariant 5): `pureV1OrError` in the tab, `lite_pure_v1` in Python; no export of its own. Built on
   this line's branch; the Studio line edits `PureV1Api` in its leg 8 step 3 too, and whichever lands second rebases.
 
+### 15.6a The routes, as they go on (the user, 2026-10-11)
+
+Agreed after Create a Class landed (0cee56761): **the routes are named after Legend's actions, and each is atomic**.
+
+- **Three routes, one writer**: `POST /api/lite/v1/model/createClass`, `/api/lite/v1/model/createAssociation`,
+  `/api/lite/v1/model/createDataSpace` (`promoteRelationToModel` renamed -- the name was the REPL command's, and
+  nothing here is in parity with upstream, which has no HTTP route that does this; the `relational` segment dropped:
+  an association and a data space are not relational). One writer in core applies a list of actions to the project in
+  memory, in order, checks the whole result ONCE -- it compiles, each class and each association's navigation plans --
+  and answers the net changes (`{type: CREATE|MODIFY, path, pureCode}`, one element's file each); each route is a door
+  into it: `createClass` one class; `createAssociation` an association and any classes it needs; `createDataSpace` a
+  data space and any classes and associations it needs. All or nothing: a refusal anywhere writes nothing. DataCube
+  saves the changes as one revision, over the revision it read (a stale save asked again over the fresh project).
+- **Upstream has each piece and not the whole** (the user's question, 2026-10-11): the relation's columns
+  (`lambdaRelationType`), reading and printing elements (`grammarToJson/model`, `jsonToGrammar/model`), the check
+  (`compilation/compile`); `generateModelsFromDatabaseSpecification` makes a class per table of a Database (classic
+  table mappings), not a class of a grid's shaped rows. Kept as one Java path, not decomposed into the engine's pieces
+  and the rest: one answer, no drift between two ways of making it; checked against legend-engine instead (its own
+  compile of the files written). Asked of the tab's module on every plane -- the module beside a server's planner
+  already writes a table's model there (`demo/planners.ts`) -- so Create a Class… is offered wherever DataCube plans.
+- **The request**: `{"project": {"_type":"text","code": the project's files}, "classes": [...], "associations": [...],
+  "dataSpace": {...}}` (`createClass` takes `class`, one). The project is the model the changes are made to; **each
+  class carries its own source** (`"source": {"_type":"text", ...}`, the grid's planner's model: a page's grids each
+  read their own tab model, each naming its Database `local::DB`, so no one model can hold them) with its relation,
+  names, columns and `where` (§15.6). The check compiles the project's files and the changes ALONE -- no source -- so
+  a file reading what the project does not hold is refused by construction.
+- **An association**: `{"ends": [{"class", "on", "name"?, "multiplicity"?}, {...}], "name"?}` -- each end a class of
+  the project (or one made in the same request), the property or key it joins on (`on`: a property of the class, or a
+  key only -- its mapping's local property), the name the OTHER class reaches it by, and how many of it one of the
+  other has: Pure's own Association shape (`customer: Customer[0..1]; trades: Trade[*];`). Written: the Association,
+  `<pkg>::domain::<A>_<B>`, and its ModelJoin in `<pkg>::mapping::Model` (`{customer: Customer[1], trades: Trade[1] |
+  $customer.id == $trades.customerId}`). Its ends named by default after the other class (`customer`, `trades` --
+  plural when many); how many from the data: an end is `[0..1]` when its `on` is unique over its class's rows, `[*]`
+  when not (the facts DataCube reads in the tab -- `"unique": true|false` beside `on` -- else asked of the person).
+  Refused: ends of two packages, an `on` neither a property nor a key, two `on`s of different types, an end's name a
+  property its class has already.
+- **Suggestions** (offered, never made unasked): every answer lists the pairs a key's name and type match another
+  class's property by (`customer_id`, `Customer.id`): the Association window offers them, the Data Space window as
+  checkboxes.
+- **A data space**: `{"name", "title"?, "description"?, "classes"?}` -- `<pkg>::<Name>`, its one execution context the
+  place's (`Browser`: the model's mapping, the runtime that names it), its classes the ones named (all the model's
+  classes when none are).
+- **Not written over** (the audit of the second landing, 2026-10-11): the writer replaces only what it made. A class
+  or class mapping with no grid's function behind it, an association the model's mapping does not join, and a data
+  space over another mapping (each written in Studio, say) are refused by name; so is an element of another kind at
+  the path, and a path that is also a package of the project (`trades::domain` beside `trades::domain::Trade`:
+  legend-engine refuses that project). The same association asked with its ends the other way round is itself made
+  again: nothing changes.
+- **Where in DataCube**: the page's menu, a Model group -- Create an Association…, Create a Data Space… (the whole
+  page in one go: its grids not yet classes made classes in the same window, suggested associations as checkboxes);
+  a grid's menu also offers Create an Association…, that grid's class one end.
+
 ### 15.7 What judges it
 
 - The routes (core): names, types, multiplicities, the layout, the store written once, key-only columns as local
@@ -558,6 +610,20 @@ another table's rows likewise.
   site (a site-level check is the Studio line's, `site/verify.mjs`, offered). **Not in this landing**: associations and
   data spaces (§15.1's next two), a grid over a class (step 3's dashboards read classes), Python (§15.5); a page reopened
   in a tab where another grid holds a kept table's name reads it under a fresh one, and says so.
+- **As built in step 2's second landing (Create an Association…, Create a Data Space…, the one-go routes,
+  2026-10-11)**: the routes' tests (core): an association in Pure's own shape, its ModelJoin in the model mapping,
+  walked both ways through a key-only column; the suggestions; the whole page in one request, all or nothing. **The
+  engine's own check**: `ModelWriterUpstreamTest` pins the files one request writes (two classes with their sample
+  rows, their association, the data space) with legend-engine 4.145.0's answers to them, recorded by
+  `docs/datacube-model-homework-2026-10-11/record-upstream.sh`: the project compiled, and each class's query and both
+  walks planned. It caught one difference: a `~func` names its function by descriptor, and a descriptor's types take
+  no package (legend-pure's `FunctionDescriptor`). The engine looks `TradeFn():meta::pure::...::Relation<...>[1]` up as
+  a plain path and finds nothing; lite's compiler took it. The Compiler Rewrite line's landing right after this one makes
+  lite refuse it as the engine does (agreed 2026-10-11: it lands second, since main's writer still writes that form).
+  The writer now writes
+  `TradeFn():Relation<Any>[1]`, the form of upstream's own tests and Studio's. The browser: two grids made classes,
+  the association from the page's Model menu, its how-many read from the rows in the tab, the data space; and the
+  whole page in one go in a fresh tab.
 
 ### 15.8 Not in step 2
 

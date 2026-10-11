@@ -3,14 +3,24 @@
 
 package com.legend.server;
 
+import static com.legend.server.ModelChanges.arrOf;
+import static com.legend.server.ModelChanges.camelCase;
+import static com.legend.server.ModelChanges.element;
+import static com.legend.server.ModelChanges.elementsOf;
+import static com.legend.server.ModelChanges.identifier;
+import static com.legend.server.ModelChanges.isIdentifier;
+import static com.legend.server.ModelChanges.literal;
+import static com.legend.server.ModelChanges.objOf;
+import static com.legend.server.ModelChanges.quoted;
+import static com.legend.server.ModelChanges.quotedIfNeeded;
+import static com.legend.server.ModelChanges.refused;
+import static com.legend.server.ModelChanges.renamed;
+import static com.legend.server.ModelChanges.with;
+
 import com.legend.compiler.element.ModelContext;
 import com.legend.compiler.element.type.Multiplicity;
 import com.legend.compiler.element.type.Type;
-import com.legend.error.LegendCompileException;
-import com.legend.error.ModelException;
 import com.legend.json.Json;
-import com.legend.parser.PmcdParser;
-import com.legend.protocol.ModelComposer;
 import com.legend.protocol.ProtocolReader;
 import com.legend.protocol.PureComposer;
 
@@ -23,54 +33,177 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * CREATE A CLASS (docs/DATACUBE_MODEL_DESIGN_2026_10_10.md §15): a relation -- a DataCube grid's query -- made a class
- * of the model, with everything it needs to run, written as the files of the model's project. legend-engine's REPL
- * promotes a relation so ({@code PromoteRelationToModel}, {@code RelationClassMappingGenerator}): a function returning
- * the relation, typed as the relation's own columns; a class, each column a property; a mapping of the class to the
- * function ({@code Relation { ~func ... }}); in its layout, {@code <pkg>::domain}, {@code <pkg>::function},
- * {@code <pkg>::mapping}. This adds what the class needs to run where its rows are:
+ * CREATE A CLASS (docs/DATACUBE_MODEL_DESIGN_2026_10_10.md §15, §15.6a; the action of {@link ModelChanges}): a
+ * relation -- a DataCube grid's query, over the grid's own source model -- made a class of the project, with everything
+ * it needs to run. legend-engine's REPL promotes a relation so ({@code PromoteRelationToModel},
+ * {@code RelationClassMappingGenerator}): a function returning the relation, typed as the relation's own columns; a
+ * class, each column a property; a mapping of the class to the function ({@code Relation { ~func ... }}); in its
+ * layout, {@code <pkg>::domain}, {@code <pkg>::function}, {@code <pkg>::mapping}. This adds what the class needs to run
+ * where its rows are:
  *
  * <ul>
  *   <li><b>the store</b> {@code <pkg>::store::<Place>}: ONE Database for the place the rows are (the tab's DuckDB is
- *       one database, a table per source), the tables the relation reads copied into it from the Database it reads them
- *       from now -- once; a table already there and declared otherwise is refused, never overwritten. One Database per
- *       place, not per source, because lite plans a query over two stores only when one connection serves both, and a
- *       connection names its store;</li>
- *   <li><b>its connection</b> {@code <pkg>::connection::<Place>}, the one the relation's runtime reads that Database
- *       through now, for the new store; and <b>the runtime</b> {@code <pkg>::runtime::<Place>}, binding the store to it
- *       and naming the model's mapping;</li>
- *   <li><b>the model's mapping</b> {@code <pkg>::mapping::Model}: it includes every class's mapping (and holds the
- *       associations, Create an Association…); a runtime names it alone, since lite's planner refuses a runtime that
- *       names a mapping and another that includes it;</li>
+ *       one database, a table per source), the tables the relation reads copied into it from the source's Database --
+ *       once; a table already there and declared otherwise is refused, never overwritten. One Database per place, not
+ *       per source, because lite plans a query over two stores only when one connection serves both, and a connection
+ *       names its store;</li>
+ *   <li><b>its connection</b> {@code <pkg>::connection::<Place>}, the one the source's runtime reads that Database
+ *       through, for the new store; and <b>the runtime</b> {@code <pkg>::runtime::<Place>}, binding the store to it and
+ *       naming the model's mapping;</li>
+ *   <li><b>the model's mapping</b> {@code <pkg>::mapping::Model}: it includes every class's mapping and holds the
+ *       associations; a runtime names it alone, since lite's planner refuses a runtime that names a mapping and another
+ *       that includes it;</li>
  *   <li><b>sample rows</b> {@code <pkg>::data::<Table>Sample}: a {@code Data} element holding the source's first rows
  *       as relational CSV, written with its table, when the caller hands the rows in -- this writer runs nothing.</li>
  * </ul>
  *
- * <p>Each column is a property (named by upstream's rule, {@link #camelCase}, or as the caller names it), a KEY only (a
- * local property of the mapping, {@code +customerId: Integer[0..1]: customer_id}, for an association to join on, not
- * shown on the class), or left out. A property's type is its column's as the compiler types the relation, a decimal
- * {@code Decimal}; its multiplicity the column's, {@code [1]} or {@code [0..1]}.
- *
- * <p>The answer is the files to write in the SDLC's own change shape ({@code {type, path, pureCode}}, {@code type}
- * {@code CREATE} for an element the model does not hold, {@code MODIFY} for one it does), each element printed by
- * lite's model printer (upstream's composer, rule for rule), so a file reads as Studio writes it; the new model is
- * compiled whole, and the class read back and planned, before it is answered. What cannot be a class is refused by
- * name, as a model is ({@link ModelException}).
+ * <p>Each column is a property (named by upstream's rule, {@link ModelChanges#camelCase}, or as the caller names it), a
+ * KEY only (a local property of the mapping, {@code +customerId: Integer[0..1]: customer_id}, for an association to
+ * join on, not shown on the class), or left out. A property's type is its column's as the compiler types the relation,
+ * a decimal {@code Decimal}; its multiplicity the column's, {@code [1]} or {@code [0..1]}.
  */
-public final class PromoteRelationToModel {
+final class CreateClass {
 
-    private PromoteRelationToModel() {
+    private CreateClass() {
+    }
+
+    /** A class made: its path, the query that reads it back, the runtime it runs on, its columns as it takes them. */
+    record Made(String className, String query, String runtime, String mapping, List<Map<String, Object>> properties) {
+        Map<String, Object> json() {
+            Map<String, Object> out = new LinkedHashMap<>();
+            out.put("class", className);
+            out.put("mapping", mapping);
+            out.put("runtime", runtime);
+            out.put("query", query);
+            out.put("properties", properties);
+            return out;
+        }
+    }
+
+    /**
+     * One class, of {@code pkg}: {@code spec} is {@code {"source", "lambda", "name", "documentation"?, "columns"?:
+     * {column: {"as"?: "property"|"key"|"omit", "name"?, "documentation"?}}, "where": {"from", "runtime", "as",
+     * "samples"?: {table: {"columns", "rows"}}}}}; {@code source} its source's model text (the grid's own), which types
+     * the relation and holds the Database ({@code where.from}) and runtime ({@code where.runtime}) it reads now.
+     * {@code where.as} is the place's name ({@code Browser}).
+     */
+    static Made apply(ModelChanges m, String pkg, Json.Obj spec, String source) {
+        String name = spec.getString("name");
+        if (!isIdentifier(name)) {
+            throw refused("a class's name is a Pure name (letters, digits and _, not led by a digit): '" + name + "'");
+        }
+        Json.Obj where = spec.getObj("where");
+        String from = where.getString("from");
+        String as = where.getString("as");
+        if (!isIdentifier(as)) {
+            throw refused("a place's name is a Pure name: '" + as + "'");
+        }
+        Place place = new Place(pkg, as);
+        String className = pkg + "::domain::" + name;
+        String function = pkg + "::function::" + name + "Fn";
+        String classMapping = pkg + "::mapping::" + name + "Mapping";
+        String modelMapping = pkg + "::mapping::Model";
+        String store = place.store();
+        String runtime = place.runtime();
+
+        Json.Obj lambda = spec.getObj("lambda");
+        if (!arrOf(lambda, "parameters").items().isEmpty()) {
+            throw refused("a class is made of a relation that takes no parameters");
+        }
+        ModelContext before = com.legend.Compiler.compileModel(source);
+        Type type = com.legend.Compiler.query(before, ProtocolReader.lambda(lambda)).resultType().type();
+        Type.RelationType relation = Type.schemaView(type);
+        if (relation == null) {
+            throw refused("a class is made of a relation; this query returns " + type.typeName());
+        }
+        if (!relation.dynamicColumns().isEmpty()) {
+            throw refused("a class has fixed properties, and this relation's columns are known only when it runs "
+                    + "(a pivot's): take the pivot off first");
+        }
+        List<Column> columns = columns(relation.columns(), objOf(spec, "columns"));
+
+        Map<String, Json.Obj> sources = elementsOf(source);
+        // the relation, reading its tables from the store it is written with
+        List<String[]> read = new ArrayList<>();
+        Json.Node body = rewritten(lambda.getArr("body"), from, store, read);
+        // every table the function reads is the project's store's: a file reading another store (the source's own,
+        // which the project does not hold) is refused here by name, as the whole's check would refuse it unnamed
+        for (String other : storesRead(body)) {
+            if (!other.equals(store)) {
+                throw refused("the relation reads the store '" + other + "', which this class's place does not write: "
+                        + "a class reads the tables of one place");
+            }
+        }
+        // a class made again is its own relation's: a class of the same name over other tables is another class, and
+        // is not written over it (the design's §15.4)
+        Json.Obj made = elementWhoseName(m, pkg + "::function", name + "Fn");
+        if (made != null && !tablesRead(made.getArr("body")).equals(tablesRead(body))) {
+            throw refused("'" + className + "' is already the class of " + String.join(", ", tablesRead(made.getArr("body")))
+                    + ": name this class otherwise");
+        }
+        // and one not made of a grid's rows -- written in Studio, say: no function reads its rows -- is not written over
+        if (made == null) {
+            for (String path : List.of(className, classMapping)) {
+                if (m.get(path) != null) {
+                    throw refused("'" + path + "' is already in the project, not made of a grid's rows: name this class "
+                            + "otherwise");
+                }
+            }
+        }
+        List<AddedTable> addedTables = new ArrayList<>();
+        if (!from.equals(store)) {
+            storeAndConnection(m, sources, from, where.getString("runtime"), place, read, addedTables);
+        }
+        Json.Obj rt = runtimeOf(m.get(runtime), place, modelMapping);
+        if (rt != null) {
+            m.put(rt);
+        }
+        String relationType = relationType(columns);
+        m.put(element("###Pure\nfunction " + function + "(): " + relationType + "[1]\n{\n" + bodyText(body) + "\n}\n"));
+        m.put(element("###Pure\n" + classText(className, spec.getStringOr("documentation", null), columns)));
+        // the mapping names its function by descriptor, which takes no package in a type (legend-engine resolves
+        // `TradeFn():Relation<Any>[1]` to TradeFn__Relation_1_, and a `meta::pure::...::Relation<...>` not at all)
+        m.put(element("###Mapping\n" + mappingText(classMapping, className, function + "():Relation<Any>[1]",
+                columns)));
+        Json.Obj mm = modelMappingOf(m.get(modelMapping), modelMapping, classMapping);
+        if (mm != null) {
+            m.put(mm);
+        }
+        Json.Obj samples = objOf(where, "samples");
+        for (AddedTable table : addedTables) {
+            Json.Obj sample = samples.getObjOr(table.name(), null);
+            if (sample != null) {
+                // named after its table as it is (`trades_2` Trades_2Sample, `trades2` Trades2Sample), so two tables'
+                // samples are two elements; one already holding another table's rows is not written over
+                String held = identifier(table.name());
+                String data = pkg + "::data::" + held.substring(0, 1).toUpperCase(Locale.ROOT) + held.substring(1) + "Sample";
+                Json.Obj existing = m.get(data);
+                if (existing != null && !sampleTables(existing).equals(List.of(table.schema() + "." + table.name()))) {
+                    throw refused("the sample '" + data + "' holds the rows of " + String.join(", ", sampleTables(existing))
+                            + ", not of " + table.name() + ": name the source's table otherwise");
+                }
+                m.put(element("###Data\n" + dataText(data, table, sample, m.notes)));
+            }
+        }
+
+        List<Map<String, Object>> properties = new ArrayList<>();
+        for (Column c : columns) {
+            Map<String, Object> p = new LinkedHashMap<>();
+            p.put("column", c.name());
+            p.put("as", c.as());
+            if (!"omit".equals(c.as())) {
+                p.put("property", c.property());
+                p.put("type", propertyType(c));
+                p.put("multiplicity", c.required() ? "[1]" : "[0..1]");
+            }
+            properties.add(p);
+        }
+        return new Made(className, classQuery(className, columns), runtime, modelMapping, properties);
     }
 
     private static final String RELATION = "meta::pure::metamodel::relation::Relation";
-    private static final String DOC = "meta::pure::profiles::doc.doc";
 
-    /**
-     * The words Pure reads as literals, never as a name: a name spelled so cannot be written unquoted, and the model
-     * printer -- upstream's composer, rule for rule ({@code PureGrammarComposerUtility.convertIdentifier}) -- writes it
-     * unquoted, so a file holding one would not read back.
-     */
-    private static final Set<String> LITERAL_WORDS = Set.of("true", "false");
+    private static final String DOC = "meta::pure::profiles::doc.doc";
 
     /** One column of the relation, as the class takes it. */
     private record Column(String name, Type type, boolean required, String as, String property,
@@ -100,148 +233,6 @@ public final class PromoteRelationToModel {
     /** A table new to the store: its schema, its name, its columns' names. */
     private record AddedTable(String schema, String name, List<String> columns) {
     }
-
-    /** One file to write: the SDLC's {@code PureChange}. */
-    private record Change(String type, String path, String pureCode) {
-        Map<String, Object> json() {
-            Map<String, Object> out = new LinkedHashMap<>();
-            out.put("type", type);
-            out.put("path", path);
-            out.put("pureCode", pureCode);
-            return out;
-        }
-    }
-
-    /**
-     * {@code request} ({@code model} read by the caller as {@code model}):
-     * {@code {"lambda", "package", "class", "documentation"?, "columns"?: {column: {"as"?: "property"|"key"|"omit",
-     * "name"?, "documentation"?}}, "where": {"from", "runtime", "as", "samples"?: {table: {"columns", "rows"}}}}}.
-     * {@code where.from} is the Database the relation reads its tables from now, {@code where.runtime} the runtime it
-     * runs on now, {@code where.as} the place's name ({@code Browser}).
-     */
-    public static Map<String, Object> promote(String model, Json.Obj request) {
-        String pkg = packagePath(request.getString("package"));
-        String name = request.getString("class");
-        if (!isIdentifier(name)) {
-            throw refused("a class's name is a Pure name (letters, digits and _, not led by a digit): '" + name + "'");
-        }
-        Json.Obj where = request.getObj("where");
-        String from = where.getString("from");
-        String as = where.getString("as");
-        if (!isIdentifier(as)) {
-            throw refused("a place's name is a Pure name: '" + as + "'");
-        }
-        Place place = new Place(pkg, as);
-        String className = pkg + "::domain::" + name;
-        String function = pkg + "::function::" + name + "Fn";
-        String classMapping = pkg + "::mapping::" + name + "Mapping";
-        String modelMapping = pkg + "::mapping::Model";
-        String store = place.store();
-        String runtime = place.runtime();
-
-        Json.Obj lambda = request.getObj("lambda");
-        if (!arrOf(lambda, "parameters").items().isEmpty()) {
-            throw refused("a class is made of a relation that takes no parameters");
-        }
-        ModelContext before = com.legend.Compiler.compileModel(model);
-        Type type = com.legend.Compiler.query(before, ProtocolReader.lambda(lambda)).resultType().type();
-        Type.RelationType relation = Type.schemaView(type);
-        if (relation == null) {
-            throw refused("a class is made of a relation; this query returns " + type.typeName());
-        }
-        if (!relation.dynamicColumns().isEmpty()) {
-            throw refused("a class has fixed properties, and this relation's columns are known only when it runs "
-                    + "(a pivot's): take the pivot off first");
-        }
-        List<Column> columns = columns(relation.columns(), objOf(request, "columns"));
-
-        Map<String, Json.Obj> elements = elementsOf(model);
-        List<Change> changes = new ArrayList<>();
-        // the relation, reading its tables from the store it is written with
-        List<String[]> read = new ArrayList<>();
-        Json.Node body = rewritten(lambda.getArr("body"), from, store, read);
-        // every table the function reads is the project's store's: a file reading another store (the tab's own, which
-        // the project does not hold) would compile here, beside the tab's model, and nowhere else (the audit's C1)
-        for (String other : storesRead(body)) {
-            if (!other.equals(store)) {
-                throw refused("the relation reads the store '" + other + "', which this class's place does not write: "
-                        + "a class reads the tables of one place");
-            }
-        }
-        // a class made again is its own relation's: a class of the same name over other tables is another class, and
-        // is not written over it (the audit's C2; the design's §15.4)
-        Json.Obj made = elementWhoseName(elements, pkg + "::function", name + "Fn");
-        if (made != null && !tablesRead(made.getArr("body")).equals(tablesRead(body))) {
-            throw refused("'" + className + "' is already the class of " + String.join(", ", tablesRead(made.getArr("body")))
-                    + ": name this class otherwise");
-        }
-        List<AddedTable> addedTables = new ArrayList<>();
-        if (!from.equals(store)) {
-            changes.addAll(storeAndConnection(elements, from, where.getString("runtime"), place, read, addedTables));
-        }
-        add(changes, elements, runtimeOf(elements.get(runtime), place, modelMapping));
-        String relationType = relationType(columns);
-        add(changes, elements, element("###Pure\nfunction " + function + "(): " + relationType + "[1]\n{\n"
-                + bodyText(body) + "\n}\n"));
-        add(changes, elements, element("###Pure\n" + classText(className, request.getStringOr("documentation", null),
-                columns)));
-        add(changes, elements, element("###Mapping\n" + mappingText(classMapping, className,
-                function + "():" + relationType + "[1]", columns)));
-        add(changes, elements, modelMappingOf(elements.get(modelMapping), modelMapping, classMapping));
-        Json.Obj samples = objOf(where, "samples");
-        List<String> notes = new ArrayList<>();
-        for (AddedTable table : addedTables) {
-            Json.Obj sample = samples.getObjOr(table.name(), null);
-            if (sample != null) {
-                // named after its table as it is (`trades_2` Trades_2Sample, `trades2` Trades2Sample), so two tables'
-                // samples are two elements; one already holding another table's rows is not written over (C2)
-                String held = identifier(table.name());
-                String data = pkg + "::data::" + held.substring(0, 1).toUpperCase(Locale.ROOT) + held.substring(1) + "Sample";
-                Json.Obj existing = elements.get(data);
-                if (existing != null && !sampleTables(existing).equals(List.of(table.schema() + "." + table.name()))) {
-                    throw refused("the sample '" + data + "' holds the rows of " + String.join(", ", sampleTables(existing))
-                            + ", not of " + table.name() + ": name the source's table otherwise");
-                }
-                add(changes, elements, element("###Data\n" + dataText(data, table, sample, notes)));
-            }
-        }
-
-        // the model the files make, compiled whole; the class read back through its mapping and planned
-        String afterText = withChanges(model, changes);
-        String query = classQuery(className, columns);
-        try {
-            ModelContext after = com.legend.Compiler.compileModel(afterText);
-            com.legend.Compiler.query(after, "|" + query).plan(runtime);
-        } catch (LegendCompileException e) {
-            throw refused("the class would not compile: " + e.getMessage());
-        }
-
-        Map<String, Object> out = new LinkedHashMap<>();
-        out.put("changes", changes.stream().map(Change::json).toList());
-        out.put("class", className);
-        out.put("mapping", modelMapping);
-        out.put("runtime", runtime);
-        out.put("query", query);
-        List<Map<String, Object>> properties = new ArrayList<>();
-        for (Column c : columns) {
-            Map<String, Object> p = new LinkedHashMap<>();
-            p.put("column", c.name());
-            p.put("as", c.as());
-            if (!"omit".equals(c.as())) {
-                p.put("property", c.property());
-                p.put("type", propertyType(c));
-                p.put("multiplicity", c.required() ? "[1]" : "[0..1]");
-            }
-            properties.add(p);
-        }
-        out.put("properties", properties);
-        out.put("notes", notes);
-        return out;
-    }
-
-    // ---------------------------------------------------------------------
-    // The columns, as the class takes them
-    // ---------------------------------------------------------------------
 
     private static List<Column> columns(List<Type.Column> typed, Json.Obj asked) {
         Set<String> names = new HashSet<>();
@@ -326,10 +317,6 @@ public final class PromoteRelationToModel {
         }
         throw refused("the column '" + c.name() + "' is of " + t.typeName() + ", which a property cannot hold");
     }
-
-    // ---------------------------------------------------------------------
-    // The elements, as text first and printed by the model printer
-    // ---------------------------------------------------------------------
 
     /** The relation's type as a function returns it: {@code Relation<(trade_id:Integer, 'Trade Note':String, ...)>}. */
     private static String relationType(List<Column> columns) {
@@ -452,20 +439,16 @@ public final class PromoteRelationToModel {
         return text.indexOf(',') < 0 && text.indexOf('"') < 0 ? text : "\"" + text.replace("\"", "\"\"") + "\"";
     }
 
-    // ---------------------------------------------------------------------
-    // The store, its connection, the runtime, the model's mapping: merged into what the model holds
-    // ---------------------------------------------------------------------
-
     /**
      * The tables the relation reads, from {@code from}, written into the place's store (made from {@code from}'s
      * declaration the first time), and the connection {@code fromRuntime} reads {@code from} through, made the
      * store's. {@code added} gains each table new to the store.
      */
-    private static List<Change> storeAndConnection(Map<String, Json.Obj> elements, String from, String fromRuntime,
-            Place place, List<String[]> read, List<AddedTable> added) {
+    private static void storeAndConnection(ModelChanges m, Map<String, Json.Obj> sources, String from,
+            String fromRuntime, Place place, List<String[]> read, List<AddedTable> added) {
         String store = place.store();
         String connection = place.connection();
-        Json.Obj source = elements.get(from);
+        Json.Obj source = sources.get(from);
         if (source == null || !"relational".equals(source.getStringOr("_type", ""))) {
             throw refused("'" + from + "' is not a Database of the model");
         }
@@ -478,7 +461,7 @@ public final class PromoteRelationToModel {
         if (read.isEmpty()) {
             throw refused("the relation reads no table of '" + from + "'");
         }
-        Json.Obj existing = elements.get(store);
+        Json.Obj existing = m.get(store);
         Json.Obj into = existing != null ? existing
                 : renamed(source, place.pkg() + "::store", place.name(), Map.of("schemas", Json.arr()));
         for (String[] t : read) {
@@ -495,12 +478,9 @@ public final class PromoteRelationToModel {
                         + from + "' does: make the class over a source of that table's columns");
             }
         }
-        List<Change> out = new ArrayList<>();
-        if (existing == null || !existing.equals(into)) {
-            out.add(new Change(existing == null ? "CREATE" : "MODIFY", store, file(into)));
-        }
-        if (!elements.containsKey(connection)) {
-            Json.Obj value = connectionValue(elements, fromRuntime, from);
+        m.put(into);
+        if (m.get(connection) == null) {
+            Json.Obj value = connectionValue(sources, fromRuntime, from);
             LinkedHashMap<String, Json.Node> fields = new LinkedHashMap<>(value.fields());
             fields.put("element", Json.str(store));
             Json.Obj spec = value.getObjOr("datasourceSpecification", null);
@@ -509,10 +489,9 @@ public final class PromoteRelationToModel {
                 // is in memory, and upstream's DuckDB names its database
                 fields.put("datasourceSpecification", with(spec, "path", Json.str(":memory:")));
             }
-            out.add(new Change("CREATE", connection, file(renamed(Json.obj(), place.pkg() + "::connection",
-                    place.name(), Map.of("_type", Json.str("connection"), "connectionValue", new Json.Obj(fields))))));
+            m.put(renamed(Json.obj(), place.pkg() + "::connection", place.name(), Map.of("_type", Json.str("connection"),
+                    "connectionValue", new Json.Obj(fields))));
         }
-        return out;
     }
 
     /** The connection {@code runtime} reads {@code store} through: a packageable connection's value, or the one the
@@ -586,10 +565,6 @@ public final class PromoteRelationToModel {
         includes.add(include);
         return with(m, "includedMappings", new Json.Arr(includes));
     }
-
-    // ---------------------------------------------------------------------
-    // The relation, reading the new store
-    // ---------------------------------------------------------------------
 
     /** {@code node} with each store accessor of {@code from} ({@code #>{from.table}#}) reading {@code store}; each
      *  table read so is added to {@code read} as {schema, table}. */
@@ -675,9 +650,8 @@ public final class PromoteRelationToModel {
     }
 
     /** The function of {@code pkg} named {@code name} in the model (its element named by its signature), or null. */
-    private static @com.legend.base.Nullable Json.Obj elementWhoseName(Map<String, Json.Obj> elements, String pkg,
-            String name) {
-        for (Json.Obj e : elements.values()) {
+    private static @com.legend.base.Nullable Json.Obj elementWhoseName(ModelChanges m, String pkg, String name) {
+        for (Json.Obj e : m.all()) {
             if ("function".equals(e.getStringOr("_type", "")) && e.has("package") && pkg.equals(e.getString("package"))
                     && e.getString("name").startsWith(name + "_")) {
                 return e;
@@ -695,154 +669,6 @@ public final class PromoteRelationToModel {
             out.add(table.getString("schema") + "." + table.getString("table"));
         }
         return out;
-    }
-
-    // ---------------------------------------------------------------------
-    // Elements as protocol
-    // ---------------------------------------------------------------------
-
-    /** The model's elements, by path, as protocol (no source information). */
-    private static Map<String, Json.Obj> elementsOf(String model) {
-        Map<String, Json.Obj> out = new LinkedHashMap<>();
-        for (Json.Node n : Json.parseObject(PmcdParser.parseDocument(model, false)).getArr("elements").items()) {
-            Json.Obj e = (Json.Obj) n;
-            if (!"sectionIndex".equals(e.getStringOr("_type", ""))) {
-                out.put(pathOf(e), e);
-            }
-        }
-        return out;
-    }
-
-    /** An element's path as the SDLC files it: its package and name -- a function's name its signature's
-     *  ({@code TradeFn__Relation_1_}), as the grammar names it. */
-    private static String pathOf(Json.Obj element) {
-        String name = element.getString("name");
-        return element.has("package") && !element.getString("package").isEmpty()
-                ? element.getString("package") + "::" + name : name;
-    }
-
-    /**
-     * The model's text with the changes made: each element a change replaces cut out where the grammar found it, and
-     * each change's file after. Text, not the model printed whole: the model printer prints upstream's elements, and a
-     * host's own (the tab's {@code DuckDB { }}, which names no path) need not be one.
-     */
-    private static String withChanges(String model, List<Change> changes) {
-        Set<String> replaced = new HashSet<>();
-        for (Change c : changes) {
-            if ("MODIFY".equals(c.type())) {
-                replaced.add(c.path());
-            }
-        }
-        List<int[]> cuts = new ArrayList<>();
-        int[] lineStarts = lineStarts(model);
-        for (Json.Node n : Json.parseObject(PmcdParser.parseDocument(model, true)).getArr("elements").items()) {
-            Json.Obj e = (Json.Obj) n;
-            if (!"sectionIndex".equals(e.getStringOr("_type", "")) && replaced.contains(pathOf(e))) {
-                Json.Obj at = e.getObj("sourceInformation");
-                // the grammar's columns count from 1, the end's inclusive
-                cuts.add(new int[] {lineStarts[at.getInt("startLine") - 1] + at.getInt("startColumn") - 1,
-                        lineStarts[at.getInt("endLine") - 1] + at.getInt("endColumn")});
-            }
-        }
-        cuts.sort((x, y) -> Integer.compare(y[0], x[0]));
-        StringBuilder out = new StringBuilder(model);
-        for (int[] cut : cuts) {
-            out.delete(cut[0], cut[1]);
-        }
-        for (Change c : changes) {
-            out.append(c.pureCode().startsWith("###") ? "\n" : "\n###Pure\n").append(c.pureCode());
-        }
-        return out.toString();
-    }
-
-    /** Where each line of {@code text} starts. */
-    private static int[] lineStarts(String text) {
-        List<Integer> starts = new ArrayList<>(List.of(0));
-        for (int i = 0; i < text.length(); i++) {
-            if (text.charAt(i) == '\n') {
-                starts.add(i + 1);
-            }
-        }
-        return starts.stream().mapToInt(Integer::intValue).toArray();
-    }
-
-    /** {@code element} made, or in place of the model's of its path; nothing when it is null or the same. */
-    private static void add(List<Change> changes, Map<String, Json.Obj> elements,
-            @com.legend.base.Nullable Json.Obj element) {
-        if (element == null) {
-            return;
-        }
-        String path = pathOf(element);
-        Json.Obj existing = elements.get(path);
-        if (element.equals(existing)) {
-            return;
-        }
-        changes.add(new Change(existing == null ? "CREATE" : "MODIFY", path, file(element)));
-    }
-
-    /** The one element a text holds, as protocol. */
-    private static Json.Obj element(String text) {
-        for (Json.Node n : Json.parseObject(PmcdParser.parseDocument(text, false)).getArr("elements").items()) {
-            Json.Obj e = (Json.Obj) n;
-            if (!"sectionIndex".equals(e.getStringOr("_type", ""))) {
-                return e;
-            }
-        }
-        throw new IllegalStateException("no element in: " + text);
-    }
-
-    /**
-     * One element as its file holds it: its section's header, then the element, as the model printer prints it -- and
-     * read back as itself, or refused: the printer writes a name as upstream's does, unquoted when it is letters and
-     * digits, and a few such names Pure reads as words of its own ({@code let}, {@code true}), so a file holding one
-     * would not read back.
-     */
-    private static String file(Json.Obj element) {
-        String printed = printed(element);
-        String again;
-        try {
-            again = printed(element(printed));
-        } catch (LegendCompileException e) {
-            throw refused("the file " + pathOf(element) + " would not read back (" + e.getMessage() + "): a name in it "
-                    + "Pure reads as a word of its own -- rename that column first");
-        }
-        if (!again.equals(printed)) {
-            throw new IllegalStateException("the file " + pathOf(element) + " reads back otherwise:\n" + printed
-                    + "\n-- read back --\n" + again);
-        }
-        return printed;
-    }
-
-    private static String printed(Json.Obj element) {
-        return ModelComposer.model(new Json.Obj(new LinkedHashMap<>(Map.of("_type", Json.str("data"), "elements",
-                new Json.Arr(List.of(element))))));
-    }
-
-    /** {@code element} as the element {@code name} of {@code pkg}, {@code fields} put in it. */
-    private static Json.Obj renamed(Json.Obj element, String pkg, String name, Map<String, Json.Node> fields) {
-        LinkedHashMap<String, Json.Node> out = new LinkedHashMap<>(element.fields());
-        out.putAll(fields);
-        out.put("package", Json.str(pkg));
-        out.put("name", Json.str(name));
-        return new Json.Obj(out);
-    }
-
-    /** {@code o}'s object at {@code key}, empty when it has none. */
-    private static Json.Obj objOf(Json.Obj o, String key) {
-        Json.Obj v = o.getObjOr(key, null);
-        return v == null ? Json.obj() : v;
-    }
-
-    /** {@code o}'s array at {@code key}, empty when it has none. */
-    private static Json.Arr arrOf(Json.Obj o, String key) {
-        Json.Arr v = o.getArrOr(key, null);
-        return v == null ? Json.arr() : v;
-    }
-
-    private static Json.Obj with(Json.Obj o, String key, Json.Node value) {
-        LinkedHashMap<String, Json.Node> out = new LinkedHashMap<>(o.fields());
-        out.put(key, value);
-        return new Json.Obj(out);
     }
 
     /** A table's columns' names, in order, as the database names them: a quoted name ({@code "Trade Note"}, its quotes
@@ -889,79 +715,5 @@ public final class PromoteRelationToModel {
                     "views", List.of())));
         }
         return with(database, "schemas", new Json.Arr(schemas));
-    }
-
-    // ---------------------------------------------------------------------
-    // Names
-    // ---------------------------------------------------------------------
-
-    /**
-     * Upstream's {@code meta::pure::functions::string::makeCamelCase} (legend-engine,
-     * core/pure/corefunctions/stringExtension.pure): the parts between {@code _} and spaces, each after the first --
-     * or every one, {@code upperFirst} -- led by its first letter upper-cased, the rest lower-cased when it is all upper
-     * case and kept as it is when not ({@code TRADE_ID} is {@code tradeId}, {@code customerId} stays).
-     */
-    static String camelCase(String input, boolean upperFirst) {
-        StringBuilder out = new StringBuilder();
-        int index = 0;
-        for (String part : input.split("[_ ]")) {
-            if (part.isEmpty()) {
-                continue;
-            }
-            String first = part.substring(0, 1);
-            String rest = part.substring(1);
-            String restCased = rest.equals(rest.toUpperCase(Locale.ROOT)) ? rest.toLowerCase(Locale.ROOT) : rest;
-            out.append(upperFirst || index > 0 ? first.toUpperCase(Locale.ROOT) : first.toLowerCase(Locale.ROOT))
-                    .append(restCased);
-            index += 1;
-        }
-        return out.toString();
-    }
-
-    /** {@code name} as Pure holds a name, made total where upstream's rule is not: each character a name cannot hold
-     *  made {@code _}, led by {@code _} when it would start with a digit, {@code _} when nothing is left, followed by
-     *  {@code _} when it is a word Pure reads as a literal ({@code true_}). */
-    static String identifier(String name) {
-        String held = name.replaceAll("[^A-Za-z0-9_]", "_");
-        if (held.isEmpty()) {
-            return "_";
-        }
-        if (LITERAL_WORDS.contains(held)) {
-            return held + "_";
-        }
-        return Character.isDigit(held.charAt(0)) ? "_" + held : held;
-    }
-
-    /** A name Pure holds unquoted: letters, digits and {@code _}, not led by a digit, and no literal's word. */
-    private static boolean isIdentifier(String name) {
-        return name.matches("[A-Za-z_][A-Za-z0-9_]*") && !LITERAL_WORDS.contains(name);
-    }
-
-    private static String packagePath(String pkg) {
-        for (String part : pkg.split("::", -1)) {
-            if (!isIdentifier(part)) {
-                throw refused("a package is Pure names joined by :: ('" + pkg + "')");
-            }
-        }
-        return pkg;
-    }
-
-    /** A name as a Pure quoted name: {@code 'Trade ID'}, its quote and backslash escaped. */
-    private static String quoted(String name) {
-        return literal(name);
-    }
-
-    private static String quotedIfNeeded(String name) {
-        return isIdentifier(name) ? name : quoted(name);
-    }
-
-    /** A Pure string literal. */
-    private static String literal(String text) {
-        return "'" + text.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n").replace("\r", "\\r")
-                .replace("\t", "\\t") + "'";
-    }
-
-    private static LegendCompileException refused(String message) {
-        return new ModelException(LegendCompileException.Phase.MODEL, message);
     }
 }

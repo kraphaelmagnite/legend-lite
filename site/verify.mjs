@@ -8,8 +8,9 @@
 // first: points Playwright at the Chromium Bazel fetched (as a browser_test; a no-op under bazel run)
 import '../tools/browser/pinned-chromium.mjs';
 import { createServer } from 'node:http';
-import { readFile, stat } from 'node:fs/promises';
-import { extname, resolve, sep } from 'node:path';
+import { mkdtemp, readFile, stat, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { extname, join, resolve, sep } from 'node:path';
 import { createRequire } from 'node:module';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -373,6 +374,67 @@ try {
   if (partyRows !== 5 || !partyText?.includes('Banque Lumière')) throw new Error(`DataCube showed ${partyRows} party rows: ${partyText?.slice(0, 200)}`);
   console.log('DataCube: the query saved on party 1.0.0 opened by name from Depot -- 5 rows');
   await cubeByName.close();
+
+  // ---- A CLASS MADE IN DATACUBE, opened in Studio, read in Query (docs/DATACUBE_MODEL_DESIGN_2026_10_10.md §15.7): a
+  // CSV opened in DataCube made a class of the page's project (Create a Class…), in this origin's SDLC; Studio opens the
+  // workspace from the window's link, its review made and committed; Query opens the class by name at HEAD, over the
+  // model's mapping, and runs it over the class's sample (its project's Data element: the file is not Query's)
+  const fills = join(await mkdtemp(join(process.env.TEST_TMPDIR ?? tmpdir(), 'site-class-')), 'fills.csv');
+  await writeFile(fills, ['fill_id,desk,qty', ...Array.from({ length: 12 }, (_, i) => `${i + 1},${['Rates', 'FX'][i % 2]},${(i + 1) * 5}`)].join('\n') + '\n');
+  const maker = await context.newPage();
+  maker.on('pageerror', (e) => errors.push(`datacube (class): ${e.message}`));
+  maker.on('dialog', async (d) => { errors.push(`datacube (class) ${d.type()}: ${d.message()}`); await d.dismiss(); });
+  const entry = (label) => maker.locator('.dc-menu .dc-menu-item', { has: maker.locator(`:scope > .dc-menu-label:text-is(${JSON.stringify(label)})`) }).first();
+  await maker.goto(`${ORIGIN}/datacube/demo/index.html`);
+  await maker.waitForSelector('.dc-row', { timeout: 120_000 });
+  await maker.click('.dc-titlebar-menu');
+  await entry('New').hover();
+  await entry('Blank Page').click();
+  await maker.click('.dc-blank .dc-primary');
+  await maker.locator('.dc-picker .dc-picker-drop').waitFor({ state: 'visible', timeout: 15_000 });
+  await maker.setInputFiles('.dc-picker-file', fills);
+  await maker.locator('.dc-picker').waitFor({ state: 'detached', timeout: 120_000 });
+  await maker.locator('.dc-tile-menu').first().click();
+  await entry('Create a Class…').click();
+  await maker.waitForFunction(() => document.querySelectorAll('.dc-class-file').length > 0
+    || document.querySelector('.dc-class .dc-picker-status.dc-failed'), undefined, { timeout: 120_000 });
+  await maker.locator('.dc-class .dc-primary').click();
+  await maker.waitForFunction(() => document.querySelector('.dc-class .dc-picker-status.dc-ok, .dc-class .dc-picker-status.dc-failed'),
+    undefined, { timeout: 60_000 });
+  const created = await maker.locator('.dc-class .dc-picker-status').textContent() ?? '';
+  if (!/Created fills::domain::Fill in the project datacube:fills/.test(created)) throw new Error(`Create a Class said: ${created}`);
+  const toStudio = await maker.locator('.dc-class-studio').getAttribute('href') ?? '';
+  console.log(`DataCube: fills.csv made the class fills::domain::Fill of datacube:fills, in this origin's SDLC`);
+
+  const editor = await context.newPage();
+  editor.on('pageerror', (e) => errors.push(`studio (class): ${e.message}`));
+  await editor.goto(toStudio);
+  await editor.waitForFunction(() => /\bFill\b/.test(document.body.innerText) && /\bFillMapping\b/.test(document.body.innerText),
+    undefined, { timeout: 120_000 });
+  await editor.locator('[data-activity=review]').click();
+  await editor.locator('[data-testid=review-title]').fill('Fill, made in DataCube');
+  await editor.locator('[data-testid=create-review]').click();
+  await editor.locator('[data-testid=commit-review]').click({ timeout: 30_000 });
+  await editor.waitForFunction(() => /Review #\d+ committed/.test(document.body.innerText), undefined, { timeout: 60_000 });
+  console.log('Studio: opened the workspace DataCube wrote (its link), the review made and committed to the project line');
+  await editor.close();
+
+  const reader = await context.newPage();
+  reader.on('pageerror', (e) => errors.push(`query (class): ${e.message}`));
+  await reader.goto(`${ORIGIN}/query/demo/index.html#/create/manual/${enc('datacube:fills:master-SNAPSHOT')}/${enc('fills::mapping::Model')}`
+    + `/${enc('fills::runtime::Browser')}?class=${enc('fills::domain::Fill')}`);
+  await reader.waitForSelector('.q-node', { timeout: 120_000 });
+  for (const p of ['Fill Id', 'Desk', 'Qty']) await reader.dblclick(`.q-node:has-text('${p}')`);
+  await reader.click('button.q-run');
+  await reader.waitForFunction(() => document.querySelector('.q-error-box')
+    || /\d+ rows? in \d+ ms/.test(document.querySelector('.q-results-bar')?.textContent ?? ''), undefined, { timeout: 120_000 });
+  const refusedClass = await reader.$('.q-error-box');
+  if (refusedClass) throw new Error(`Query refused the class's run: ${await refusedClass.textContent()}`);
+  const classRows = await reader.$$eval('.q-grid tbody tr', (trs) => trs.length);
+  if (classRows !== 12) throw new Error(`Query ran the class to ${classRows} rows, not the sample's 12`);
+  console.log(`Query: fills::domain::Fill opened by name at HEAD and run over its sample -- ${classRows} rows`);
+  await reader.close();
+  await maker.close();
 } catch (e) {
   failed = true;
   console.log(`FAIL: ${String(e.message ?? e).split('\n')[0]}`);
@@ -384,5 +446,5 @@ if (errors.length) {
   failed = true;
   console.log(`page errors: ${errors.join(' | ')}`);
 }
-console.log(failed ? '\n!!! the apps do not share their stores !!!' : '\n*** saved in Query, opened in DataCube; Studio publishes, Query and DataCube open it by name: one origin, no server ***');
+console.log(failed ? '\n!!! the apps do not share their stores !!!' : '\n*** saved in Query, opened in DataCube; Studio publishes, Query and DataCube open it by name; a class made in DataCube, committed in Studio, read in Query: one origin, no server ***');
 process.exit(failed ? 1 : 0);

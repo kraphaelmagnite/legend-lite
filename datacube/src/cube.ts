@@ -45,6 +45,7 @@ import { requestKey } from './tree.ts';
 import type { LevelRequest, TreeRow, TreeState } from './tree.ts';
 import { DEFAULT_MAX_ROWS, fetchTree, takeRows } from './treeview.ts';
 import type { Plan, PlanColumn } from '../../engine-client/src/relation-type.ts';
+import type { GridSource } from './model-writer.ts';
 
 /** What a run needs of the cube's state: the query and the open groups. */
 export interface RunState {
@@ -103,6 +104,9 @@ export interface Planner {
    * (docs/DATACUBE_MODEL_DESIGN_2026_10_10.md §9): called by its owner when nothing plans through it any more.
    */
   dispose?(): void;
+  /** Where its queries are planned from: its model and the runtime they run on -- what a class made of its rows reads
+   *  its source from (model-writer.ts). */
+  source?(): GridSource;
 }
 
 export interface CubeView {

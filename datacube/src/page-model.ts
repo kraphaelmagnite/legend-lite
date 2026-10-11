@@ -17,6 +17,8 @@ export interface PageModelRef {
   /** Each grid's table in the project's store, by the grid's cube id: the name its source's table takes in this tab,
    *  kept, since the store's mapping reads it by that name. */
   readonly tables: Readonly<Record<string, string>>;
+  /** Each grid's class, by the grid's cube id: the class its rows were made (a page saved before it had none). */
+  readonly classes?: Readonly<Record<string, string>>;
 }
 
 /** The group a page's project is made in. */
@@ -128,6 +130,13 @@ export class PageModel {
       }
       throw e;
     }
+  }
+
+  /** The page's model now keeps `cls` as the grid `cube`'s class. */
+  keepClass(cube: string, cls: string): void {
+    const ref = this.#need();
+    if (ref.classes?.[cube] === cls) return;
+    this.#ref = { ...ref, classes: { ...ref.classes, [cube]: cls } };
   }
 
   /** The page's model now keeps `table` for the grid `cube`. */

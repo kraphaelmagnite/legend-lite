@@ -1,0 +1,160 @@
+###Relational
+Database trades::store::Browser
+(
+  Table trades
+  (
+    trade_id INTEGER NOT NULL,
+    customer_id INTEGER,
+    region VARCHAR(8),
+    notional DOUBLE
+  )
+  Table customers
+  (
+    id INTEGER NOT NULL,
+    name VARCHAR(20)
+  )
+)
+
+###Connection
+RelationalDatabaseConnection trades::connection::Browser
+{
+  store: trades::store::Browser;
+  type: DuckDB;
+  specification: DuckDB
+  {
+    path: ':memory:';
+  };
+  auth: Test;
+}
+
+###Runtime
+Runtime trades::runtime::Browser
+{
+  mappings:
+  [
+    trades::mapping::Model
+  ];
+  connections:
+  [
+    trades::store::Browser:
+    [
+      browser: trades::connection::Browser
+    ]
+  ];
+}
+
+###Pure
+function trades::function::TradeFn(): meta::pure::metamodel::relation::Relation<(trade_id:Integer, customer_id:Integer, region:String, notional:Float)>[1]
+{
+  #>{trades::store::Browser.trades}#
+}
+
+###Pure
+Class trades::domain::Trade
+{
+  tradeId: Integer[1];
+  region: String[0..1];
+  notional: Float[0..1];
+}
+
+###Mapping
+Mapping trades::mapping::TradeMapping
+(
+  *trades::domain::Trade: Relation
+  {
+    ~func trades::function::TradeFn():Relation<Any>[1]
+    tradeId: trade_id,
+    +customerId: Integer[0..1]: customer_id,
+    region: region,
+    notional: notional
+  }
+)
+
+###Mapping
+Mapping trades::mapping::Model
+(
+  include mapping trades::mapping::TradeMapping
+  include mapping trades::mapping::CustomerMapping
+
+  trades::domain::Customer_Trade: ModelJoin
+  {
+    {customer: trades::domain::Customer[1], trades: trades::domain::Trade[1]|$customer.id == $trades.customerId}
+  }
+)
+
+###Data
+Data trades::data::TradesSample
+{
+  Relational
+  #{
+    default.trades:
+      'trade_id,customer_id,region,notional\n'+
+      '1,10,EMEA,150.5\n'+
+      '2,,APAC,20\n'+
+      '3,11,AMER,300\n';
+  }#
+}
+
+###Pure
+function trades::function::CustomerFn(): meta::pure::metamodel::relation::Relation<(id:Integer, name:String)>[1]
+{
+  #>{trades::store::Browser.customers}#
+}
+
+###Pure
+Class trades::domain::Customer
+{
+  id: Integer[1];
+  name: String[0..1];
+}
+
+###Mapping
+Mapping trades::mapping::CustomerMapping
+(
+  *trades::domain::Customer: Relation
+  {
+    ~func trades::function::CustomerFn():Relation<Any>[1]
+    id: id,
+    name: name
+  }
+)
+
+###Data
+Data trades::data::CustomersSample
+{
+  Relational
+  #{
+    default.customers:
+      'id,name\n'+
+      '10,Ann\n'+
+      '11,"Bo, Jr."\n';
+  }#
+}
+
+###Pure
+Association trades::domain::Customer_Trade
+{
+  customer: trades::domain::Customer[0..1];
+  trades: trades::domain::Trade[*];
+}
+
+###DataSpace
+DataSpace trades::Trades
+{
+  executionContexts:
+  [
+    {
+      name: 'Browser';
+      mapping: trades::mapping::Model;
+      defaultRuntime: trades::runtime::Browser;
+    }
+  ];
+  defaultExecutionContext: 'Browser';
+  title: 'Trades';
+  description: 'The desk\'s trades';
+  elements:
+  [
+    trades::domain::Trade,
+    trades::domain::Customer
+  ];
+}

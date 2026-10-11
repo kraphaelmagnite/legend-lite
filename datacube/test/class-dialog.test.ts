@@ -6,8 +6,7 @@ import assert from 'node:assert/strict';
 import { beforeEach, describe, it } from 'node:test';
 import { JSDOM } from 'jsdom';
 
-import type { PromoteAnswer } from '../src/promote.ts';
-import { classDialog, type ClassChoice, type ClassDialogOptions } from '../src/ui/class-dialog.ts';
+import { classDialog, type ClassChoice, type ClassDialogOptions, type ClassPreview } from '../src/ui/class-dialog.ts';
 
 let doc: Document;
 const settle = async (): Promise<void> => {
@@ -20,9 +19,8 @@ beforeEach(() => {
   doc = new JSDOM('<!doctype html><body></body>').window.document;
 });
 
-const answer = (path: string): PromoteAnswer => ({
+const answer = (path: string): ClassPreview => ({
   changes: [{ type: 'CREATE', path, pureCode: `Class ${path} {}` }],
-  class: 'trades::domain::Trade', mapping: 'trades::mapping::Model', runtime: 'trades::runtime::Browser', query: '',
   properties: [
     { column: 'trade_id', as: 'property', property: 'tradeId', type: 'Integer', multiplicity: '[1]' },
     { column: 'region', as: 'property', property: 'region', type: 'String', multiplicity: '[0..1]' },

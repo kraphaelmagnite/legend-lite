@@ -9,8 +9,9 @@ import { accessor, toJson } from '../../pure-protocol/src/index.ts';
 import { SdlcError, type SdlcClient } from '../../sdlc-client/src/client.ts';
 import type { PureChange } from '../../sdlc-client/src/wire.ts';
 import { PageModel, artifactIdOf, projectText, saveFresh } from '../src/page-model.ts';
-import { isPackage, isPureName, suggestedClassName, suggestedPackage } from '../src/promote.ts';
-import { classLambda, sampleLambda, storeTableOf, writesClasses } from '../src/query.ts';
+import { writesModels } from '../src/model-writer.ts';
+import { isPackage, isPureName, suggestedClassName, suggestedDataSpaceName, suggestedPackage } from '../src/model-names.ts';
+import { classLambda, duplicateLambda, sampleLambda, storeTableOf } from '../src/query.ts';
 import type { CubeSnapshot } from '../src/snapshot.ts';
 
 describe('the names DataCube offers', () => {
@@ -29,6 +30,7 @@ describe('the names DataCube offers', () => {
     assert.equal(suggestedPackage('Trades by desk'), 'tradesByDesk');
     assert.equal(suggestedPackage('trades'), 'trades');
     assert.equal(suggestedPackage(''), 'datacube');
+    assert.equal(suggestedDataSpaceName('Trades by desk'), 'TradesByDesk');
     assert.ok(isPackage('trades::desk') && !isPackage('trades::') && !isPackage('1x'));
     assert.ok(isPureName('tradeId') && !isPureName('true') && !isPureName('trade id'));
   });
@@ -79,9 +81,17 @@ describe("the grid's rows, as a class's", () => {
     assert.match(toJson(sampleLambda(SOURCE, 100)), /"limit"/);
   });
 
-  it('a planner writes classes when it answers the route', () => {
-    assert.ok(writesClasses({ promoteRelationToModel: () => undefined, runtime: 'local::RT' }));
-    assert.ok(!writesClasses({ plan: () => undefined }));
+  it('the model\'s writer is the one that answers the three routes', () => {
+    assert.ok(writesModels({ createClass: () => undefined, createAssociation: () => undefined, createDataSpace: () => undefined,
+      withModel: () => undefined }));
+    assert.ok(!writesModels({ plan: () => undefined }));
+  });
+
+  it('a column\'s uniqueness asked as a query: its first value held twice', () => {
+    const json = toJson(duplicateLambda(SOURCE, 'customer_id'));
+    assert.match(json, /"groupBy"/);
+    assert.match(json, /"greaterThan"/);
+    assert.match(json, /"limit"/);
   });
 });
 

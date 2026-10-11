@@ -5,7 +5,9 @@
 // planner and the model home); this window asks and shows, and asks the route again as the choices change.
 
 import { focusedElement } from '../focus.ts';
-import { isPackage, isPureName, type ColumnChoice, type ColumnRole, type PromoteAnswer } from '../promote.ts';
+import type { ColumnChoice, ColumnRole, MadeProperty } from '../model-writer.ts';
+import { isPackage, isPureName } from '../model-names.ts';
+import type { PureChange } from '../../../sdlc-client/src/wire.ts';
 
 /** What a person chose: the request's names and each column's choice. */
 export interface ClassChoice {
@@ -17,6 +19,13 @@ export interface ClassChoice {
   readonly columns: Readonly<Record<string, ColumnChoice>>;
 }
 
+/** What the window shows of the route's answer: the files it writes, the columns as the class takes them, its notes. */
+export interface ClassPreview {
+  readonly changes: readonly PureChange[];
+  readonly properties: readonly MadeProperty[];
+  readonly notes: readonly string[];
+}
+
 export interface ClassDialogOptions {
   /** The grid's source, as its tab says it: what the class is made of. */
   readonly sourceName: string;
@@ -25,7 +34,7 @@ export interface ClassDialogOptions {
   /** The page's project: its name, and whether it is made with this class (the page's first). */
   readonly project: { readonly name: string; readonly isNew: boolean };
   /** The route's answer for `choice`, its files not yet written: shown as the person chooses. */
-  preview(choice: ClassChoice): Promise<PromoteAnswer>;
+  preview(choice: ClassChoice): Promise<ClassPreview>;
   /** Write the class; what to say once it is, or a refusal (shown in the window, which stays open). */
   create(choice: ClassChoice): Promise<CreatedClass>;
 }
@@ -169,7 +178,7 @@ export function classDialog(doc: Document, o: ClassDialogOptions): Promise<Creat
       };
     };
 
-    const drawColumns = (answer: PromoteAnswer): void => {
+    const drawColumns = (answer: ClassPreview): void => {
       for (const p of answer.properties) {
         const known = choices.get(p.column);
         const typeText = p.type === undefined ? '' : `${p.type.replace(/^.*::/, '')}${p.multiplicity ?? ''}`;
@@ -204,7 +213,7 @@ export function classDialog(doc: Document, o: ClassDialogOptions): Promise<Creat
       }
     };
 
-    const drawFiles = (answer: PromoteAnswer): void => {
+    const drawFiles = (answer: ClassPreview): void => {
       fileList.replaceChildren();
       for (const c of answer.changes) {
         const li = el(doc, 'li', 'dc-class-file', fileList);

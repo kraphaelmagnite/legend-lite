@@ -27,8 +27,8 @@ import java.util.function.Supplier;
  * of its request -- text in, a status and JSON out -- so it is tested without HTTP;
  * {@code LegendHttpServer} only carries it, through {@link #route}. Two routes are legend-lite's own, beside them --
  * {@code /api/lite/v1/compilation/compile} (every error where legend-engine's answers the first: the user's decision
- * of 2026-10-10, docs/PROTOCOL_PROGRAM_2026_10_05.md leg 6) and {@code /api/lite/v1/relational/promoteRelationToModel}
- * (DataCube's Create a Class…, {@link #promoteRelationToModel}) -- routed by the same dispatcher, so each host that
+ * of 2026-10-10, docs/PROTOCOL_PROGRAM_2026_10_05.md leg 6) and the model routes {@code /api/lite/v1/model/...}
+ * (DataCube's Create a Class…, an Association…, a Data Space…: {@link #modelChanges}) -- routed by the same dispatcher, so each host that
  * calls {@link #route} answers them (lite's server, the tab, Python's library).
  *
  * <p>THE PLAN SIDE ({@code //core:pure_v1}): no database and no driver, so the compiler's
@@ -108,7 +108,9 @@ public final class PureV1Api {
             case "/api/pure/v1/execution/generatePlan" -> generatePlan(body);
             case "/api/pure/v1/execution/execute" -> execute(body, runner);
             case "/api/lite/v1/compilation/compile" -> compileEveryError(body);
-            case "/api/lite/v1/relational/promoteRelationToModel" -> promoteRelationToModel(body);
+            case "/api/lite/v1/model/createClass" -> modelChanges(body, ModelChanges::createClass);
+            case "/api/lite/v1/model/createAssociation" -> modelChanges(body, ModelChanges::createAssociation);
+            case "/api/lite/v1/model/createDataSpace" -> modelChanges(body, ModelChanges::createDataSpace);
             default -> error(404, null, (path.startsWith("/api/lite/") ? "no such legend-lite API: "
                     : "no such legend-engine API in legend-lite: ") + path);
         };
@@ -239,17 +241,15 @@ public final class PureV1Api {
     }
 
     /**
-     * legend-lite's own {@code /api/lite/v1/relational/promoteRelationToModel}, named after legend-engine's REPL command
-     * (docs/DATACUBE_MODEL_DESIGN_2026_10_10.md §15.6, agreed with the Studio line 2026-10-10): a relation made a class
-     * of the model, with everything it needs to run, answered as the files to write in the SDLC's own change shape
-     * ({@link PromoteRelationToModel}). The model is a model context, read as {@link #compile} reads it; what cannot be
-     * a class is answered as a model that does not compile is, 400 COMPILATION.
+     * legend-lite's own model routes, {@code /api/lite/v1/model/createClass}, {@code createAssociation} and
+     * {@code createDataSpace} (docs/DATACUBE_MODEL_DESIGN_2026_10_10.md §15.6a, the user's ruling of 2026-10-11: named
+     * after Legend's actions; upstream has no HTTP route that does this): each one call to the model's writer
+     * ({@link ModelChanges}), atomic, answered as the files to write in the SDLC's own change shape. The project and
+     * each class's source are model contexts, read as {@link #compile} reads one; what cannot be made is answered as a
+     * model that does not compile is, 400 COMPILATION.
      */
-    public static Answer promoteRelationToModel(String body) {
-        return answer(400, "COMPILATION", () -> {
-            Json.Obj request = request(body);
-            return Json.toCompact(PromoteRelationToModel.promote(modelText(request.getObj("model")), request));
-        });
+    public static Answer modelChanges(String body, java.util.function.Function<Json.Obj, Map<String, Object>> make) {
+        return answer(400, "COMPILATION", () -> Json.toCompact(make.apply(request(body))));
     }
 
     /**
@@ -669,7 +669,7 @@ public final class PureV1Api {
     // ---------------------------------------------------------------------
 
     /** A {@code PureModelContextText}'s code; any other model context is refused. */
-    private static String modelText(Json.Obj model) {
+    static String modelText(Json.Obj model) {
         String type = model.getStringOr("_type", "");
         if (!"text".equals(type)) {
             throw new IllegalArgumentException("a model of _type '" + type + "': legend-lite reads "

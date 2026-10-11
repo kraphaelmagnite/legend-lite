@@ -12,6 +12,7 @@ import type { Planner } from './cube.ts';
 import { PureV1Client, type PrintStyle, type PureV1Options } from '../../engine-client/src/pure-v1.ts';
 import { relationColumns, tdsColumns, type Plan, type PlanColumn } from '../../engine-client/src/relation-type.ts';
 import { toJson, type Lambda } from '../../pure-protocol/src/index.ts';
+import type { GridSource } from './model-writer.ts';
 
 export interface UpstreamPlannerOptions extends PureV1Options {
   /**
@@ -63,6 +64,11 @@ export class UpstreamPlanner implements Planner {
     this.#options = options;
     this.#useCache = options.cache !== false;
     this.#client = new PureV1Client(options, (m, subject) => new PlanError(m, subject));
+  }
+
+  /** Where this planner's queries are planned from: its model, and the runtime they run on. */
+  source(): GridSource {
+    return { model: this.#options.model, runtime: this.#options.runtime };
   }
 
   /**

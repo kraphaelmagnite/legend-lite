@@ -238,7 +238,10 @@ legend_java_library(
 legend_java_library(
     name = "pure_v1",
     srcs = [
-        "src/main/java/com/legend/server/PromoteRelationToModel.java",
+        "src/main/java/com/legend/server/CreateAssociation.java",
+        "src/main/java/com/legend/server/CreateClass.java",
+        "src/main/java/com/legend/server/CreateDataSpace.java",
+        "src/main/java/com/legend/server/ModelChanges.java",
         "src/main/java/com/legend/server/PureV1Api.java",
     ],
     deps = ["//base", "//json", ":compiler", ":compiler_element_type", ":error", ":parser", ":plan", ":planner", ":protocol", ":sql_dialect"],
@@ -248,7 +251,10 @@ legend_java_library(
     srcs = glob(
         ["src/main/java/com/legend/server/**/*.java"],
         exclude = [
-            "src/main/java/com/legend/server/PromoteRelationToModel.java",
+            "src/main/java/com/legend/server/CreateAssociation.java",
+            "src/main/java/com/legend/server/CreateClass.java",
+            "src/main/java/com/legend/server/CreateDataSpace.java",
+            "src/main/java/com/legend/server/ModelChanges.java",
             "src/main/java/com/legend/server/PureV1Api.java",
         ],
     ),

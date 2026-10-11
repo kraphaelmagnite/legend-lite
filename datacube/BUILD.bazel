@@ -218,8 +218,8 @@ _WASM_TESTS = [
     "saved-queries",
     # a page's model: classes over relation functions, related by a ModelJoin (docs/DATACUBE_MODEL_DESIGN_2026_10_10.md §11)
     "model-join",
-    # Create a Class…'s route, asked of the tab's module (docs/DATACUBE_MODEL_DESIGN_2026_10_10.md §15.6)
-    "promote-route",
+    # the model's routes, asked of the tab's module (docs/DATACUBE_MODEL_DESIGN_2026_10_10.md §15.6a)
+    "model-route",
 ]
 
 # node:test files, each its own node_test (tools/js/defs.bzl: types stripped, the spec and strict reporters, a

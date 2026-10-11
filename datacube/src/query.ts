@@ -36,7 +36,6 @@ import {
   type WindowSpec,
 } from './snapshot.ts';
 import type { GroupKey, RowPath } from './tree.ts';
-import type { ClassWriter } from './promote.ts';
 import { ROOT_COLUMN, WINDOW_ALL_PREFIX } from './grid/columns.ts';
 import { PIVOT_SEPARATOR } from '../../engine-client/src/generated/lite-facts.ts';
 import { isBoolean, isNumeric, isVariant, plainType } from '../../engine-client/src/types.ts';
@@ -400,11 +399,16 @@ export function sampleLambda(source: ValueSpecification, n: number = SAMPLE_ROWS
 }
 
 /**
- * Whether `planner` writes classes (promote.ts ClassWriter): it answers legend-lite's promoteRelationToModel. Here, not
- * in promote.ts, so the page's bundle carries the question and not the module Create a Class… fetches.
+ * A FACT FOR AN ASSOCIATION (docs/DATACUBE_MODEL_DESIGN_2026_10_10.md §15.6a): the first value of `column` that
+ * `relation` holds more than once -- no row, and the column is unique over the relation's rows (an association's end
+ * on it is to one).
  */
-export function writesClasses<P extends object>(planner: P): planner is P & ClassWriter {
-  return 'promoteRelationToModel' in planner && 'runtime' in planner;
+export function duplicateLambda(relation: ValueSpecification, column: string): Lambda {
+  return from(relation)
+    .groupBy([column], [agg('rows', lambda(['x'], lit.integer(1)), lambda(['y'], fn('count', variable('y'))))])
+    .filter(lambda(['x'], fn('greaterThan', { _type: 'property', property: 'rows', parameters: [variable('x')] }, lit.integer(1))))
+    .limit(1)
+    .lambda();
 }
 
 /** `ordered`: a level's rows sorted and capped as the grid reads them; a class's, neither. */

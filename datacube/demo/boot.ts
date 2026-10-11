@@ -95,8 +95,9 @@ import type { ColumnFormat } from '../src/format.ts';
 import type { CubeSnapshot } from '../src/snapshot.ts';
 import type { TreeState } from '../src/tree.ts';
 import { sourceColumns } from '../src/source-columns.ts';
-import { accessor, lambda, type ValueSpecification } from '../../pure-protocol/src/index.ts';
-import { classLambda, sampleLambda, storeTableOf, writesClasses } from '../src/query.ts';
+import { accessor, fn, lambda, type ValueSpecification } from '../../pure-protocol/src/index.ts';
+import { classLambda, duplicateLambda, sampleLambda, storeTableOf } from '../src/query.ts';
+import { writesModels } from '../src/model-writer.ts';
 import type { PageModelRef } from '../src/page-model.ts';
 import type { SnapTarget } from '../src/cube.ts';
 
@@ -128,6 +129,10 @@ export type PlaneWord = 'local' | 'remote' | 'engine';
 
 /** CREATE A CLASS… (docs/DATACUBE_MODEL_DESIGN_2026_10_10.md §15.1): a grid's own entry, in its menu's data group. */
 const CREATE_CLASS = { id: 'host.createClass', label: 'Create a Class\u2026', section: 'data' } as const;
+/** CREATE AN ASSOCIATION… and A DATA SPACE… (§15.1, §15.6a): the page's, in its menu's Model group; the first a grid's
+ *  too, its class one end. */
+const CREATE_ASSOCIATION = { id: 'host.createAssociation', label: 'Create an Association\u2026', section: 'data' } as const;
+const CREATE_DATA_SPACE = { id: 'host.createDataSpace', label: 'Create a Data Space\u2026', section: 'data' } as const;
 
 /**
  * THE ONE PLACE A PLANNER IS CHOSEN (the user, 2026-09-30): the page's `?planner=`, read once
@@ -612,10 +617,11 @@ async function startPage(makePlanner: MakePlanner, settled: { show: (reason: str
         // page has a model home and the grid's planner writes classes, Create a Class… of the grid's rows
         hostMenu: () => [
           ...planeMenu(),
-          ...(createClass && writesClasses(place.planner ?? planner) ? [CREATE_CLASS] : []),
+          ...(createClass && (place.planner ?? planner).source ? [CREATE_CLASS, CREATE_ASSOCIATION] : []),
         ],
         onHostMenu: (item) => {
           if (item.id === CREATE_CLASS.id) createClass?.(created, place, spawned.id);
+          else if (item.id === CREATE_ASSOCIATION.id) createAssociation?.(spawned.id === undefined ? undefined : pageModelNow?.()?.classes?.[spawned.id]);
           else onHostItem(item);
         },
         // its windows float over the page, not squeezed into its tile
@@ -686,6 +692,8 @@ async function startPage(makePlanner: MakePlanner, settled: { show: (reason: str
     if (item.id === 'host.saveAs') saveCube?.(true);
     if (item.id === 'host.share') void copyShareLink?.();
     if (item.id === 'host.query') toggleHostWindow('querywin');
+    if (item.id === CREATE_ASSOCIATION.id) createAssociation?.();
+    if (item.id === CREATE_DATA_SPACE.id) createDataSpace?.();
     // A NAVIGATION, not a switch: the same page loads again with the chosen ?planner= (a cube
     // never changes planner while it runs). Asked first when leaving would lose work here.
     if (PLANES.some((plane) => plane.id === item.id)) {
@@ -720,6 +728,10 @@ async function startPage(makePlanner: MakePlanner, settled: { show: (reason: str
    * write its classes to (config.json's `depot`); offered only on a grid whose planner writes classes.
    */
   let createClass: ((grid: CubeApp, place: GridPlace, cube: string | undefined) => void) | undefined;
+  /** CREATE AN ASSOCIATION… (from a grid: its class one end) and CREATE A DATA SPACE… of the page, once it has a model
+   *  home. */
+  let createAssociation: ((first?: string) => void) | undefined;
+  let createDataSpace: (() => void) | undefined;
   /** The page's model now (where its classes are), once the page can make them. */
   let pageModelNow: (() => PageModelRef | undefined) | undefined;
   /** The page renamed in its name box: its name from now (once the page can be saved, a change until it is). */
@@ -775,6 +787,8 @@ async function startPage(makePlanner: MakePlanner, settled: { show: (reason: str
         ]
         : []),
       { id: 'host.query', label: 'Generated Pure & SQL\u2026', section: 'view' as const },
+      // THE PAGE'S MODEL: its associations and its data space, once the page has a model home
+      ...(createDataSpace ? [{ label: 'Model', section: 'data' as const, submenu: [CREATE_ASSOCIATION, CREATE_DATA_SPACE] }] : []),
       // The planes, as entries rather than a control: the bar is
       // for what you watch, the menu for what you do occasionally.
       // The one you are ON is disabled rather than hidden, so the
@@ -1041,6 +1055,8 @@ async function startPage(makePlanner: MakePlanner, settled: { show: (reason: str
     const held = new Map<string, string>();
     /** Each grid's own planners (by its tile's id), which hold its model: let go with the last grid using them. */
     const gridPlanners = new Map<string, readonly Planner[]>();
+    /** Each grid's place, by its id: what the page's model actions read of it (its planner, engine, label). */
+    const gridPlaces = new Map<string, GridPlace>();
     renamePage = (name) => {
       current = { ...current, name };
       page.setTitle(name);
@@ -1049,6 +1065,7 @@ async function startPage(makePlanner: MakePlanner, settled: { show: (reason: str
     madeGrid = (id, place) => {
       // its own planners (its source's, and a snapped copy's): let go with the last grid planning through them
       gridPlanners.set(id, [place.planner, place.snapTarget?.planner].filter((p): p is Planner => p !== undefined));
+      gridPlaces.set(id, place);
       const src = place.cubeSource;
       if (place.file && src?._type === 'file') {
         files.set(id, { ...place.file, sha256: src.sha256, sample: src.sample !== undefined });
@@ -1073,6 +1090,7 @@ async function startPage(makePlanner: MakePlanner, settled: { show: (reason: str
       for (const [grid, owned] of [...gridPlanners]) {
         if (live.has(grid)) continue;
         gridPlanners.delete(grid);
+        gridPlaces.delete(grid);
         const still = new Set([...gridPlanners.values()].flat());
         for (const p of owned) if (!still.has(p)) p.dispose?.();
       }
@@ -1752,14 +1770,16 @@ async function startPage(makePlanner: MakePlanner, settled: { show: (reason: str
     /** CREATE A CLASS… of a grid (src/create-class.ts, fetched the first time it is asked for). */
     const makeClass = async (grid: CubeApp, place: GridPlace, cube: string | undefined): Promise<void> => {
       const config = await pageConfig();
-      const writer = place.planner ?? planner;
-      if (!config.depot || !writesClasses(writer)) return;
-      const source = place.label ?? 'this source';
+      const grid0 = place.planner ?? planner;
+      const source = grid0.source?.();
+      // the model's writer: the tab's module, on every plane (the one beside a server's planner writes table models too)
+      if (!config.depot || !source || !writesModels(tables)) return;
+      const sourceName = place.label ?? 'this source';
       const snapshot = grid.snapshot;
       // refused before the window opens, in words: a source read from no table of its own, a pivot, a lone total
       const table = storeTableOf(snapshot.source.query);
       if (!table) {
-        window.alert(`Create a Class makes a class of a table's rows; ${source} is not read from a table of its own.`);
+        window.alert(`Create a Class makes a class of a table's rows; ${sourceName} is not read from a table of its own.`);
         return;
       }
       let query;
@@ -1774,12 +1794,14 @@ async function startPage(makePlanner: MakePlanner, settled: { show: (reason: str
         query,
         table,
         sample: sampleLambda(snapshot.source.query),
-        writer,
-        engine: place.engine ?? engine,
+        planner: grid0,
         source,
+        writer: tables,
+        engine: place.engine ?? engine,
+        sourceName,
         cube,
         // the page's name, or -- never saved -- its grid's source, without its file's extension (`trades.csv` trades)
-        pageName: current.name ?? ((page.suggestedName || source).replace(/\.[A-Za-z0-9]+$/, '') || 'page'),
+        pageName: current.name ?? ((page.suggestedName || sourceName).replace(/\.[A-Za-z0-9]+$/, '') || 'page'),
         model: current.model,
         client: home.client,
         studio: (project, workspace) => new URL(
@@ -1792,6 +1814,50 @@ async function startPage(makePlanner: MakePlanner, settled: { show: (reason: str
       onCubeView?.();
     };
     pageModelNow = () => current.model;
+    /**
+     * THE PAGE'S MODEL ACTIONS (src/model-actions.ts, fetched the first time either is asked for): each grid of the
+     * page as they read it -- its class when it is one, else its rows as a class's, or why they cannot be one.
+     */
+    const modelActions = async (): Promise<{ actions: typeof import('../src/model-actions.ts'); of: import('../src/model-actions.ts').ModelActionsOf } | undefined> => {
+      const config = await pageConfig();
+      if (!config.depot || !writesModels(tables)) return undefined;
+      const [actions, home] = await Promise.all([import('../src/model-actions.ts'), modelHome(config.depot)]);
+      const grids = actions.pageGrids(page.grids, (id) => {
+        const place = gridPlaces.get(id);
+        const grid = page.grid(id);
+        return place && grid ? { snapshot: grid.snapshot, label: place.label ?? id, planner: place.planner ?? planner,
+          engine: place.engine ?? engine } : undefined;
+      }, (id) => current.model?.classes?.[id], { classLambda, storeTableOf, sampleLambda });
+      const sourceName = grids[0]?.label ?? 'page';
+      return {
+        actions,
+        of: {
+          writer: tables,
+          engine,
+          pageName: current.name ?? ((page.suggestedName || sourceName).replace(/\.[A-Za-z0-9]+$/, '') || 'page'),
+          model: current.model,
+          client: home.client,
+          grids,
+          studio: (project, workspace) => new URL(
+            `/studio/demo/index.html#/edit/${encodeURIComponent(project)}/${encodeURIComponent(workspace)}`, window.location.href).href,
+          persist: async () => (persistent ||= await persistStorage()),
+          duplicate: duplicateLambda,
+          call: (path) => fn(path),
+        },
+      };
+    };
+    const landed = (model: PageModelRef | undefined): void => {
+      if (!model) return;
+      current = { ...current, model };
+      onCubeView?.();
+    };
+    const said = (e: unknown): void => window.alert(e instanceof Error ? e.message : String(e));
+    createAssociation = (first) => {
+      void modelActions().then(async (m) => m && landed(await m.actions.createAssociationOf(m.of, first))).catch(said);
+    };
+    createDataSpace = () => {
+      void modelActions().then(async (m) => m && landed(await m.actions.createDataSpaceOf(m.of))).catch(said);
+    };
     createClass = (grid, place, cube) => {
       void makeClass(grid, place, cube).catch((e: unknown) => window.alert(`Create a Class: ${e instanceof Error ? e.message : String(e)}`));
     };

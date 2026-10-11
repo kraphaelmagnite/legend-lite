@@ -25,8 +25,8 @@ import java.util.Map;
  * upstream's promotion lays them out; a second source joining the one store; the same class made again changing
  * nothing; and what cannot be a class, refused by name.
  */
-@DisplayName("promoteRelationToModel -- a relation made a class, with everything it needs to run")
-class PromoteRelationToModelTest {
+@DisplayName("createClass -- a relation made a class, with everything it needs to run")
+class CreateClassTest {
 
     /** A source as the tab's table model writes it: a Database, its connection, a runtime. */
     private static final String TAB = """
@@ -69,15 +69,22 @@ class PromoteRelationToModelTest {
 
     private static final String KEYED = "\"columns\": {\"customer_id\": {\"as\": \"key\"}}";
 
-    private static String body(String model, String query, String className, String extra) {
+    /** A createClass request: the project's files (`project`), and the class over the grid's own model (`source`). */
+    private static String body(String project, String source, String query, String name, String extra) {
         return """
-                {"model": {"_type": "text", "code": %s}, "lambda": %s, "package": "trades", "class": "%s", %s}"""
-                .formatted(Json.toCompact(model), com.legend.parser.SpecParser.lambdaJson(query, false), className,
-                        extra);
+                {"project": {"_type": "text", "code": %s}, "package": "trades",
+                 "class": {"source": {"_type": "text", "code": %s}, "lambda": %s, "name": "%s", %s}}"""
+                .formatted(Json.toCompact(project), Json.toCompact(source),
+                        com.legend.parser.SpecParser.lambdaJson(query, false), name, extra);
     }
 
-    private static Map<String, Object> promote(String model, String query, String className, String extra) {
-        return PromoteRelationToModel.promote(model, Json.parseObject(body(model, query, className, extra)));
+    private static Map<String, Object> make(String project, String source, String query, String name, String extra) {
+        return ModelChanges.createClass(Json.parseObject(body(project, source, query, name, extra)));
+    }
+
+    /** The answer's one class made. */
+    private static Map<?, ?> made(Map<String, Object> answer) {
+        return (Map<?, ?>) ((List<?>) answer.get("classes")).get(0);
     }
 
     /** The answer's changes, each {@code "TYPE path"}. */
@@ -122,7 +129,7 @@ class PromoteRelationToModelTest {
     @Test
     @DisplayName("writes the class, its function and mapping, the store, its connection and runtime, the sample")
     void writesEverythingTheClassNeeds() {
-        Map<String, Object> a = promote(TAB, QUERY, "Trade", KEYED + ", " + WHERE);
+        Map<String, Object> a = make("", TAB, QUERY, "Trade", KEYED + ", " + WHERE);
         assertEquals(List.of("CREATE trades::store::Browser", "CREATE trades::connection::Browser",
                 "CREATE trades::runtime::Browser", "CREATE " + FUNCTION, "CREATE trades::domain::Trade",
                 "CREATE trades::mapping::TradeMapping", "CREATE trades::mapping::Model",
@@ -144,8 +151,7 @@ class PromoteRelationToModelTest {
                 (
                   *trades::domain::Trade: Relation
                   {
-                    ~func trades::function::TradeFn():meta::pure::metamodel::relation::Relation<(trade_id:Integer,\
-                customer_id:Integer,region:String,'Trade Note':String,notional:Decimal,big:Boolean)>[1]
+                    ~func trades::function::TradeFn():Relation<Any>[1]
                     tradeId: trade_id,
                     +customerId: Integer[0..1]: customer_id,
                     region: region,
@@ -171,14 +177,14 @@ class PromoteRelationToModelTest {
         assertTrue(runtime.contains("trades::mapping::Model") && runtime.contains("browser: trades::connection::Browser"),
                 runtime);
         assertEquals("trades::domain::Trade.all()->project(~[trade_id: x|$x.tradeId, region: x|$x.region, "
-                + "'Trade Note': x|$x.tradeNote, notional: x|$x.notional, big: x|$x.big])", a.get("query"));
-        assertEquals("trades::mapping::Model", a.get("mapping"));
-        assertEquals("trades::runtime::Browser", a.get("runtime"));
+                + "'Trade Note': x|$x.tradeNote, notional: x|$x.notional, big: x|$x.big])", made(a).get("query"));
+        assertEquals("trades::mapping::Model", made(a).get("mapping"));
+        assertEquals("trades::runtime::Browser", made(a).get("runtime"));
 
         // the project alone -- no tab model -- compiles, and the class reads its relation through the mapping
         String project = project(a);
         assertEquals(List.of(), com.legend.Compiler.compileErrors(project));
-        String sql = com.legend.Compiler.query(com.legend.Compiler.compileModel(project), "|" + a.get("query"))
+        String sql = com.legend.Compiler.query(com.legend.Compiler.compileModel(project), "|" + made(a).get("query"))
                 .plan("trades::runtime::Browser").sql();
         assertTrue(sql.contains("FROM trades_2") && sql.contains("'APAC'"), sql);
     }
@@ -186,7 +192,7 @@ class PromoteRelationToModelTest {
     @Test
     @DisplayName("the sample rows load as test data, and the class reads them")
     void theSampleRowsLoad() {
-        Map<String, Object> a = promote(TAB, QUERY, "Trade", KEYED + ", " + WHERE);
+        Map<String, Object> a = make("", TAB, QUERY, "Trade", KEYED + ", " + WHERE);
         assertEquals("""
                 ###Data
                 Data trades::data::Trades_2Sample
@@ -253,7 +259,7 @@ class PromoteRelationToModelTest {
                     }
                   ]
                 }
-                """.formatted(a.get("query"));
+                """.formatted(made(a).get("query"));
         ServiceDefinition service = com.legend.testing.Own.model(model).elements().stream()
                 .filter(e -> e instanceof ServiceDefinition s && s.qualifiedName().equals("trades::Check"))
                 .map(e -> (ServiceDefinition) e).findFirst().orElseThrow();
@@ -267,7 +273,7 @@ class PromoteRelationToModelTest {
     @Test
     @DisplayName("a column a property, a key only, or left out; a property named and documented as asked")
     void columnsAsAsked() {
-        Map<String, Object> a = promote(TAB, QUERY, "Trade", """
+        Map<String, Object> a = make("", TAB, QUERY, "Trade", """
                 "documentation": "A trade, as the desk books it",
                 "columns": {"customer_id": {"as": "key", "name": "customer"}, "region": {"as": "omit"},
                             "Trade Note": {"name": "note", "documentation": "What the trader wrote"}}, """ + WHERE);
@@ -290,15 +296,15 @@ class PromoteRelationToModelTest {
     @DisplayName("names by upstream's rule, made total: camel case, a character a name cannot hold, a leading "
             + "digit, a name two columns would share")
     void upstreamsNamingRule() {
-        assertEquals("tradeId", PromoteRelationToModel.camelCase("TRADE_ID", false));
-        assertEquals("customerId", PromoteRelationToModel.camelCase("customerId", false));
-        assertEquals("tradeNote", PromoteRelationToModel.camelCase("Trade Note", false));
-        assertEquals("TradeLines", PromoteRelationToModel.camelCase("trade_lines", true));
-        assertEquals("_1st", PromoteRelationToModel.identifier(PromoteRelationToModel.camelCase("1st", false)));
-        assertEquals("price_", PromoteRelationToModel.identifier(PromoteRelationToModel.camelCase("price$", false)));
+        assertEquals("tradeId", ModelChanges.camelCase("TRADE_ID", false));
+        assertEquals("customerId", ModelChanges.camelCase("customerId", false));
+        assertEquals("tradeNote", ModelChanges.camelCase("Trade Note", false));
+        assertEquals("TradeLines", ModelChanges.camelCase("trade_lines", true));
+        assertEquals("_1st", ModelChanges.identifier(ModelChanges.camelCase("1st", false)));
+        assertEquals("price_", ModelChanges.identifier(ModelChanges.camelCase("price$", false)));
         String model = TAB.replace("region VARCHAR(10),", "region VARCHAR(10),\n    \"trade id\" INTEGER,\n"
                 + "    \"function\" INTEGER,\n    \"Class\" INTEGER,\n    \"TRUE\" INTEGER,");
-        Map<String, Object> a = promote(model, "|#>{local::DB.trades_2}#", "Trade",
+        Map<String, Object> a = make("", model, "|#>{local::DB.trades_2}#", "Trade",
                 WHERE.replace("\"samples\"", "\"none\""));
         String cls = file(a, "trades::domain::Trade");
         assertTrue(cls.contains("  tradeId: Integer[1];") && cls.contains("  tradeId2: Integer[0..1];"), cls);
@@ -312,14 +318,15 @@ class PromoteRelationToModelTest {
     @DisplayName("a second source joins the one store; the connection and runtime stay; the model's mapping "
             + "includes both")
     void aSecondSourceJoinsTheStore() {
-        Map<String, Object> first = promote(TAB, QUERY, "Trade", KEYED + ", " + WHERE);
-        String model = project(first) + "\n" + CUSTOMERS;
-        Map<String, Object> second = promote(model, "|#>{local::DB.customers}#", "Customer", """
+        Map<String, Object> first = make("", TAB, QUERY, "Trade", KEYED + ", " + WHERE);
+        String model = project(first);
+        Map<String, Object> second = make(model, CUSTOMERS, "|#>{local::DB.customers}#", "Customer", """
                 "where": {"from": "local::DB", "runtime": "local::RT", "as": "Browser",
                   "samples": {"customers": {"columns": ["id", "name"], "rows": [["10", "Ann"], ["11", "Bo"]]}}}""");
-        assertEquals(List.of("MODIFY trades::store::Browser", "CREATE trades::function::CustomerFn__Relation_1_",
-                "CREATE trades::domain::Customer", "CREATE trades::mapping::CustomerMapping",
-                "MODIFY trades::mapping::Model", "CREATE trades::data::CustomersSample"), changes(second));
+        // the project's files changed, in its order, then the new ones, as made
+        assertEquals(List.of("MODIFY trades::store::Browser", "MODIFY trades::mapping::Model",
+                "CREATE trades::function::CustomerFn__Relation_1_", "CREATE trades::domain::Customer",
+                "CREATE trades::mapping::CustomerMapping", "CREATE trades::data::CustomersSample"), changes(second));
         String store = file(second, "trades::store::Browser");
         assertTrue(store.contains("Table trades_2") && store.contains("Table customers"), store);
         assertEquals("""
@@ -334,17 +341,17 @@ class PromoteRelationToModelTest {
         assertEquals(List.of(), com.legend.Compiler.compileErrors(project));
         var ctx = com.legend.Compiler.compileModel(project);
         for (Map<String, Object> a : List.of(first, second)) {
-            com.legend.Compiler.query(ctx, "|" + a.get("query")).plan("trades::runtime::Browser");
+            com.legend.Compiler.query(ctx, "|" + made(a).get("query")).plan("trades::runtime::Browser");
         }
     }
 
     @Test
     @DisplayName("the same class made again changes nothing; made again renamed, only its class and mapping")
     void madeAgain() {
-        Map<String, Object> first = promote(TAB, QUERY, "Trade", KEYED + ", " + WHERE);
-        String model = project(first) + "\n" + TAB;
-        assertEquals(List.of(), changes(promote(model, QUERY, "Trade", KEYED + ", " + WHERE)));
-        Map<String, Object> renamed = promote(model, QUERY, "Trade",
+        Map<String, Object> first = make("", TAB, QUERY, "Trade", KEYED + ", " + WHERE);
+        String model = project(first);
+        assertEquals(List.of(), changes(make(model, TAB, QUERY, "Trade", KEYED + ", " + WHERE)));
+        Map<String, Object> renamed = make(model, TAB, QUERY, "Trade",
                 "\"columns\": {\"customer_id\": {\"as\": \"key\"}, \"Trade Note\": {\"name\": \"note\"}}, " + WHERE);
         assertEquals(List.of("MODIFY trades::domain::Trade", "MODIFY trades::mapping::TradeMapping"), changes(renamed));
         assertEquals(List.of(), com.legend.Compiler.compileErrors(project(first, renamed)));
@@ -353,14 +360,14 @@ class PromoteRelationToModelTest {
     @Test
     @DisplayName("made again with another filter: its function alone changes, cut out of the model and written anew")
     void madeAgainItsFunctionChanges() {
-        Map<String, Object> first = promote(TAB, QUERY, "Trade", KEYED + ", " + WHERE);
-        String model = project(first) + "\n" + TAB;
-        Map<String, Object> again = promote(model, QUERY.replace("'APAC'", "'EMEA'"), "Trade", KEYED + ", " + WHERE);
+        Map<String, Object> first = make("", TAB, QUERY, "Trade", KEYED + ", " + WHERE);
+        String model = project(first);
+        Map<String, Object> again = make(model, TAB, QUERY.replace("'APAC'", "'EMEA'"), "Trade", KEYED + ", " + WHERE);
         assertEquals(List.of("MODIFY " + FUNCTION), changes(again));
         assertTrue(file(again, FUNCTION).contains("$x.region != 'EMEA'"), file(again, FUNCTION));
         String project = project(first, again);
         assertEquals(List.of(), com.legend.Compiler.compileErrors(project));
-        String sql = com.legend.Compiler.query(com.legend.Compiler.compileModel(project), "|" + again.get("query"))
+        String sql = com.legend.Compiler.query(com.legend.Compiler.compileModel(project), "|" + made(again).get("query"))
                 .plan("trades::runtime::Browser").sql();
         assertTrue(sql.contains("'EMEA'") && !sql.contains("'APAC'"), sql);
     }
@@ -368,7 +375,7 @@ class PromoteRelationToModelTest {
     @Test
     @DisplayName("a row whose value holds a line break is left out of the sample, and said")
     void aLineBreakRowIsLeftOut() {
-        Map<String, Object> a = promote(TAB, QUERY, "Trade", KEYED + ", " + WHERE.replace("\"first, of two\"",
+        Map<String, Object> a = make("", TAB, QUERY, "Trade", KEYED + ", " + WHERE.replace("\"first, of two\"",
                 "\"two\\nlines\""));
         String data = file(a, "trades::data::Trades_2Sample");
         assertFalse(data.contains("'1,10"), data);
@@ -385,7 +392,7 @@ class PromoteRelationToModelTest {
     };
 
     private static PureV1Api.Answer route(String body) {
-        return PureV1Api.route("/api/lite/v1/relational/promoteRelationToModel", null, body, NO_RUN);
+        return PureV1Api.route("/api/lite/v1/model/createClass", null, body, NO_RUN);
     }
 
     private static void refused(String body, String expected) {
@@ -399,7 +406,7 @@ class PromoteRelationToModelTest {
     @Test
     @DisplayName("answered through pure/v1's routing, as the tab and Python ask it")
     void throughTheRoute() {
-        PureV1Api.Answer a = route(body(TAB, QUERY, "Trade", KEYED + ", " + WHERE));
+        PureV1Api.Answer a = route(body("", TAB, QUERY, "Trade", KEYED + ", " + WHERE));
         assertEquals(200, a.status(), a.json());
         assertEquals(8, Json.parseObject(a.json()).getArr("changes").items().size());
     }
@@ -407,45 +414,45 @@ class PromoteRelationToModelTest {
     @Test
     @DisplayName("what cannot be a class is refused by name, as a model that does not compile is")
     void refusals() {
-        refused(body(TAB, "|1", "Trade", WHERE), "a class is made of a relation; this query returns Integer");
-        refused(body(TAB, QUERY, "Trade", "\"columns\": {\"trade_id\": {\"as\": \"key\"}, \"region\": {\"as\": "
+        refused(body("", TAB, "|1", "Trade", WHERE), "a class is made of a relation; this query returns Integer");
+        refused(body("", TAB, QUERY, "Trade", "\"columns\": {\"trade_id\": {\"as\": \"key\"}, \"region\": {\"as\": "
                 + "\"omit\"}, \"customer_id\": {\"as\": \"key\"}, \"Trade Note\": {\"as\": \"omit\"}, \"notional\": "
                 + "{\"as\": \"omit\"}, \"big\": {\"as\": \"omit\"}}, " + WHERE), "a class needs at least one property");
-        refused(body(TAB, QUERY, "Trade", "\"columns\": {\"nope\": {}}, " + WHERE), "the relation has no column 'nope'");
-        refused(body(TAB, "|#>{local::DB.trades_2}#->select(~[region, notional])->pivot(~[region], "
+        refused(body("", TAB, QUERY, "Trade", "\"columns\": {\"nope\": {}}, " + WHERE), "the relation has no column 'nope'");
+        refused(body("", TAB, "|#>{local::DB.trades_2}#->select(~[region, notional])->pivot(~[region], "
                 + "~[total: x|$x.notional : y|$y->plus()])", "Trade", WHERE), "take the pivot off first");
-        refused(body(TAB, QUERY, "1Trade", WHERE), "a class's name is a Pure name");
+        refused(body("", TAB, QUERY, "1Trade", WHERE), "a class's name is a Pure name");
         // a column Pure reads as a word of its own: its files would not read back
         for (String word : List.of("let", "true")) {
             String model = TAB.replace("region VARCHAR(10),", "region VARCHAR(10),\n    \"" + word + "\" INTEGER,");
-            refused(body(model, "|#>{local::DB.trades_2}#", "Trade", WHERE.replace("\"samples\"", "\"none\"")),
+            refused(body("", model, "|#>{local::DB.trades_2}#", "Trade", WHERE.replace("\"samples\"", "\"none\"")),
                     "would not read back");
         }
-        refused(body(TAB, QUERY, "Trade", "\"columns\": {\"region\": {\"name\": \"tradeId\"}, \"trade_id\": "
+        refused(body("", TAB, QUERY, "Trade", "\"columns\": {\"region\": {\"name\": \"tradeId\"}, \"trade_id\": "
                 + "{\"name\": \"tradeId\"}}, " + WHERE), "two columns are named 'tradeId'");
         // the store declares the source's table otherwise: never overwritten
-        Map<String, Object> first = promote(TAB, QUERY, "Trade", KEYED + ", " + WHERE);
-        String changed = project(first) + "\n" + TAB.replace("notional DECIMAL(18,2)", "notional DECIMAL(18,2),\n"
+        Map<String, Object> first = make("", TAB, QUERY, "Trade", KEYED + ", " + WHERE);
+        String changed = TAB.replace("notional DECIMAL(18,2)", "notional DECIMAL(18,2),\n"
                 + "    extra INTEGER");
-        refused(body(changed, QUERY, "Trade", KEYED + ", " + WHERE), "declares the table default.trades_2 otherwise");
+        refused(body(project(first), changed, QUERY, "Trade", KEYED + ", " + WHERE),
+                "declares the table default.trades_2 otherwise");
         // a relation reading a store the class's place does not write: its file would read what the project lacks
         String two = TAB + "###Relational\nDatabase other::DB ( Table desks ( desk VARCHAR(10) ) )\n";
-        refused(body(two, "|#>{other::DB.desks}#", "Desk", WHERE.replace("\"samples\"", "\"none\"")),
+        refused(body("", two, "|#>{other::DB.desks}#", "Desk", WHERE.replace("\"samples\"", "\"none\"")),
                 "the relation reads the store 'other::DB'");
         // a class's name taken by a class of another table: not written over
-        String withCustomers = project(first) + "\n" + CUSTOMERS;
-        refused(body(withCustomers, "|#>{local::DB.customers}#", "Trade", WHERE.replace("\"samples\"", "\"none\"")),
+        refused(body(project(first), CUSTOMERS, "|#>{local::DB.customers}#", "Trade", WHERE.replace("\"samples\"", "\"none\"")),
                 "'trades::domain::Trade' is already the class of trades::store::Browser.default.trades_2");
         // a sample's name taken by another table's sample: `a_b` and `A_b` are both A_bSample
         String sample = """
                 "where": {"from": "local::DB", "runtime": "local::RT", "as": "Browser", "samples": {"%s": {"columns":
                   ["trade_id", "customer_id", "region", "Trade Note", "notional"], "rows": [["1", null, "EMEA", null, "1"]]}}}""";
-        Map<String, Object> ab = promote(TAB.replace("Table trades_2", "Table a_b"), "|#>{local::DB.a_b}#", "Ab",
+        Map<String, Object> ab = make("", TAB.replace("Table trades_2", "Table a_b"), "|#>{local::DB.a_b}#", "Ab",
                 sample.formatted("a_b"));
         assertTrue(changes(ab).contains("CREATE trades::data::A_bSample"), changes(ab).toString());
-        refused(body(project(ab) + "\n" + TAB.replace("Table trades_2", "Table A_b"), "|#>{local::DB.A_b}#", "Ab2",
+        refused(body(project(ab), TAB.replace("Table trades_2", "Table A_b"), "|#>{local::DB.A_b}#", "Ab2",
                 sample.formatted("A_b")), "the sample 'trades::data::A_bSample' holds the rows of default.a_b");
         // a request without the place is malformed: 500, as the routes answer one
-        assertEquals(500, route(body(TAB, QUERY, "Trade", "\"x\": 1")).status());
+        assertEquals(500, route(body("", TAB, QUERY, "Trade", "\"x\": 1")).status());
     }
 }

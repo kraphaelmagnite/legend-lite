@@ -1,0 +1,40 @@
+{
+  "engine": "4.145.0",
+  "pinned": {
+    "one-go.pure": "e90b784428e49fd75455f538bc8ec5e4fc0c5b3dfdbc3890c8b424cd23a4c3aa",
+    "queries.pure": "f7530cc7da8e4f78b3e5331940ab94bc3190e76a4825fdce4baddcfb5b5e97d2"
+  },
+  "compile": {
+    "status": 200,
+    "answer": {
+      "message": "OK",
+      "defects": []
+    }
+  },
+  "plans": [
+    {
+      "query": "|trades::domain::Trade.all()->project(~[trade_id: x|$x.tradeId, region: x|$x.region, notional: x|$x.notional])->from(trades::mapping::Model, trades::runtime::Browser)",
+      "status": 200,
+      "sql": "select \"trades_0\".trade_id as \"trade_id\", \"trades_0\".region as \"region\", \"trades_0\".notional as \"notional\" from (select \"trades_1\".trade_id as trade_id, \"trades_1\".customer_id as customer_id, \"trades_1\".region as region, \"trades_1\".notional as notional from trades as \"trades_1\") as \"trades_0\"",
+      "message": ""
+    },
+    {
+      "query": "|trades::domain::Customer.all()->project(~[id: x|$x.id, name: x|$x.name])->from(trades::mapping::Model, trades::runtime::Browser)",
+      "status": 200,
+      "sql": "select \"customers_0\".id as \"id\", \"customers_0\".name as \"name\" from (select \"customers_1\".id as id, \"customers_1\".name as name from customers as \"customers_1\") as \"customers_0\"",
+      "message": ""
+    },
+    {
+      "query": "|trades::domain::Trade.all()->project(~[name: x|$x.customer.name])->from(trades::mapping::Model, trades::runtime::Browser)",
+      "status": 200,
+      "sql": "select \"customers_0\".\"name\" as \"name\" from (select \"trades_1\".trade_id as trade_id, \"trades_1\".customer_id as customer_id, \"trades_1\".region as region, \"trades_1\".notional as notional from trades as \"trades_1\") as \"trades_0\" left outer join (select \"customers_1\".id as \"id\", \"customers_1\".name as \"name\" from (select \"customers_2\".id as id, \"customers_2\".name as name from customers as \"customers_2\") as \"customers_1\") as \"customers_0\" on (\"customers_0\".\"id\" = \"trades_0\".\"customer_id\")",
+      "message": ""
+    },
+    {
+      "query": "|trades::domain::Customer.all()->project(~[notional: x|$x.trades.notional])->from(trades::mapping::Model, trades::runtime::Browser)",
+      "status": 200,
+      "sql": "select \"trades_0\".\"notional\" as \"notional\" from (select \"customers_1\".id as id, \"customers_1\".name as name from customers as \"customers_1\") as \"customers_0\" left outer join (select \"trades_1\".trade_id as \"trade_id\", \"trades_1\".customer_id as \"customer_id\", \"trades_1\".region as \"region\", \"trades_1\".notional as \"notional\" from (select \"trades_2\".trade_id as trade_id, \"trades_2\".customer_id as customer_id, \"trades_2\".region as region, \"trades_2\".notional as notional from trades as \"trades_2\") as \"trades_1\") as \"trades_0\" on (\"customers_0\".\"id\" = \"trades_0\".\"customer_id\")",
+      "message": ""
+    }
+  ]
+}

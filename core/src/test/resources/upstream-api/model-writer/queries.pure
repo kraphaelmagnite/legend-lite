@@ -1,0 +1,4 @@
+|trades::domain::Trade.all()->project(~[trade_id: x|$x.tradeId, region: x|$x.region, notional: x|$x.notional])->from(trades::mapping::Model, trades::runtime::Browser)
+|trades::domain::Customer.all()->project(~[id: x|$x.id, name: x|$x.name])->from(trades::mapping::Model, trades::runtime::Browser)
+|trades::domain::Trade.all()->project(~[name: x|$x.customer.name])->from(trades::mapping::Model, trades::runtime::Browser)
+|trades::domain::Customer.all()->project(~[notional: x|$x.trades.notional])->from(trades::mapping::Model, trades::runtime::Browser)

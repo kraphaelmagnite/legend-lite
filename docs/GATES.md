@@ -8561,3 +8561,60 @@ list given every section's imports, a skip of any spanless node, the validation 
 fixed or recorded here). //core/... and //parser-equivalence/... 69 of 69; local gate: //gates:local green (328
 tests). CI run 38113792128 on `ci/leg8-land` (da876129d), the full gate.yml on every platform: green on every job, 50
 of 50 (2026-10-11, 05:07 to 05:37 UTC). Pushed to main with this record, the user's "Land it now".
+
+## 2026-10-11 — Create an Association…, Create a Data Space…: the page's model in one go, checked against legend-engine (the DataCube + Python line)
+
+The DataCube model plan's step 2, its second landing (`docs/DATACUBE_MODEL_DESIGN_2026_10_10.md` §15.6a, §15.7;
+announced in IN_FLIGHT, 23df2d588). Landed as one fast-forward, `741f24f9a..6e57d350c` (seven commits, one of them the
+design's, one the Studio line's site test):
+
+1. **core**: the routes named after Legend's actions, each atomic (the user's rulings, 2026-10-11):
+   `/api/lite/v1/model/createClass` (was `/api/lite/v1/relational/promoteRelationToModel`), `createAssociation`,
+   `createDataSpace`, in `PureV1Api.route`. One writer, `com.legend.server.ModelChanges` (new, on `//core:pure_v1`),
+   applies the actions to the project in memory -- each class (`CreateClass`, the old writer renamed and split; each
+   class over its grid's own source), then each association (`CreateAssociation`: Pure's own shape, its ModelJoin in
+   `<pkg>::mapping::Model`, a key-only column joined on, how many from the facts the tab reads), then the data space
+   (`CreateDataSpace`: the place's one execution context) -- checks the whole ONCE (the project and the changes alone
+   compile; each class and each association walked both ways plan), and answers the net changes, the associations the
+   model suggests, and what each class can be joined on. All or nothing; the writer writes over only what it made (a
+   class written in Studio, an association its mapping does not join, a data space over another mapping, an element of
+   another kind, a path that is also a package: each refused by name).
+2. **The engine's own check**: `ModelWriterUpstreamTest` pins the files one request writes (two classes with their
+   sample rows, their association, the data space) with legend-engine 4.145.0's recorded answers, each carrying its
+   pinned file's SHA-256 (`docs/datacube-model-homework-2026-10-11/record-upstream.sh`, run by hand): the project
+   compiled; each class's query and both walks planned. It caught one difference, fixed here: a `~func` descriptor's
+   types take no package (legend-pure's `FunctionDescriptor`), so the engine could not find
+   `TradeFn():meta::pure::...::Relation<...>[1]`; the writer writes `TradeFn():Relation<Any>[1]`, upstream's tests'
+   and Studio's form. Lite's compiler taking the qualified form is the Compiler Rewrite line's next landing (it lands
+   after this one: main's writer wrote that form); a path that is also a package joins their PARK-25.
+3. **The tab**: the page's menu has a Model group -- Create an Association… (the suggested pair, each end's class and
+   key, how many preset from the facts read in the tab, asked when its rows are not here) and Create a Data Space…
+   (the whole page in one go: the grids not yet classes made classes in the same window, suggested associations as
+   checkboxes); a grid's menu offers Create an Association… too. `WasmPlanner` is the model's writer
+   (`model-writer.ts`) on every plane: a grid planned on a server still makes its class through the tab's module
+   (`Planner.source()`). `site/verify.mjs` (the Studio line's file, its change reviewed by it): the one origin's chain
+   -- a DataCube class, committed in Studio, read in Query.
+
+**Budget decision**: the grid-only page's startup script 386,000 -> 387,000 bytes gzipped (`bundle-budget.test.ts`),
+measured 386,448, main before it 385,251 (+1,197): the Model menu and a grid's entry and their handlers, the routes'
+request, the facts' query and each grid's class in the page document, at startup; the windows, the actions, the names
+and the SDLC client are chunks fetched the first time one is asked for.
+
+What judges it: `//core:core_tests_server` (CreateClassTest; ModelChangesTest -- an association pinned and walked both
+ways, the suggestions, the window's start, the whole page in one go, all or nothing, the refusals, not written over,
+made again over its own files; ModelWriterUpstreamTest), `//core:guardrails`, `//parser-equivalence/...` (ratchet
+own_corpus.matched 2814 -> 2823 on 2026-10-11: the new tests' embedded Pure, measured by `update_ratchets` after the
+rebase), `//datacube:model_route_test` (WASM: the three routes through the tab's module), `//datacube:verify_class_test`
+(Chromium: two classes, the association from the Model menu with [0..1] and [*] from the facts, the data space, the
+export refused, saved and reopened, and the whole page in one go in a fresh tab), `//datacube:association_dialog_test`, `//datacube:class_dialog_test`,
+`//datacube:create_class_test`, `//datacube:page_document_test`, `//site:verify_test`, `//python:all`. Reviewed by the
+Compiler Rewrite line (the BUILD lines; OK) and Plan Gen / Exec Split (the planner boundary; one fix, made); audited
+(0 blockers, 7 should-fix and 7 notes, each fixed with a test or answered). Local gate: 339 of 341 before the audit's fixes, 337 of 341 after them; every miss a timeout under machine load
+(12 to 26, a second line's judges sharing the box), not a failure: each passed run again or with a longer limit, and
+`//studio:demo_test` and `//query:build_test` on the branch with the machine quiet took 7.9 s and 5.4 s (main, measured
+by the Studio line: 16.2 s and 9.1 s; leg 8 made neither slower). The lane query empty. CI run 38118975945 on
+`ci/datacube-m3`, green on the lanes with a path to the change -- product, core, checks, parser_equivalence,
+warehouse, datacube, ui -- on every platform (26 jobs); the PCT, corpus, stress and sdlc lanes not run: the change is the
+writer on `pure_v1` and DataCube's own code, and alters no compile path they use. Pushed to main as `6e57d350c`, a
+fast-forward (main unmoved since the run), on the user's "Push it", after their question whether the tests had got
+slower (answered by the measures above).

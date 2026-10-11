@@ -165,7 +165,9 @@ function keptFor(model: PageModelRef, cubes: readonly { readonly id: string }[])
   const ids = new Set(cubes.map((c) => c.id));
   const tables: Record<string, string> = {};
   for (const [cube, table] of Object.entries(model.tables)) if (ids.has(cube)) tables[cube] = table;
-  return { ...model, tables };
+  const classes: Record<string, string> = {};
+  for (const [cube, cls] of Object.entries(model.classes ?? {})) if (ids.has(cube)) classes[cube] = cls;
+  return { ...model, tables, ...(Object.keys(classes).length > 0 ? { classes } : {}) };
 }
 
 /** The page as a JSON-ready object: each cube as its own document writes itself. */
@@ -272,7 +274,7 @@ export function readPage(input: string | unknown): PageDocument {
 /** The page's model: its project, its workspace, its package, and each grid's table (`ids`: the page's cubes). */
 function readModel(raw: unknown, ids: ReadonlySet<string>): PageModelRef {
   if (!isObject(raw)) throw new PageDocumentError("'model' is not an object");
-  const { project, workspace, package: pkg, tables } = raw;
+  const { project, workspace, package: pkg, tables, classes } = raw;
   for (const [field, value] of [['project', project], ['workspace', workspace], ['package', pkg]] as const) {
     if (typeof value !== 'string' || value === '') throw new PageDocumentError(`'model' has no ${field}`);
   }
@@ -283,7 +285,19 @@ function readModel(raw: unknown, ids: ReadonlySet<string>): PageModelRef {
     if (typeof table !== 'string' || table === '') throw new PageDocumentError(`'model' keeps no table name for ${cube}`);
     kept[cube] = table;
   }
-  return { project: project as string, workspace: workspace as string, package: pkg as string, tables: kept };
+  const made: Record<string, string> = {};
+  if (classes !== undefined) {
+    if (!isObject(classes)) throw new PageDocumentError("'model' has classes that are not an object");
+    for (const [cube, cls] of Object.entries(classes)) {
+      if (!ids.has(cube)) throw new PageDocumentError(`'model' keeps a class for ${cube}, which is no cube of the page`);
+      if (typeof cls !== 'string' || cls === '') throw new PageDocumentError(`'model' keeps no class name for ${cube}`);
+      made[cube] = cls;
+    }
+  }
+  return {
+    project: project as string, workspace: workspace as string, package: pkg as string, tables: kept,
+    ...(Object.keys(made).length > 0 ? { classes: made } : {}),
+  };
 }
 
 function readSheets(raw: unknown, views: ReadonlySet<string>): readonly PageSheet[] {

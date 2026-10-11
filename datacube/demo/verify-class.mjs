@@ -116,8 +116,9 @@ try {
   check(subtitle.includes("in the page's project, datacube:trades"), `the page's project, not a new one: ${subtitle}`);
   check(await page.locator('.dc-class-package input').isDisabled(), "the page's package, kept");
   const second = await files();
-  check(JSON.stringify(second) === JSON.stringify(['changedtrades::store::Browser', 'newtrades::function::CustomerFn',
-    'newtrades::domain::Customer', 'newtrades::mapping::CustomerMapping', 'changedtrades::mapping::Model',
+  // the project's files changed, in the project's order (the SDLC's: by path), then the new ones, as made
+  check(JSON.stringify(second) === JSON.stringify(['changedtrades::mapping::Model', 'changedtrades::store::Browser',
+    'newtrades::function::CustomerFn', 'newtrades::domain::Customer', 'newtrades::mapping::CustomerMapping',
     'newtrades::data::CustomersSample']), `the first class's files read back, two changed: ${second.join(', ')}`);
   const store = await pure('trades::store::Browser');
   check(/Table trades\w*/.test(store) && /Table customers\w*/.test(store), `one store, a table per source\n${store}`);
@@ -129,6 +130,41 @@ try {
   check(/Created trades::domain::Customer/.test(await page.locator('.dc-class .dc-picker-status').textContent()), 'the second class created');
   await page.locator('.dc-class .dc-primary').click();
   await page.locator('.dc-class').waitFor({ state: 'detached', timeout: 10_000 });
+
+  // CREATE AN ASSOCIATION…, from the page's Model menu: the suggested pair, how many read from the tab's own rows
+  await page.click('.dc-titlebar-menu');
+  await item('Model').hover();
+  await item('Create an Association\u2026').click();
+  await page.waitForFunction(() => document.querySelectorAll('.dc-association .dc-class-file').length > 0
+    || document.querySelector('.dc-association .dc-picker-status.dc-failed'), undefined, { timeout: 60_000 });
+  const many = await page.$$eval('.dc-association-many', (ms) => ms.map((m) => m.value));
+  check(JSON.stringify(many) === JSON.stringify(['[0..1]', '[*]']),
+    `each Trade has at most one Customer (Customer.customerId unique in its rows), each Customer many Trades: ${many}`);
+  const related = await page.$$eval('.dc-association .dc-class-file-line', (ls) => ls.map((l) => l.textContent));
+  check(JSON.stringify(related) === JSON.stringify(['changedtrades::mapping::Model', 'newtrades::domain::Customer_Trade']),
+    `the association and its ModelJoin: ${related.join(', ')}`);
+  await page.locator('.dc-association .dc-primary').click();
+  await page.waitForFunction(() => document.querySelector('.dc-association .dc-picker-status.dc-ok, .dc-association .dc-picker-status.dc-failed'),
+    undefined, { timeout: 60_000 });
+  check(/Created trades::domain::Customer_Trade/.test(await page.locator('.dc-association .dc-picker-status').textContent()),
+    'the association created');
+  await page.locator('.dc-association .dc-primary').click();
+  await page.locator('.dc-association').waitFor({ state: 'detached', timeout: 10_000 });
+
+  // CREATE A DATA SPACE…: the page's two classes, already made; nothing more suggested
+  await page.click('.dc-titlebar-menu');
+  await item('Model').hover();
+  await item('Create a Data Space\u2026').click();
+  await page.waitForFunction(() => document.querySelectorAll('.dc-data-space .dc-class-file').length > 0
+    || document.querySelector('.dc-data-space .dc-picker-status.dc-failed'), undefined, { timeout: 60_000 });
+  const spaced = await page.$$eval('.dc-data-space .dc-class-file-line', (ls) => ls.map((l) => l.textContent));
+  check(JSON.stringify(spaced) === JSON.stringify(['newtrades::Trades']), `the data space alone, its classes made: ${spaced.join(', ')}`);
+  await page.locator('.dc-data-space .dc-primary').click();
+  await page.waitForFunction(() => document.querySelector('.dc-data-space .dc-picker-status.dc-ok, .dc-data-space .dc-picker-status.dc-failed'),
+    undefined, { timeout: 60_000 });
+  check(/Created trades::Trades/.test(await page.locator('.dc-data-space .dc-picker-status').textContent()), 'the data space created');
+  await page.locator('.dc-data-space .dc-primary').click();
+  await page.locator('.dc-data-space').waitFor({ state: 'detached', timeout: 10_000 });
 
   // A PAGE FILE cannot carry the classes yet: refused, said, nothing written
   const downloads = [];
@@ -192,6 +228,53 @@ try {
       async () => bad(`reopened, the class made again writes: ${(await files()).join(', ')}`));
   check(errors.length === 0 && alerts.length === 0,
     `no page errors or other alerts${errors.length + alerts.length ? `: ${[...errors, ...alerts].join('; ')}` : ''}`);
+
+  // THE WHOLE PAGE IN ONE GO, in a browser of its own (a page with no model yet): two files, Create a Data Space…,
+  // both grids made classes in the same window, the suggested association chosen, all one revision
+  const fresh = await browser.newContext({ viewport: { width: 1400, height: 900 } });
+  const one = await fresh.newPage();
+  one.on('pageerror', (e) => errors.push(`pageerror (one go): ${e.message}`));
+  one.on('dialog', async (d) => { if (d.type() === 'beforeunload') await d.accept(); else { alerts.push(d.message()); await d.dismiss(); } });
+  const pick = (label) => one.locator('.dc-menu .dc-menu-item', { has: one.locator(`:scope > .dc-menu-label:text-is(${JSON.stringify(label)})`) }).first();
+  await one.goto(`http://127.0.0.1:${port}/demo/index.html`, { waitUntil: 'load', timeout: 120_000 });
+  await one.waitForFunction(() => document.querySelectorAll('.dc-row').length > 0, undefined, { timeout: 120_000 });
+  await one.click('.dc-titlebar-menu');
+  await pick('New').hover();
+  await pick('Blank Page').click();
+  await one.click('.dc-blank .dc-primary');
+  for (const [i, f] of [trades, customers].entries()) {
+    if (i > 0) {
+      await one.click('.dc-titlebar-menu');
+      await pick('New').hover();
+      await pick('Data Source\u2026').click();
+    }
+    await one.locator('.dc-picker .dc-picker-drop').waitFor({ state: 'visible', timeout: 10_000 });
+    await one.setInputFiles('.dc-picker-file', f);
+    await one.waitForFunction((k) => !document.querySelector('.dc-picker') && document.querySelectorAll('.dc-tile-menu').length >= k, i + 1,
+      { timeout: 120_000 });
+  }
+  await one.click('.dc-titlebar-menu');
+  await pick('Model').hover();
+  await pick('Create a Data Space\u2026').click();
+  await one.waitForFunction(() => document.querySelector('.dc-data-space .dc-association-sentence input[type=checkbox]')
+    || document.querySelector('.dc-data-space .dc-picker-status.dc-failed'), undefined, { timeout: 60_000 });
+  const toMake = await one.$$eval('.dc-data-space .dc-class-property', (is) => is.map((i) => i.value));
+  check(JSON.stringify(toMake) === JSON.stringify(['Trade', 'Customer']), `both grids made classes in the window: ${toMake}`);
+  await one.locator('.dc-data-space .dc-association-sentence input[type=checkbox]').first().check();
+  await one.waitForFunction(() => [...document.querySelectorAll('.dc-data-space .dc-class-path')].some((p) => /_/.test(p.textContent ?? '')
+    && /::domain::/.test(p.textContent ?? '')), undefined, { timeout: 30_000 });
+  const all = await one.$$eval('.dc-data-space .dc-class-file-line', (ls) => ls.map((l) => l.textContent));
+  check(all.every((f) => f.startsWith('new')) && all.includes('newtrades::Trades') && all.includes('newtrades::domain::Trade')
+    && all.includes('newtrades::domain::Customer') && all.some((f) => /^newtrades::domain::\w+_\w+$/.test(f)),
+  `the whole page in one go, every file new: ${all.join(', ')}`);
+  await one.locator('.dc-data-space .dc-primary').click();
+  await one.waitForFunction(() => document.querySelector('.dc-data-space .dc-picker-status.dc-ok, .dc-data-space .dc-picker-status.dc-failed'),
+    undefined, { timeout: 60_000 });
+  check(/Created trades::Trades in the project datacube:trades/.test(await one.locator('.dc-data-space .dc-picker-status').textContent()),
+    `one go created: ${await one.locator('.dc-data-space .dc-picker-status').textContent()}`);
+  await fresh.close();
+  check(errors.length === 0 && alerts.length === 0,
+    `no page errors or other alerts in one go${errors.length + alerts.length ? `: ${[...errors, ...alerts].join('; ')}` : ''}`);
 } catch (e) {
   bad(`${e instanceof Error ? e.message : String(e)}${errors.length ? `\n  page: ${errors.join('; ')}` : ''}`);
 } finally {

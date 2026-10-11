@@ -135,8 +135,11 @@ with the compiler's plan/execution split**, in this order:
    projects and publishing; 7 measures in the model.
    **Step 1 landed 2026-10-10 (fe7961b7b; run 38090412797; GATES "Compile once, plan many").** **Step 2's first
    landing, Create a Class…, landed 2026-10-11 (0cee56761; run 38109599876; GATES "Create a Class…")** -- no file
-   touched beyond the announced list; next in step 2: Create an Association…, Create a Data Space…, Python's
-   create_class. **Step 2's second landing announced 2026-10-11 (rule 5; branch `datacube-m3`; the design's §15.6a,
+   touched beyond the announced list. **Step 2's second landing, Create an Association… and Create a Data Space…,
+   landed 2026-10-11 (6e57d350c; run 38118975945; GATES "Create an Association…, Create a Data Space…")** -- beyond
+   the announced list, in `core/`: the engine check's pins, `core/src/test/resources/upstream-api/model-writer/` (its
+   recorder `docs/datacube-model-homework-2026-10-11/record-upstream.sh`); next in step 2: Python's create_class,
+   create_association, create_data_space. **Step 2's second landing announced 2026-10-11 (rule 5; branch `datacube-m3`; the design's §15.6a,
    agreed with the user): a cross-area edit in `core/`** -- the route renamed and two more beside it,
    `/api/lite/v1/model/createClass` (was `/api/lite/v1/relational/promoteRelationToModel`), `createAssociation`,
    `createDataSpace`, one atomic writer under them. Core files: `core/src/main/java/com/legend/server/`
