@@ -964,7 +964,7 @@ public final class NameResolver {
             return md;
         }
         return new LegacyMappingDefinition(md.qualifiedName(), includes, classMappings,
-                assocMappings, enumMappings, md.testSuitesSource());
+                assocMappings, enumMappings);
     }
 
     /**
@@ -991,7 +991,7 @@ public final class NameResolver {
             return md;
         }
         return new CleanSheetMappingDefinition(md.qualifiedName(), includes, classBindings,
-                assocBindings, enumMappings, md.testSuitesSource());
+                assocBindings, enumMappings);
     }
 
     private static CleanSheetMappingDefinition.ClassBinding resolveClassBinding(

@@ -46,17 +46,13 @@ import java.util.Objects;
  * @param associationMappings  per-association mappings ({@link AssociationMapping.Relational})
  * @param enumerationMappings  per-enumeration mappings; each translates source
  *                             values to enum members
- * @param testSuitesSource     raw text of the {@code testSuites: [...]} block
- *                             when present (D-3 deferred); {@code null} when no
- *                             test suites were declared
  */
 public record LegacyMappingDefinition(
         String qualifiedName,
         List<MappingInclude> includes,
         List<ClassMapping> classMappings,
         List<AssociationMapping> associationMappings,
-        List<EnumerationMapping> enumerationMappings,
-        @com.legend.base.Nullable String testSuitesSource)
+        List<EnumerationMapping> enumerationMappings)
         implements PackageableElement {
 
     public LegacyMappingDefinition {
@@ -65,8 +61,6 @@ public record LegacyMappingDefinition(
         classMappings = classMappings == null ? List.of() : List.copyOf(classMappings);
         associationMappings = associationMappings == null ? List.of() : List.copyOf(associationMappings);
         enumerationMappings = enumerationMappings == null ? List.of() : List.copyOf(enumerationMappings);
-        // testSuitesSource intentionally nullable: presence/absence with
-        // no structural variant (Phase C parses the captured text lazily).
     }
 
     /**
@@ -82,7 +76,7 @@ public record LegacyMappingDefinition(
         Objects.requireNonNull(newClassMappings, "classMappings");
         return new LegacyMappingDefinition(
                 qualifiedName, includes, List.copyOf(newClassMappings),
-                associationMappings, enumerationMappings, testSuitesSource);
+                associationMappings, enumerationMappings);
     }
 
 

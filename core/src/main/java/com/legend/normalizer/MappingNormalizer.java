@@ -451,7 +451,6 @@ public final class MappingNormalizer {
                 classBindings,
                 assocBindings,
                 md.enumerationMappingsWithIncludes(),
-                md.testSuitesSource(),
                 resolvedStores,
                 ledger.facts(pp.surface()));
     }
@@ -531,7 +530,7 @@ public final class MappingNormalizer {
             }
         }
         return new MappingDefinition(md.qualifiedName(), md.includes(),
-                classBindings, assocBindings, md.enumerationMappings(), md.testSuitesSource());
+                classBindings, assocBindings, md.enumerationMappings());
     }
 
     /** A function-REF binding's realizing body, fetched for the stamp —
