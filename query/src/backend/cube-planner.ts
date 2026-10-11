@@ -2,7 +2,7 @@
 // one model and runtime: the results grid is a CubeApp, and it plans on the same legend-lite
 // module the rest of the app does -- one worker, one warm-up, not a second copy of the WASM.
 // Answers are read by DataCube's own reader (`relationColumns`), so the cube sees what its
-// `WasmPlanner` would give it -- with one difference: a column of an ENUMERATION reads as String.
+// `LitePlanner` would give it -- with one difference: a column of an ENUMERATION reads as String.
 // The engines carry an enum column as its values' names (legend-engine types it String in a TDS
 // result; so do legend-lite's server and the tab's engine), and DataCube reads primitives only.
 

@@ -21,7 +21,6 @@ import { sessionExpired, WarehouseEngine } from '../../engine-client/src/warehou
 import { isQueryFailure, type QueryRunner } from './runner.ts';
 import {
   CubeController,
-  pivotHeaderPaths,
   type CubeControllerOptions,
   type CubeView,
   type Planner,
@@ -33,7 +32,6 @@ import {
   fromSnapshot,
   labelFor,
   toColumnAppearance,
-  toColumnLayout,
   renderFormats,
   leafFormats,
   DEFAULT_CONFIGURATION,
@@ -79,10 +77,9 @@ import { FormatterCache, type ColumnFormat } from './format.ts';
 import { DataGrid } from './grid/grid.ts';
 import {
   TREE_COLUMN,
-  buildColumnModel,
-  type ColumnLayout,
   type LeafColumn,
 } from './grid/columns.ts';
+import { shownColumns } from './shown-columns.ts';
 import { writeCube, type CubeDocument, type CubeSource } from './cube-document.ts';
 import { selectionStats, selectionTable, type CellRange } from './selection.ts';
 import type { ResultTable, Scalar } from '../../engine-client/src/result.ts';
@@ -1181,38 +1178,7 @@ export class CubeApp {
    * runs no query.
    */
   #paintView(view: CubeView): void {
-    const model = buildColumnModel(
-      view.rows,
-      view.snapshot.rows,
-      view.snapshot.measures.map((m) => m.name),
-      {
-        ...(toColumnLayout(this.#config) as ColumnLayout),
-        // THE CUBE'S ORDER, not the answer's.
-        //
-        // Leaves were ordered by their position in the RESULT, and a
-        // pivoted cube's result puts the pivot's own columns before
-        // the ones it carried through -- upstream's `_groupByAggCols`
-        // emits them in that order too. So pivoting threw the
-        // columns into a new order: every year block first, then
-        // trade_id, quarter and the rest behind them.
-        //
-        // DataCube does not have the problem because its grid never
-        // takes order from the query: `columnDefs:
-        // generateColumnDefs(snapshot, configuration)` builds them in
-        // CONFIGURATION order, and the result's column order is
-        // nobody's business but the engine's. So the declared order
-        // is the default here, and an explicit reorder still wins.
-        order: this.#config.columnOrder
-          ?? view.snapshot.columns.map((c) => c.name),
-        // Horizontal Pivots > each key's sort direction: the order of
-        // that key's VALUES across the header. Written by the editor
-        // and read by nothing until the 2026-09-25 sweep found it.
-        pivotDirections: view.snapshot.pivotOn.map((name) =>
-          columnConfig(this.#config, name).pivotSortDirection ?? 'asc'),
-      },
-      view.snapshot.pivotOn.length,
-      pivotHeaderPaths(view.pivot?.columns),
-    );
+    const model = shownColumns(view, this.#config);
     // Refreshed AFTER the view lands, because the pivot's leaf names
     // are only known once the engine has answered.
     this.#refreshFormats();

@@ -2,11 +2,10 @@
 // a PIVOTED column, which only exists after the pivot has run.
 
 import assert from 'node:assert/strict';
-import { engineClientRequire } from '../../engine-client/src/node-require.ts';
-import path from 'node:path';
 import { after, before, describe, it } from 'node:test';
+import { openDatabase } from '#test-host';
 
-import { DuckDbEngine, type ArrowishConnection } from '../../engine-client/src/duckdb.ts';
+import { DuckDbEngine } from '../../engine-client/src/duckdb.ts';
 
 import type { CubeSnapshot } from '../src/snapshot.ts';
 import { totalOrderSorts } from '../src/snapshot.ts';
@@ -17,24 +16,8 @@ import { printLevel } from './lite-compiler.ts';
 let engine: DuckDbEngine;
 
 before(async () => {
-  const duckdb = engineClientRequire('@duckdb/duckdb-wasm/blocking');
-  const dist = path.dirname(engineClientRequire.resolve('@duckdb/duckdb-wasm/blocking'));
-  const db = await duckdb.createDuckDB(
-    {
-      mvp: {
-        mainModule: path.join(dist, 'duckdb-mvp.wasm'),
-        mainWorker: path.join(dist, 'duckdb-node-mvp.worker.cjs'),
-      },
-      eh: {
-        mainModule: path.join(dist, 'duckdb-eh.wasm'),
-        mainWorker: path.join(dist, 'duckdb-node-eh.worker.cjs'),
-      },
-    },
-    new duckdb.VoidLogger(),
-    duckdb.NODE_RUNTIME,
-  );
-  await db.instantiate();
-  engine = new DuckDbEngine(db.connect() as ArrowishConnection);
+  const db = await openDatabase();
+  engine = new DuckDbEngine(db.connection);
   await engine.run(
     `CREATE TABLE t AS SELECT * FROM (VALUES
        ('AMER', 2023,  10.0), ('AMER', 2024, 900.0),
@@ -79,11 +62,11 @@ describe('sorting by a pivoted column', () => {
     ]);
   });
 
-  it('emits the sort AFTER the pivot\'s groupBy, where the column exists', () => {
-    const out = printLevel({
+  it('emits the sort AFTER the pivot\'s groupBy, where the column exists', async () => {
+    const out = (await printLevel({
       ...CUBE,
       sorts: [{ column: '2023__|__total', direction: 'desc' }],
-    }, undefined, { tuples: [['2023'], ['2024']] });
+    }, undefined, { tuples: [['2023'], ['2024']] }));
     assert.ok(out.indexOf('groupBy(') < out.indexOf('sort('));
     assert.match(out, /sort\(\[~'2023__\|__total'->descending\(\)/);
   });
@@ -109,25 +92,25 @@ describe('sorting by a pivoted column', () => {
     assert.deepEqual(r.columns[0]?.values, ['AMER', 'APAC', 'EMEA']);
   });
 
-  it('still appends the row dimension, so ties are deterministic', () => {
+  it('still appends the row dimension, so ties are deterministic', async () => {
     // Without it, two groups tying on the pivot cell can come back in
     // either order and a windowed read can repeat or skip one.
-    const out = printLevel({
+    const out = (await printLevel({
       ...CUBE,
       sorts: [{ column: '2024__|__total', direction: 'desc' }],
-    }, undefined, { tuples: [['2023'], ['2024']] });
+    }, undefined, { tuples: [['2023'], ['2024']] }));
     assert.match(out, /~region->ascending\(\)\]\)/);
   });
 });
 
 describe('sorting by a derived measure', () => {
-  it('sorts on a post-aggregation column', () => {
-    const out = printLevel({
+  it('sorts on a post-aggregation column', async () => {
+    const out = (await printLevel({
       ...CUBE,
       pivotOn: [],
-      groupDerived: [{ name: 'share', lambda: row('$x.total / 100') }],
+      groupDerived: [{ name: 'share', lambda: (await row('$x.total / 100')) }],
       sorts: [{ column: 'share', direction: 'desc' }],
-    });
+    }));
     // The column must exist before it is ordered by.
     assert.ok(out.indexOf('extend(~[share') < out.indexOf('sort('));
     assert.match(out, /sort\(\[~share->descending\(\)/);

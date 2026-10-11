@@ -33,7 +33,8 @@ function result(rows: number, region = (i: number) => `Region ${i}`): ResultTabl
 const shown = (rt: ResultTable, title = ''): ExportTable =>
   exportTable({ title, rows: rt, model: buildColumnModel(rt), treeRows: [], groupLabels: [], truncated: false });
 
-const latin1 = (b: Uint8Array): string => Buffer.from(b).toString('latin1');
+/** Bytes as Latin-1 text: each byte its own character, U+0000 to U+00FF (Node's 'latin1'). */
+const latin1 = (b: Uint8Array): string => Array.from(b, (c) => String.fromCharCode(c)).join('');
 
 describe('plain text export', () => {
   it('lines the columns up: header, rule, rows; numbers right, text left', () => {

@@ -10,7 +10,7 @@
 //
 // The JVM's answers are a build output (//datacube:cube_jvm_answers,
 // from emit.ts's queries); this plans the same queries through
-// WasmPlanner -- the product's class, not a harness around the module --
+// LitePlanner -- the product's class, not a harness around the module --
 // and compares.
 //
 //   bazel test //datacube:wasm_differential_test
@@ -20,7 +20,7 @@ import { readFileSync } from 'node:fs';
 import { it } from 'node:test';
 
 import { relationColumns } from '../../../engine-client/src/relation-type.ts';
-import { WasmPlanner } from '../../src/wasm-planner.ts';
+import { LitePlanner } from '../../src/lite-planner.ts';
 import { toJson } from '../../../pure-protocol/src/index.ts';
 import { MODEL, queries, RUNTIME } from './cases.ts';
 import { runfileDirUrl, runfileFromEnv } from '../../../tools/js/runfiles.mts';
@@ -51,7 +51,7 @@ function norm(s: string): string {
 
 it('DataCube\'s own queries plan the same in WASM and on the JVM', async () => {
   const jvm = blocks(readFileSync(ANSWERS, 'utf8'));
-  const planner = new WasmPlanner({
+  const planner = new LitePlanner({
     model: MODEL,
     runtime: RUNTIME,
     assetBaseUrl: MODULE_DIR,
@@ -88,7 +88,7 @@ it('DataCube\'s own queries plan the same in WASM and on the JVM', async () => {
 // Byte for byte: the tree DataCube builds, printed by the compiler and parsed back, is the same JSON
 // string -- numbers included (pure-protocol writes them as the wire does, spelling.ts).
 it('the compiler prints every query so that it parses back to the same tree, byte for byte, in both styles', async () => {
-  const planner = new WasmPlanner({
+  const planner = new LitePlanner({
     model: MODEL,
     runtime: RUNTIME,
     assetBaseUrl: MODULE_DIR,

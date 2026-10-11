@@ -8,15 +8,16 @@ import { print } from './lite-compiler.ts';
 import { col, fn, lit } from '../../pure-protocol/src/index.ts';
 
 /** Every extraction under a field, by default column name: its lambda as the compiler prints it. */
-function byName(fields: readonly Field[]): Map<string, { expression: string; type: string; unnest?: boolean }> {
+async function byName(fields: readonly Field[]): Promise<Map<string, { expression: string; type: string; unnest?: boolean }>> {
   const out = new Map<string, { expression: string; type: string; unnest?: boolean }>();
-  const walk = (f: Field): void => {
+  // each field walked in order, each print awaited, before the map is answered
+  const walk = async (f: Field): Promise<void> => {
     for (const e of f.extractions) {
-      out.set(e.name, { expression: print(e.lambda), type: e.type, ...(e.unnest ? { unnest: true } : {}) });
+      out.set(e.name, { expression: await print(e.lambda), type: e.type, ...(e.unnest ? { unnest: true } : {}) });
     }
-    f.children.forEach(walk);
+    for (const c of f.children) await walk(c);
   };
-  fields.forEach(walk);
+  for (const f of fields) await walk(f);
   return out;
 }
 
@@ -80,8 +81,8 @@ describe('fieldsOf', () => {
     '{"tier":"gold","n":3}',
   ]);
 
-  it('reaches a nested key through get, typed by the sample', () => {
-    const f = byName(fieldsOf('customer', orders));
+  it('reaches a nested key through get, typed by the sample', async () => {
+    const f = (await byName(fieldsOf('customer', orders)));
     assert.deepEqual(f.get('customer_tier'), {
       ...f.get('customer_tier'),
       expression: "x|$x.customer->get('tier')->to(@String)", type: 'String' });
@@ -96,18 +97,18 @@ describe('fieldsOf', () => {
     assert.equal(Math.round(contact!.presence * 100), 33);
   });
 
-  it('offers count, text, and contains for an array of scalars', () => {
+  it('offers count, text, and contains for an array of scalars', async () => {
     const tags = inferShape(['["gift","b2b"]', '["gift"]', '[]']);
-    const f = byName(fieldsOf('tags', tags));
+    const f = (await byName(fieldsOf('tags', tags)));
     assert.equal(f.get('tags_count')?.expression, 'x|$x.tags->toMany(@Variant)->size()');
     assert.equal(f.get('tags_list')?.expression, "x|$x.tags->toMany(@String)->joinStrings(', ')");
     assert.equal(f.get('tags_has_gift')?.expression, "x|$x.tags->toMany(@String)->contains('gift')");
     assert.equal(f.get('tags_has_gift')?.type, 'Boolean');
   });
 
-  it('offers per-field text, first and total for an array of objects', () => {
+  it('offers per-field text, first and total for an array of objects', async () => {
     const items = inferShape(['[{"sku":"A","qty":2},{"sku":"B","qty":1}]']);
-    const f = byName(fieldsOf('items', items));
+    const f = (await byName(fieldsOf('items', items)));
     assert.equal(f.get('items_first_sku')?.expression,
       "x|$x.items->get(0)->get('sku')->to(@String)");
     assert.equal(f.get('items_qty_total')?.expression,
@@ -115,9 +116,9 @@ describe('fieldsOf', () => {
     assert.equal(f.get('items_sku_total'), undefined, 'text has no total');
   });
 
-  it('quotes a key that is not a plain name', () => {
+  it('quotes a key that is not a plain name', async () => {
     const odd = inferShape(['{"it\'s":1}']);
-    const f = byName(fieldsOf('c', odd));
+    const f = (await byName(fieldsOf('c', odd)));
     assert.equal(f.get('c_it_s')?.expression, "x|$x.c->get('it\\'s')->to(@Integer)");
   });
 });
@@ -131,9 +132,9 @@ describe('freeName', () => {
 });
 
 describe('as JSON', () => {
-  it('pulls a nested object or array out, and every element field as one array', () => {
+  it('pulls a nested object or array out, and every element field as one array', async () => {
     const docs = inferShape(['{"c":{"e":"a"},"items":[{"sku":"A","tags":["x"]}]}']);
-    const f = byName(fieldsOf('d', docs));
+    const f = (await byName(fieldsOf('d', docs)));
     assert.deepEqual(f.get('d_c'), { ...f.get('d_c'), expression: "x|$x.d->get('c')", type: 'Variant' });
     assert.equal(f.get('d_items')?.expression, "x|$x.d->get('items')");
     assert.equal(f.get('d_items_sku')?.expression,
@@ -149,8 +150,8 @@ describe('as JSON', () => {
       ["x|$x.d->get('items')->get(0)", 'Variant']);
   });
 
-  it('is not offered for the column itself', () => {
-    const f = byName(fieldsOf('c', inferShape(['{"a":1}'])));
+  it('is not offered for the column itself', async () => {
+    const f = (await byName(fieldsOf('c', inferShape(['{"a":1}']))));
     assert.equal(f.get('c'), undefined);
   });
 });
@@ -161,24 +162,24 @@ describe('explode: one column from the fields ticked', () => {
     { key: 'city', type: 'String', kind: 'dimension' as const }];
   const array = fn('get', col('x', 'customer'), lit.string('addresses'));
 
-  it('several fields: ONE JSON object holding just them, (kind, city)', () => {
-    assert.equal(print(explodeLambda(array, address)),
+  it('several fields: ONE JSON object holding just them, (kind, city)', async () => {
+    assert.equal((await print(explodeLambda(array, address))),
       "x|$x.customer->get('addresses')->toMany(@Variant)->map(e|['kind'->pair($e->get('kind')->toVariant()), "
       + "'city'->pair($e->get('city')->toVariant())]->newMap()->toVariant())");
     assert.equal(explodeName(['customer', 'addresses'], address), 'addresses_kind_city');
     assert.equal(explodeType(address), 'Variant');
   });
 
-  it('one field: its value, typed; none: the element as JSON', () => {
-    assert.equal(print(explodeLambda(array, [address[1]!])),
+  it('one field: its value, typed; none: the element as JSON', async () => {
+    assert.equal((await print(explodeLambda(array, [address[1]!]))),
       "x|$x.customer->get('addresses')->toMany(@Variant)->map(e|$e->get('city')->to(@String))");
-    assert.equal(print(explodeLambda(array, [])), "x|$x.customer->get('addresses')->toMany(@Variant)");
+    assert.equal((await print(explodeLambda(array, []))), "x|$x.customer->get('addresses')->toMany(@Variant)");
     assert.equal(explodeName(['customer', 'addresses'], []), 'customer_addresses_element');
     assert.equal(explodeType([]), 'Variant');
   });
 
-  it('an array of plain values explodes to its values, typed', () => {
-    const f = byName(fieldsOf('d', inferShape(['{"tags":["a","b"]}'])));
+  it('an array of plain values explodes to its values, typed', async () => {
+    const f = (await byName(fieldsOf('d', inferShape(['{"tags":["a","b"]}']))));
     assert.deepEqual([f.get('tags_value')?.expression, f.get('tags_value')?.unnest],
       ["x|$x.d->get('tags')->toMany(@String)", true]);
   });

@@ -145,6 +145,14 @@ public final class PureModelContext implements ModelContext {
         return out;
     }
 
+    /** The gate's element-identity half, run by the layer builder BEFORE
+     * Phase E reads the index (the engine's order): see
+     * {@link ModelIntegrity#refuseDuplicates}. */
+    public static void refuseDuplicates(ModelBuilder index,
+            java.util.@com.legend.base.Nullable Map<String, String> wallSink) {
+        ModelIntegrity.refuseDuplicates(index, wallSink);
+    }
+
     /**
      * Build from a Phase-E {@link com.legend.model.NormalizedModel} over THE
      * graph's one index. The parameter type is the phase gate

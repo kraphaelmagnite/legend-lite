@@ -56,14 +56,11 @@ final class ModelIntegrity {
             PureModelContext.@com.legend.base.Nullable CheckedLayer prior) {
         java.util.function.Predicate<Object> fresh = prior == null ? el -> true
                 : el -> !prior.contains(el);
-        // D6b: element-identity first, so a duplicated FQN poisons with
-        // ITS reason rather than a downstream confusion from whichever
-        // definition happened to win the last-wins slot.
-        model.duplicateElements().forEach((fqn, msg) ->
-                withElement(fqn, () -> {
-                    throw new com.legend.error.ModelException(
-                            com.legend.error.LegendCompileException.Phase.MODEL, msg);
-                }, wallSink));
+        // D6b: element-identity first. A layer's own duplicates were refused
+        // before Phase E read the index (Compiler.normalizeLayer); what is
+        // new here is a graph element shadowing a boot FQN, recorded when the
+        // boot layer's elements joined this index at the gate (2026-10-11)
+        refuseDuplicates(model, wallSink);
         model.classes().filter(fresh).forEach(cd -> withElement(cd.qualifiedName(),
                 () -> checkClass(cd, classifier, functions), wallSink));
         checkInheritanceAcyclic(model, classifier, wallSink, fresh);
@@ -83,6 +80,23 @@ final class ModelIntegrity {
                 () -> checkDatabase(db, model), wallSink));
         model.mappings().filter(fresh).forEach(md -> withElement(md.qualifiedName(),
                 () -> checkMapping(md, model, classifier, functions), wallSink));
+    }
+
+    /** Every FQN registered more than once in {@code model}'s shared element
+     * namespace ({@link ModelBuilder#duplicateElements}) is refused with the
+     * engine's "Duplicated element" (D6b): thrown in a strict build, walled
+     * under the FQN in a tolerant one. Run BEFORE Phase E reads the index
+     * (so a duplicate's refusal is ITS reason, never a downstream confusion
+     * from whichever definition won the slot: a second mapping's include
+     * ordering, a loser's own shape) and again at the gate, where the boot
+     * layer's elements join the index. */
+    static void refuseDuplicates(ModelBuilder model,
+            java.util.@com.legend.base.Nullable Map<String, String> wallSink) {
+        model.duplicateElements().forEach((fqn, msg) ->
+                withElement(fqn, () -> {
+                    throw new com.legend.error.ModelException(
+                            com.legend.error.LegendCompileException.Phase.MODEL, msg);
+                }, wallSink));
     }
 
     /** Attach the element FQN to escaping ModelExceptions (positions wave). */

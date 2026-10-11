@@ -15,6 +15,13 @@ checkout directories (the census's file walk does not follow the execroot's syml
 | 52 | 52 | library functions user code could call: mostly legacy TDS functions the platform's forms handle, or reflection the platform does not run |
 | 26 | 26 | other |
 
+The table above was made by hand on 2026-10-07. `classify.py` (2026-10-11, Phase 6 homework 6-H9) is the committed
+rule that re-measures it from `failures.tsv` (test functions by package or name; machinery by package list; the
+platform's library packages; the rest), its output `classify.txt`: machinery 950 bodies (313 simple names, 931 full
+names), tests 453, library 55, other 11. The hand-made counts differ by its rules, not by the data: the hand table
+put some relational machinery (mutation, MFT, test-data generation) under "other" and counted the machinery's
+distinct functions by simple name across the protocol versions; the next census re-measures with the script.
+
 ## The causes (bodies / distinct functions)
 
 - 409 / 70 unknown function: 391 are `serializerExtension`, a qualified property of `Extension` that shares its name

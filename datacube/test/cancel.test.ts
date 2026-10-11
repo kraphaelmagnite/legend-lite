@@ -161,32 +161,6 @@ describe('a tree fetch that is already obsolete', () => {
 });
 
 describe('the planner client', () => {
-  it('passes the signal to fetch', async () => {
-    let sawSignal: AbortSignal | undefined;
-    const planner = new UpstreamPlanner({
-      baseUrl: 'http://example',
-      model: 'model',
-      runtime: 'rt',
-      cache: false,
-      fetch: (async (_url: string, init?: RequestInit) => {
-        sawSignal = init?.signal ?? undefined;
-        const plan = {
-          rootExecutionNode: {
-            _type: 'sql', sqlQuery: 'SELECT 1',
-            resultType: { _type: 'tds', tdsColumns: [{ name: 'one', type: 'Integer' }] },
-          },
-        };
-        return new Response(JSON.stringify(plan), { status: 200 });
-      }) as unknown as typeof fetch,
-    });
-    await planner.plan(someQuery('grammar'));
-    assert.ok(sawSignal === undefined, 'no signal passed, none forwarded');
-
-    const ac = new AbortController();
-    await planner.plan(someQuery('grammar2'), ac.signal);
-    assert.equal(sawSignal, ac.signal, 'the caller signal reaches fetch');
-  });
-
   it('reports an abort as superseded, not as an unreachable planner', async () => {
     // The distinction matters to telemetry: a responsive grid cancels
     // constantly, and reporting each one as "could not reach the

@@ -22,7 +22,7 @@ import { someQuery } from './fake-planner.ts';
 import { liteParse, litePrint, print, row } from './lite-compiler.ts';
 
 /** A column's lambda as the compiler prints it, or undefined when it has none. */
-const printed = (d: DerivedColumn | undefined): string | undefined => (d?.lambda ? print(d.lambda) : undefined);
+const printed = async (d: DerivedColumn | undefined): Promise<string | undefined> => (d?.lambda ? (await print(d.lambda)) : undefined);
 
 const CUBE: CubeSnapshot = {
   source: { query: element('t') },
@@ -30,7 +30,7 @@ const CUBE: CubeSnapshot = {
     { name: 'region', type: 'String' },
     { name: 'notional', type: 'Float' },
   ],
-  derived: [{ name: 'uplift', lambda: row('$x.notional * 1.1'), kind: 'measure' }],
+  derived: [{ name: 'uplift', lambda: (await row('$x.notional * 1.1')), kind: 'measure' }],
   rows: [],
   pivotOn: [],
   measures: [],
@@ -118,7 +118,7 @@ describe('a new column', () => {
     type('.dc-calc-input-expr', 'x|$x.notional * 2');
     await settle();
     const last = compiled.at(-1);
-    assert.ok(last?.derived.some((d) => printed(d) === 'x|$x.notional * 2'));
+    assert.ok((await Promise.all((last?.derived ?? []).map((d) => printed(d)))).includes('x|$x.notional * 2'));
     assert.match($('.dc-calc-check').textContent ?? '', /Compiles/);
     assert.equal($<HTMLButtonElement>('.dc-calc-ok').disabled, false);
   });
@@ -145,7 +145,7 @@ describe('a new column', () => {
     await settle();
     $<HTMLButtonElement>('.dc-calc-ok').click();
     await settle();
-    assert.equal(printed(applied[0]?.group.at(-1)), 'x|1');
+    assert.equal((await printed(applied[0]?.group.at(-1))), 'x|1');
     assert.equal(applied[0]?.group.at(-1)?.kind, undefined);
     assert.equal(closed, 1, 'OK that the cube took closes the window');
   });
@@ -378,8 +378,8 @@ describe('picking a JSON field', () => {
     assert.equal(formula(),
       "x|$x.customer->get('contact')->get('email')->to(@String)");
     assert.equal(useAs(), 'dimension');
-    assert.ok(compiled.some((c) => c.derived.some((d) =>
-      (printed(d) ?? '').includes("get('email')"))), 'the pick was compiled');
+    assert.ok((await Promise.all(compiled.flatMap((c) => c.derived).map((d) => printed(d))))
+      .some((t) => (t ?? '').includes("get('email')")), 'the pick was compiled');
     $<HTMLButtonElement>('.dc-calc-ok').click();
     await settle();
     assert.equal(applied.at(-1)?.row.at(-1)?.name, 'customer_contact_email');

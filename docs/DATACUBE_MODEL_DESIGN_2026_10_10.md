@@ -365,6 +365,18 @@ The tab's module and Python's native library are adapters: each export a one-lin
   page opens and when its model is edited -- and grows with the classes, 4 s at 200; where its time goes (parse, resolve,
   normalize, element compile) the Compiler Rewrite line measures after its L7.
 
+  **The boot or the page** (2026-10-11, `docs/datacube-model-homework-2026-10-11/boot-split/`): the page. On a warm
+  module an empty model is held in 1 ms, so the boot layer is not in the clock. The same Java through Python's native
+  library (GraalVM) holds the 200-class page in 30 ms, against the module's 3,975 ms. So the 4 s comes from how the
+  module (TeaVM) runs this compile, about 130x, not from the compile's own work (the JVM: about 13 ms, e56d802c4). Four
+  functions take 85% of a profiled hold; naming them needs an unobfuscated build, the owners' step (the Compiler Rewrite
+  and Plan Gen / Exec Split lines). **Named the same day by the Compiler Rewrite line**
+  (docs/build-inventory/program/TEAVM_UNMODIFIABLE_DESIGN_2026_10_11.md, on its branch): TeaVM 0.15.0's unmodifiable set
+  and map scan the whole collection on every lookup, and the compiler's name resolution asks them for every candidate
+  package of every name. With upstream's fix (TeaVM 0.16.0) ported, measured on this harness: the boot 3,618 to 299 ms,
+  a 200-class page 4,239 to 73 ms. Not landed; the user rules between the port and the TeaVM bump. After it lands,
+  `//datacube:model_scale_measure` reruns on the module as the receipt.
+
 ## 12. Withdrawn from revision 2
 
 - **Every source a class, made silently** (revision 2's §3.1, step M1): sources stay relations (§3.1); a class is made on
@@ -515,6 +527,10 @@ another table's rows likewise.
   as model text, which the widget's DataCube plans with. A class made in the widget's DataCube is written into Python's
   page through the page channel, not into the notebook's browser storage.
 - `page.grid(page.cls('Trade'))` reads a class; "create a project" (into an SDLC) is later, with promote (step 6).
+- **Ordered after DataCube headless (the user, 2026-10-11).** These calls come after
+  `docs/DATACUBE_HEADLESS_PYTHON_DESIGN_2026_10_11.md`'s steps 0-2: DataCube's own code runs in Python, so
+  `grid.create_class` makes its class from the grid as DataCube means it (its filters and calculated columns), not only
+  from frames and written relations.
 
 ### 15.6 The route
 

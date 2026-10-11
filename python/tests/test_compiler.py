@@ -11,6 +11,7 @@ from pathlib import Path
 import legend_lite as ll
 from legend_lite import _json
 from legend_lite._library import library
+from legend_lite.compiler import _answer
 
 MODEL = Path(os.environ['LEGEND_LITE_CORPUS_MODEL']).read_text()
 GROUP = "|#>{trades::DB.TRADES}#->groupBy(~[desk], ~[q: x|$x.notional : y|$y->sum()])->sort(~desk->ascending())"
@@ -139,6 +140,33 @@ class Compiling(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'was let go'):
             held.plan(ll.parse(GROUP), 'trades::RT')
         held.close()
+
+    def test_a_held_model_answers_a_datacube_planners_worker_as_the_tab_does(self):
+        # the headless host answers DataCube's `relationType` and `testData` with these, over the same Boundary functions
+        # as the tab's relationTypeHeldOrError and testDataSqlOrError (docs/DATACUBE_HEADLESS_PYTHON_DESIGN_2026_10_11.md §3)
+        lib = library()
+        handle = _answer(lib.call('lite_hold_model', MODEL))
+        try:
+            query = '|#>{trades::DB.TRADES}#->select(~[desk, year])'
+            self.assertEqual(lib.call('lite_relation_type_text_held', handle, query),
+                             lib.call('lite_relation_type_held', handle, _json.dumps(ll.parse(query))),
+                             'typed from the text as from its tree')
+            refused = lib.call('lite_relation_type_text_held', handle, '|#>{trades::DB.NOPE}#')
+            self.assertTrue(refused.startswith('ERR\n'), refused)
+        finally:
+            lib.call('lite_release_model', handle)
+        refused = lib.call('lite_plan_text_held', handle, GROUP, 'trades::RT')
+        self.assertTrue(refused.startswith('ERR\n'), f'a handle let go is refused: {refused[:120]}')
+
+    def test_a_models_test_data_comes_back_as_duckdb_statements_per_table(self):
+        tables = [{'schema': 'default', 'table': 'TRADES', 'csv': 'region,desk,year\nEMEA,Rates,2024\n'}]
+        seeds = json.loads(_answer(library().call('lite_test_data_sql', MODEL, 'trades::DB', json.dumps(tables))))
+        self.assertEqual(len(seeds), 1)
+        self.assertEqual(seeds[0]['table'], 'TRADES')
+        self.assertTrue(any(s.lower().startswith('create table trades') for s in seeds[0]['sql']), seeds[0]['sql'])
+        self.assertIn('region', [c['name'].lower() for c in seeds[0]['columns']])
+        refused = library().call('lite_test_data_sql', MODEL, 'trades::DB', json.dumps([{'schema': 'default', 'table': 'NOPE', 'csv': 'a\n'}]))
+        self.assertTrue(refused.startswith('ERR\n') and 'declares no table' in refused, refused)
 
     def test_a_model_that_does_not_compile_is_refused_when_held(self):
         with self.assertRaises(ll.LegendError):

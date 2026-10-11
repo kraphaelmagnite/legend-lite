@@ -19,7 +19,7 @@ import type { QueryEngine, RawTable } from '../../../engine-client/src/engine.ts
 import type { Plan } from '../../../engine-client/src/relation-type.ts';
 import type { ResultTable } from '../../../engine-client/src/result.ts';
 import type { CubeSnapshot } from '../../src/snapshot.ts';
-import { WasmPlanner } from '../../src/wasm-planner.ts';
+import { LitePlanner } from '../../src/lite-planner.ts';
 import { accessor } from '../../../pure-protocol/src/index.ts';
 import { runfileDirUrl } from '../../../tools/js/runfiles.mts';
 
@@ -64,7 +64,7 @@ const CUBE: CubeSnapshot = {
 };
 
 let conn: ArrowishConnection;
-let planner: WasmPlanner;
+let planner: LitePlanner;
 
 /** The engine, counting the chunks a stream hands over and what is in flight. */
 class Counted implements QueryEngine {
@@ -118,7 +118,7 @@ before(async () => {
     (1, '{"customer":{"tier":"gold","contact":{"email":"a@x"},"addresses":[{"kind":"billing","city":"Paris"},{"kind":"shipping","city":"Tokyo"}]},"items":[{"sku":"A","q":2},{"sku":"B","q":1}]}'),
     (2, '{"customer":{"tier":"silver","contact":{"email":"b@x"},"addresses":[{"kind":"billing","city":"Paris"}]},"items":[{"sku":"C","q":5}]}'),
     (3, '{"customer":{"tier":"gold","contact":{"email":"c@x"},"addresses":[{"kind":"billing","city":"London"}]},"items":[{"sku":"A","q":1}]}')`, 0);
-  planner = new WasmPlanner({ model: MODEL, runtime: 'j::RT', assetBaseUrl: MODULE_DIR, cache: false });
+  planner = new LitePlanner({ model: MODEL, runtime: 'j::RT', assetBaseUrl: MODULE_DIR, cache: false });
 });
 
 /** Wait until `test` holds, or fail after a while. */

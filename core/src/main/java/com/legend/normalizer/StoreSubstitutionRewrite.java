@@ -311,7 +311,10 @@ final class StoreSubstitutionRewrite {
                 }
             }
         }
-        if (out.size() != mappings.size()) {
+        // the graph's nodes are the NAMES (byFqn), never the parsed list: a mapping defined twice is one node
+        // (refused as "Duplicated element" before this phase, Compiler.normalizeLayer); counting the list named
+        // an empty cycle (2026-10-11)
+        if (out.size() != byFqn.size()) {
             List<String> cycle = new java.util.ArrayList<>(byFqn.keySet());
             cycle.removeAll(out.keySet());
             throw new ModelException(LegendCompileException.Phase.NORMALIZE,

@@ -146,6 +146,49 @@ public final class Compiler {
         return answer(a);
     }
 
+    /** Pure TEXT planned over a model held ({@code Boundary.planHeld}): the tab's {@code planHeldOrError}, which a
+     *  DataCube planner asks as its worker's {@code plan} (datacube/src/planner-protocol.ts). */
+    @CEntryPoint(name = "lite_plan_text_held")
+    static CCharPointer planTextHeld(IsolateThread thread, CCharPointer handle, CCharPointer query, CCharPointer runtime) {
+        String a;
+        try {
+            String h = text(handle), q = text(query), r = text(runtime);
+            a = Folded.of(() -> Boundary.planHeld(Integer.parseInt(h), q, r));
+        } catch (Throwable failure) {
+            a = Folded.failure(failure);
+        }
+        return answer(a);
+    }
+
+    /** Pure TEXT typed, compile-only, over a model held ({@code Boundary.relationTypeHeld}): the tab's
+     *  {@code relationTypeHeldOrError}, a DataCube planner's worker's {@code relationType}. */
+    @CEntryPoint(name = "lite_relation_type_text_held")
+    static CCharPointer relationTypeTextHeld(IsolateThread thread, CCharPointer handle, CCharPointer query) {
+        String a;
+        try {
+            String h = text(handle), q = text(query);
+            a = Folded.of(() -> Boundary.relationTypeHeld(Integer.parseInt(h), q));
+        } catch (Throwable failure) {
+            a = Folded.failure(failure);
+        }
+        return answer(a);
+    }
+
+    /** A model's test data as DuckDB statements, per table ({@code Boundary.testDataSql}): the tab's
+     *  {@code testDataSqlOrError}, a DataCube planner's worker's {@code testData}. */
+    @CEntryPoint(name = "lite_test_data_sql")
+    static CCharPointer testDataSql(IsolateThread thread, CCharPointer model, CCharPointer database,
+            CCharPointer tablesJson) {
+        String a;
+        try {
+            String m = text(model), d = text(database), t = text(tablesJson);
+            a = Folded.of(() -> Boundary.testDataSql(m, d, t));
+        } catch (Throwable failure) {
+            a = Folded.failure(failure);
+        }
+        return answer(a);
+    }
+
     /** A Pure Database (model text) written from a table's catalog rows, as DataCube writes one for a file. */
     @CEntryPoint(name = "lite_database_from_catalog")
     static CCharPointer databaseFromCatalog(IsolateThread thread, CCharPointer catalogJson) {

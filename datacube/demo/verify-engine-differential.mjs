@@ -49,7 +49,7 @@ import { DuckDbEngine } from '../../engine-client/src/duckdb.ts';
 import { LegendEngineExecutor } from '../../engine-client/src/engine-remote.ts';
 import { levelWithValues } from '../src/plan.ts';
 import { accessor } from '../../pure-protocol/src/index.ts';
-import { WasmPlanner } from '../src/wasm-planner.ts';
+import { LitePlanner } from '../src/lite-planner.ts';
 import { TRADES_KINDS, casesFor, typeDifference } from './engine-cases.mjs';
 import { sourceColumns } from '../src/source-columns.ts';
 import { isFractional, isNumeric, plainType } from '../../engine-client/src/types.ts';
@@ -124,7 +124,7 @@ async function localPlane(rows) {
     rows.map((r) => `(${r.join(', ')})`).join(', ')}`, 0);
 
   const model = await readFile(new URL('./trades.pure', HERE), 'utf8');
-  const planner = new WasmPlanner({
+  const planner = new LitePlanner({
     model,
     runtime: 'trades::RT',
     assetBaseUrl: new URL('./vendor/', HERE).href,

@@ -44,7 +44,7 @@ describe('a string value through the compiler\'s print and parse', () => {
   for (const [label, value] of HOSTILE) {
     it(`comes back the same value when it is ${label}`, async () => {
       const query = lambda([], lit.string(value));
-      assert.equal(toJson(await liteParse(print(query))), toJson(query), print(query));
+      assert.equal(toJson(await liteParse((await print(query)))), toJson(query), (await print(query)));
     });
   }
 });
@@ -53,7 +53,7 @@ describe('an odd column name through the compiler\'s print and parse', () => {
   for (const [label, value] of HOSTILE) {
     it(`comes back the same name when it is ${label}`, async () => {
       const query = lambda(['x'], col('x', value));
-      assert.equal(toJson(await liteParse(print(query))), toJson(query), print(query));
+      assert.equal(toJson(await liteParse((await print(query)))), toJson(query), (await print(query)));
     });
   }
 });
@@ -105,12 +105,12 @@ describe('the injection attempt in a whole query', () => {
     epoch: 1,
   };
 
-  it('cannot close the literal and append its own pipeline', () => {
+  it('cannot close the literal and append its own pipeline', async () => {
     const evil = "x')->select(~[region])->limit(1)->filter(y|'";
-    const pure = printLevel(
+    const pure = (await printLevel(
       { ...snap, filter: { kind: 'condition', column: 'region', operator: 'equal', value: evil } },
       { level: 1, parent: [], limit: 10 },
-    );
+    ));
     // The payload's pipeline must appear only INSIDE the quotes, never
     // as a stage of the query. With the literals removed, the query
     // must have exactly the stages a clean cube of this shape emits.
@@ -120,12 +120,12 @@ describe('the injection attempt in a whole query', () => {
     assert.equal((bare.match(/->filter\(/g) ?? []).length, 1, bare);
   });
 
-  it('cannot break out through a column name either', () => {
+  it('cannot break out through a column name either', async () => {
     const evil = "region')->select(~[";
-    const pure = printLevel(
+    const pure = (await printLevel(
       { ...snap, rows: [evil], columns: [...snap.columns, { name: evil, type: 'String' }] },
       { level: 1, parent: [], limit: 10 },
-    );
+    ));
     const bare = stripLiterals(pure);
     assert.equal((bare.match(/->select\(/g) ?? []).length, 1, bare);
     assert.equal((bare.match(/->groupBy\(/g) ?? []).length, 1, bare);

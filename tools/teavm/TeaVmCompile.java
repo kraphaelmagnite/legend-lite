@@ -33,7 +33,7 @@ import java.util.List;
  * optimization, minified, no debug information, no incremental cache — an action
  * starts clean, and its output is a function of its inputs alone. The runtime is
  * the MODULAR, unminified {@code wasm-gc-module-runtime.js}, the one DataCube's
- * {@code WasmPlanner} and the differentials import.
+ * {@code LitePlanner} and the differentials import.
  */
 public final class TeaVmCompile {
 

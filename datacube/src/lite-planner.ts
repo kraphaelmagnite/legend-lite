@@ -32,6 +32,7 @@ import { modelRequestBody, type AssociationAction, type ClassAction, type DataSp
 import type { PrintStyle } from '../../engine-client/src/pure-v1.ts';
 import { relationColumns, type Plan, type PlanColumn } from '../../engine-client/src/relation-type.ts';
 import type { SeedTable, TableSeed } from '../../engine-client/src/model-data.ts';
+import type { PlannerWorker, RequestBody, Response } from './planner-protocol.ts';
 
 /** The subset of TeaVM's module surface this file uses. */
 interface TeavmModule {
@@ -60,7 +61,7 @@ interface TeavmRuntime {
   ): Promise<TeavmModule>;
 }
 
-export interface WasmPlannerOptions {
+export interface LitePlannerOptions {
   /** Pure model source: database, connection, runtime. */
   readonly model: string;
   /** Runtime to plan against, e.g. 'trades::RT'. */
@@ -96,6 +97,12 @@ export interface WasmPlannerOptions {
    * differential harnesses run the module in-thread.
    */
   readonly workerUrl?: string;
+  /**
+   * Run the module on a worker the HOST makes: one that answers planner-protocol.ts's messages, as planner-worker.ts
+   * does in a tab -- Python's headless host answers each with the native library's function of the same name
+   * (docs/DATACUBE_HEADLESS_PYTHON_DESIGN_2026_10_11.md §3). Given, it is used instead of a `Worker` from `workerUrl`.
+   */
+  readonly worker?: () => PlannerWorker;
 }
 
 /**
@@ -118,7 +125,7 @@ export class PlannerUnavailableError extends Error {
 /** What a planner and the planners `withModel` made from it share. */
 interface Transport {
   module: Promise<TeavmModule> | undefined;
-  worker: Worker | undefined;
+  worker: PlannerWorker | undefined;
   readonly pending: Map<number, { resolve(answer: string): void; reject(e: unknown): void }>;
   nextId: number;
   /** Which module holds the models held: one more each time a module, or a worker with its own, starts (a handle
@@ -126,8 +133,12 @@ interface Transport {
   generation: number;
 }
 
-export class WasmPlanner implements Planner, TableModels, ModelWriter {
-  #options: WasmPlannerOptions;
+/**
+ * legend-lite's own planner, in-process: named for what it is, not for how a tab delivers its module (WebAssembly). Its
+ * module answers on a worker, or in-thread (docs/DATACUBE_HEADLESS_PYTHON_DESIGN_2026_10_11.md §3).
+ */
+export class LitePlanner implements Planner, TableModels, ModelWriter {
+  #options: LitePlannerOptions;
   readonly #cache = new Map<string, Plan>();
   readonly #types = new Map<string, PlanColumn[]>();
   /**
@@ -140,7 +151,7 @@ export class WasmPlanner implements Planner, TableModels, ModelWriter {
   /** This planner's model, held by the module (compiled once, every plan against it), and under which module. */
   #held: { readonly handle: Promise<number>; readonly generation: number } | undefined;
 
-  constructor(options: WasmPlannerOptions) {
+  constructor(options: LitePlannerOptions) {
     this.#options = options;
   }
 
@@ -148,8 +159,8 @@ export class WasmPlanner implements Planner, TableModels, ModelWriter {
    * A planner over ANOTHER model -- another source on the page (page/cube-page.ts) -- on the
    * same module and worker as this one, with caches of its own. Nothing is loaded twice.
    */
-  withModel(model: string, runtime: string, how: ModelOptions = {}): WasmPlanner {
-    const other = new WasmPlanner({ ...readsOf(this.#options), model, runtime, ...readsHow(how) });
+  withModel(model: string, runtime: string, how: ModelOptions = {}): LitePlanner {
+    const other = new LitePlanner({ ...readsOf(this.#options), model, runtime, ...readsHow(how) });
     other.#t = this.#t;
     other.#borrowed = true;
     return other;
@@ -157,28 +168,27 @@ export class WasmPlanner implements Planner, TableModels, ModelWriter {
 
   /** True when the module should run off the main thread. */
   #useWorker(): boolean {
-    return this.#options.workerUrl !== undefined
-      && typeof Worker !== 'undefined';
+    return this.#options.worker !== undefined
+      || (this.#options.workerUrl !== undefined && typeof Worker !== 'undefined');
   }
 
-  #ensureWorker(): Worker {
+  #ensureWorker(): PlannerWorker {
     if (this.#t.worker) return this.#t.worker;
-    const w = new Worker(this.#options.workerUrl!, { type: 'module' });
+    const w = this.#options.worker?.()
+      ?? (new Worker(this.#options.workerUrl!, { type: 'module' }) as unknown as PlannerWorker);
     // its module is its own: none of the models held before are held by it
     this.#t.generation += 1;
-    w.onmessage = (e: MessageEvent<{
-      id: number; ok: boolean; answer?: string; error?: string;
-    }>) => {
+    w.onmessage = (e: { readonly data: Response }) => {
       const waiting = this.#t.pending.get(e.data.id);
       if (!waiting) return;
       this.#t.pending.delete(e.data.id);
-      if (e.data.ok) waiting.resolve(e.data.answer ?? '');
+      if (e.data.ok) waiting.resolve(e.data.answer);
       else {
         waiting.reject(new PlannerUnavailableError(
           `the planner worker failed: ${e.data.error}`));
       }
     };
-    w.onerror = (e: ErrorEvent) => {
+    w.onerror = (e: { readonly message: string }) => {
       // A worker that dies takes every in-flight request with it, and
       // leaving them pending would hang the grid rather than fail it.
       const dead = new PlannerUnavailableError(
@@ -193,7 +203,7 @@ export class WasmPlanner implements Planner, TableModels, ModelWriter {
     return w;
   }
 
-  #ask(request: Record<string, unknown>): Promise<string> {
+  #ask(request: RequestBody): Promise<string> {
     const w = this.#ensureWorker();
     const id = this.#t.nextId++;
     return new Promise<string>((resolve, reject) => {
@@ -641,7 +651,7 @@ export class WasmPlanner implements Planner, TableModels, ModelWriter {
  * opened there is `C:\C:\x\y` (CI, 2026-09-23 — every case of the
  * WASM differential refused with that ENOENT). Pinned against
  * `fileURLToPath(url, { windows })` in both modes by
- * test/wasm-planner.test.ts, on every platform.
+ * test/lite-planner.test.ts, on every platform.
  */
 export function fileUrlToPath(url: string, windows: boolean): string {
   const u = new URL(url);
@@ -663,7 +673,7 @@ export function fileUrlToPath(url: string, windows: boolean): string {
  * the same reason `fileUrlToPath` exists: this file cannot import
  * `node:url`. A trailing separator is kept, so a directory stays a
  * directory to resolve against. Pinned against Node's own in both
- * platform modes by test/wasm-planner.test.ts.
+ * platform modes by test/lite-planner.test.ts.
  */
 export function pathToFileUrl(path: string, windows: boolean): string {
   // Node's own steps: escape what `pathname` would not, then let URL
@@ -702,13 +712,13 @@ function onWindows(): boolean {
  * HTTP planner surfaces, so the two transports are indistinguishable.
  */
 /** A planner's options without what its model said: another model brings its own. */
-function readsOf(o: WasmPlannerOptions): WasmPlannerOptions {
+function readsOf(o: LitePlannerOptions): LitePlannerOptions {
   const { mapping: _mapping, enumerations: _enumerations, ...rest } = o;
   return rest;
 }
 
 /** What a model says beside its text, as options (legend-lite types BIT Boolean itself: no bitColumns, S23). */
-function readsHow(how: ModelOptions): Partial<WasmPlannerOptions> {
+function readsHow(how: ModelOptions): Partial<LitePlannerOptions> {
   return {
     ...(how.mapping === undefined ? {} : { mapping: how.mapping }),
     ...(how.enumerations === undefined ? {} : { enumerations: how.enumerations }),

@@ -30,8 +30,8 @@ const CUBE: CubeSnapshot = {
 };
 
 describe('the child-group query', () => {
-  it('groups one level deeper, then aggregates per group', () => {
-    const q = printChildren(CUBE, { level: 1, parent: [] });
+  it('groups one level deeper, then aggregates per group', async () => {
+    const q = (await printChildren(CUBE, { level: 1, parent: [] }));
     assert.equal(q?.pure,
       "|t->select(~[region, desk, notional])->groupBy(~[region, desk], ~[notional:x|$x.notional:y|$y->sum()])"
       + '->sort([~region->ascending(), ~desk->ascending()])'
@@ -39,24 +39,24 @@ describe('the child-group query', () => {
     assert.deepEqual(q?.columns, ['weakest']);
   });
 
-  it('the grand total groups by its root; the deepest level reads the source rows', () => {
-    assert.match(printChildren(CUBE, { level: 0, parent: [] })?.pure ?? '',
+  it('the grand total groups by its root; the deepest level reads the source rows', async () => {
+    assert.match((await printChildren(CUBE, { level: 0, parent: [] }))?.pure ?? '',
       /groupBy\(~\[region\], .*\)->sort\(\[~region->ascending\(\)\]\)->extend\(~\[__root__:x\|'\[ROOT\]'\]\)->groupBy\(~\[__root__\], ~\[weakest:x\|\$x\.notional:y\|\$y->min\(\)\]\)/);
-    const deepest = printChildren(CUBE, { level: 2, parent: ['EMEA'] })?.pure ?? '';
+    const deepest = (await printChildren(CUBE, { level: 2, parent: ['EMEA'] }))?.pure ?? '';
     assert.match(deepest, /extend\(~\[__child_weakest:x\|\$x\.notional\]\)/);
     assert.match(deepest, /groupBy\(~\[region, desk\], ~\[notional:.*weakest:x\|\$x\.__child_weakest:y\|\$y->min\(\)\]\)/);
     assert.match(deepest, /filter\(x\|\$x\.region == 'EMEA'\)/);
   });
 
-  it('none on a flat or pivoted cube, or without such a column', () => {
-    assert.equal(printChildren({ ...CUBE, rows: [] }, { level: 0, parent: [] }), null);
-    assert.equal(printChildren({ ...CUBE, pivotOn: ['desk'] }, { level: 1, parent: [] }), null);
-    assert.equal(printChildren({ ...CUBE, groupDerived: [] }, { level: 1, parent: [] }), null);
+  it('none on a flat or pivoted cube, or without such a column', async () => {
+    assert.equal((await printChildren({ ...CUBE, rows: [] }, { level: 0, parent: [] })), null);
+    assert.equal((await printChildren({ ...CUBE, pivotOn: ['desk'] }, { level: 1, parent: [] })), null);
+    assert.equal((await printChildren({ ...CUBE, groupDerived: [] }, { level: 1, parent: [] })), null);
   });
 
-  it('the level\'s own query neither computes it nor sorts by it', () => {
+  it('the level\'s own query neither computes it nor sorts by it', async () => {
     const sorted = { ...CUBE, sorts: [{ column: 'weakest', direction: 'desc' as const }] };
-    assert.doesNotMatch(printLevel(sorted, { level: 1, parent: [] }), /weakest/);
+    assert.doesNotMatch((await printLevel(sorted, { level: 1, parent: [] })), /weakest/);
     assert.deepEqual(totalOrderSorts(sorted, ['region']).map((x) => x.column), ['region']);
   });
 

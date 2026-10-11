@@ -33,7 +33,7 @@ import { writeCube, type FrameSource } from '../../src/cube-document.ts';
 import { pageToJson, readPage, writePageOf } from '../../src/page-document.ts';
 import { sourceColumns } from '../../src/source-columns.ts';
 import { TreeState } from '../../src/tree.ts';
-import { WasmPlanner } from '../../src/wasm-planner.ts';
+import { LitePlanner } from '../../src/lite-planner.ts';
 import { CASES, queries } from '../wasm-differential/cases.ts';
 
 /** What the harness hands the page: the engine, and the frame it serves. */
@@ -161,7 +161,7 @@ async function run(): Promise<void> {
   await local.run(`CREATE TABLE trades (region VARCHAR, desk VARCHAR, book VARCHAR, year INTEGER, qtr VARCHAR,
     notional DOUBLE, pnl DOUBLE, qty INTEGER)`, 0);
   await local.run(`INSERT INTO trades VALUES ${served.rows.map((r) => `(${r.map(sqlValue).join(', ')})`).join(', ')}`, 0);
-  const planner = new WasmPlanner({ ...engine, workerUrl: new URL('planner-worker.js', location.href).href });
+  const planner = new LitePlanner({ ...engine, workerUrl: new URL('planner-worker.js', location.href).href });
   const tab = new PlanThenRun(planner, local);
 
   await check('every cube case answers the same on Python\'s engine and in the tab', async () => {

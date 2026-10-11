@@ -934,6 +934,17 @@ matplotlib-inline==0.2.2 \
     # via
     #   ipykernel
     #   ipython
+mini-racer==0.14.1 \
+    --hash=sha256:0df25889b7c4e753520324a1687d85e41f9f64984efa81963339ed400f004d49 \
+    --hash=sha256:440bef1269655b1da94b550612b50669de9881c3d88b805c139f7f1b5ec8ae7b \
+    --hash=sha256:4abd58c62c9955988dbc0cbf5a798914334fe570d2b192f8890bec20135ab6d1 \
+    --hash=sha256:56cc6965a1665a50d8d613bc43aa83b4cec6b1f09acc69dc4c2845dacb201463 \
+    --hash=sha256:6788f31608c6c5d0faac4e6b4f36fc5498885f951e510717e8825eaebae6a4c5 \
+    --hash=sha256:7f93d91973ddb2da4e899e06ecb426bfe7ea103cd1c92687ec9c38f206f375eb \
+    --hash=sha256:a401ecdf5f73d4714b76dc3a4c9b5780059cf4c59a5b64cff7497dc6c219d5a0 \
+    --hash=sha256:ad4b5c15993caab571fac3d67e0d55157b358bd439e629e0fef26c45a12c8bab \
+    --hash=sha256:cdf3a088e1363f16a695288f882abf76b3705b8e1df21418208b87ed010037a4
+    # via -r tools/python/requirements.in
 mistune==3.3.4 \
     --hash=sha256:58b5c96d6fcb61190dfe5fae498d2b2065f99cf61e9649418fd54cf1ada86dfe \
     --hash=sha256:ee015381e955e370962968befe1d729ab60fafb6a715ac6751763fbce38c8d4a

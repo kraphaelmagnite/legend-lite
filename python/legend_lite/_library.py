@@ -18,8 +18,17 @@ import os
 import sys
 import threading
 from pathlib import Path
+from typing import Any
 
 _NAMES = {'darwin': 'libcompiler.dylib', 'linux': 'libcompiler.so', 'win32': 'libcompiler.dll'}
+
+# each entry point and how many C strings it takes after its isolate thread
+_ARITY = {
+    'lite_plan_json': 3, 'lite_plan_text': 3, 'lite_hold_model': 1, 'lite_release_model': 1, 'lite_plan_json_held': 3,
+    'lite_relation_type_held': 2, 'lite_plan_text_held': 3, 'lite_relation_type_text_held': 2, 'lite_test_data_sql': 3,
+    'lite_database_from_catalog': 1, 'lite_table_model': 1, 'lite_catalog_columns_sql': 2, 'lite_session_setup': 1,
+    'lite_pure_v1': 3, 'lite_execute_plan': 2, 'lite_pure_v1_refusal': 1,
+}
 
 
 def _find() -> Path:
@@ -50,15 +59,9 @@ class Library:
         lib.lite_free.restype = None
         lib.lite_unfreed.argtypes = [ctypes.c_void_p]
         lib.lite_unfreed.restype = ctypes.c_int64
-        for name, arity in (('lite_plan_json', 3), ('lite_plan_text', 3),
-                            ('lite_hold_model', 1), ('lite_release_model', 1), ('lite_plan_json_held', 3),
-                            ('lite_relation_type_held', 2),
-                            ('lite_database_from_catalog', 1), ('lite_table_model', 1),
-                            ('lite_catalog_columns_sql', 2), ('lite_session_setup', 1), ('lite_pure_v1', 3),
-                            ('lite_execute_plan', 2), ('lite_pure_v1_refusal', 1)):
-            f = getattr(lib, name)
-            f.argtypes = [ctypes.c_void_p] + [ctypes.c_char_p] * arity
-            f.restype = ctypes.c_void_p
+        # each entry point made ready on its first call: a library without one fails that call (and DataCube's
+        # start-up check names it), not everything else
+        self._ready: dict[str, Any] = {}
         first = ctypes.c_void_p()
         if lib.graal_create_isolate(None, ctypes.byref(self._isolate), ctypes.byref(first)) != 0:
             raise OSError(f'could not start the compiler from {path}')
@@ -80,13 +83,33 @@ class Library:
                 # a C string ends at its first NUL: the compiler would silently read less than was given
                 raise ValueError(f'{name}: an argument contains a NUL character')
         t = self._thread()
-        p = getattr(self._lib, name)(t, *[a.encode('utf-8') for a in args])
+        p = self._function(name)(t, *[a.encode('utf-8') for a in args])
         if not p:
             raise OSError(f'{name} returned no answer (the library could not allocate one)')
         try:
             return ctypes.string_at(p).decode('utf-8')
         finally:
             self._lib.lite_free(t, p)
+
+    def _function(self, name: str) -> Any:
+        f = self._ready.get(name)
+        if f is None:
+            arity = _ARITY.get(name)
+            if arity is None:
+                raise ValueError(f'{name} is not one of the native library\'s entry points')
+            f = getattr(self._lib, name)
+            f.argtypes = [ctypes.c_void_p] + [ctypes.c_char_p] * arity
+            f.restype = ctypes.c_void_p
+            self._ready[name] = f
+        return f
+
+    def exports(self, name: str) -> bool:
+        """Whether the library exports a function of that name: its own symbol table asked, so no list is kept by hand."""
+        try:
+            getattr(self._lib, name)
+        except AttributeError:
+            return False
+        return True
 
     def unfreed(self) -> int:
         """The answers the library has returned that were not yet freed (its own count): 0 between calls."""

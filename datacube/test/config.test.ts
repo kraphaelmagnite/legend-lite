@@ -307,27 +307,27 @@ describe('Column Properties > Aggregation reaches the query', () => {
     ...(weight ? { aggregationParameters: [weight] } : {}),
   });
 
-  it('in a grouped cube', () => {
-    const q = printLevel(applyToSnapshot(FLAT, withAgg('notional', 'max')));
+  it('in a grouped cube', async () => {
+    const q = (await printLevel(applyToSnapshot(FLAT, withAgg('notional', 'max'))));
     assert.match(q, /notional:x\|\$x\.notional:y\|\$y->max\(\)/);
   });
 
-  it('in a column pivot', () => {
-    const q = printLevel(applyToSnapshot({ ...FLAT, rows: [], pivotOn: ['year'] },
-      withAgg('notional', 'max')), undefined, { tuples: [['2023']] });
+  it('in a column pivot', async () => {
+    const q = (await printLevel(applyToSnapshot({ ...FLAT, rows: [], pivotOn: ['year'] },
+      withAgg('notional', 'max')), undefined, { tuples: [['2023']] }));
     assert.match(q, /'2023__\|__notional':x\|if\(\$x\.year == 2023, \|\$x\.notional, \|\[\]\):y\|\$y->max\(\)/);
   });
 
-  it('a weighted average carries its weight column', () => {
-    const q = printLevel(applyToSnapshot(FLAT, withAgg('notional', 'wavg', 'qty')));
+  it('a weighted average carries its weight column', async () => {
+    const q = (await printLevel(applyToSnapshot(FLAT, withAgg('notional', 'wavg', 'qty'))));
     assert.match(q, /notional:x\|\$x\.notional->wavgRowMapper\(\$x\.qty\):y\|\$y->wavg\(\)/);
   });
 
-  it('on a calculated column too', () => {
-    const q = printLevel(applyToSnapshot({
+  it('on a calculated column too', async () => {
+    const q = (await printLevel(applyToSnapshot({
       ...FLAT,
-      derived: [{ name: 'uplift', lambda: row('$x.notional * 1.1'), kind: 'measure' }],
-    }, withAgg('uplift', 'max')));
+      derived: [{ name: 'uplift', lambda: (await row('$x.notional * 1.1')), kind: 'measure' }],
+    }, withAgg('uplift', 'max'))));
     assert.match(q, /uplift:x\|\$x\.uplift:y\|\$y->max\(\)/);
   });
 
@@ -352,14 +352,14 @@ describe('Column Properties > Display as link reaches the grid', () => {
   });
 });
 
-describe('renaming a calculated column that is in use', () => {
+describe('renaming a calculated column that is in use', async () => {
   // Renaming one the cube was grouped, pivoted, sorted or filtered by
   // left those naming a column that no longer existed, and the planner
   // refused the rename.
   const USING: CubeSnapshot = {
     source: { query: element('t') },
     columns: [{ name: 'region', type: 'String' }, { name: 'qty', type: 'Integer' }],
-    derived: [{ name: 'big', lambda: row('$x.qty > 10'), kind: 'dimension' }],
+    derived: [{ name: 'big', lambda: (await row('$x.qty > 10')), kind: 'dimension' }],
     rows: ['big'],
     pivotOn: ['big'],
     measures: [{ name: 'n', column: 'big', fn: 'count' }],

@@ -5,9 +5,8 @@
 // pivot-generated column names -- only appear against the real engine.
 
 import assert from 'node:assert/strict';
-import { engineClientRequire } from '../../engine-client/src/node-require.ts';
-import path from 'node:path';
 import { after, before, describe, it } from 'node:test';
+import { openDatabase, type TestDatabase } from '#test-host';
 
 import {
   DuckDbEngine,
@@ -21,27 +20,11 @@ import { columnIndex } from '../../engine-client/src/result.ts';
 
 let engine: DuckDbEngine;
 let conn: ArrowishConnection;
-let db: { connect(): unknown; instantiate(): Promise<unknown> };
+let db: TestDatabase;
 
 before(async () => {
-  const duckdb = engineClientRequire('@duckdb/duckdb-wasm/blocking');
-  const dist = path.dirname(engineClientRequire.resolve('@duckdb/duckdb-wasm/blocking'));
-  db = await duckdb.createDuckDB(
-    {
-      mvp: {
-        mainModule: path.join(dist, 'duckdb-mvp.wasm'),
-        mainWorker: path.join(dist, 'duckdb-node-mvp.worker.cjs'),
-      },
-      eh: {
-        mainModule: path.join(dist, 'duckdb-eh.wasm'),
-        mainWorker: path.join(dist, 'duckdb-node-eh.worker.cjs'),
-      },
-    },
-    new duckdb.VoidLogger(),
-    duckdb.NODE_RUNTIME,
-  );
-  await db.instantiate();
-  conn = db.connect() as ArrowishConnection;
+  db = await openDatabase();
+  conn = db.connection;
   engine = new DuckDbEngine(conn);
 
   await engine.run(

@@ -212,12 +212,12 @@ describe('there is exactly one planner, and no way to fall back to another', () 
   // and will therefore eventually disagree. It does not ban a second
   // TRANSPORT to the same implementation. `UpstreamPlanner` POSTs
   // to legend-lite's pure/v1 generatePlan, whose handler calls Compiler.plan;
-  // `WasmPlanner` calls that same Compiler.plan compiled to
+  // `LitePlanner` calls that same Compiler.plan compiled to
   // WebAssembly. There is one planner and two ways to reach it.
   //
   // That argument is only worth anything if something checks it, so
   // the next test requires the differentials that do.
-  const PLANNERS = ['src/planner.ts', 'src/wasm-planner.ts'];
+  const PLANNERS = ['src/planner.ts', 'src/lite-planner.ts'];
 
   it('implements Planner in exactly the two blessed shipped files', () => {
     const impls = shipped.filter((f) =>
@@ -243,7 +243,7 @@ describe('there is exactly one planner, and no way to fall back to another', () 
     for (const f of ['test/wasm-differential/compare.ts',
       '../wasm/differential.mjs']) {
       assert.ok(SOURCES.has(f), `the wasm planner's differential is gone (${f})`
-        + ' — either restore it or drop src/wasm-planner.ts');
+        + ' — either restore it or drop src/lite-planner.ts');
     }
   });
 
@@ -387,7 +387,7 @@ describe('there is exactly one planner, and no way to fall back to another', () 
     const demo = SOURCES.read('demo/planners.ts');
     assert.ok(
       /workerUrl\s*:/.test(demo),
-      'demo/planners.ts must give WasmPlanner a workerUrl — without it the'
+      'demo/planners.ts must give LitePlanner a workerUrl — without it the'
         + ' boot layer blocks the main thread and startup gets slower,'
         + ' not faster',
     );

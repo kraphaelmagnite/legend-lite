@@ -10,7 +10,7 @@ import {
   lambda, lit, minus, ne, not, or, over, parameter, plus, relationType, times, to, toMany, type, variable,
   ExactNumber, ONE, MANY, ProtocolError, readLambda, toJson, type Lambda,
 } from '../src/index.ts';
-import { compose, parse, ready } from './lite.ts';
+import { compose, parse } from './lite.ts';
 
 const T = accessor('a::DB', 's', 'T');
 const x = (c: string) => col('x', c);
@@ -136,23 +136,21 @@ describe('numbers are spelled as the wire spells them: byte for byte with lite\'
    * byte for byte.
    */
   it(`${floats.length} floats`, async () => {
-    const lite = await ready();
     const differ: string[] = [];
     for (const v of floats) {
       if (!Number.isFinite(v) || v <= 0) continue;
       const ours = toJson(lambda([], lit.float(v)));
-      const theirs = lite.parse(`|${v.toExponential()}`.replace('e+', 'e'));
+      const theirs = await parse(`|${v.toExponential()}`.replace('e+', 'e'));
       if (ours !== theirs) differ.push(`${v}: ours ${ours} lite ${theirs}`);
     }
     assert.deepEqual(differ.slice(0, 20), [], `${differ.length} of ${floats.length} differ:\n${differ.slice(0, 20).join("\n")}`);
   });
 
   it(`${decimals.length} decimals`, async () => {
-    const lite = await ready();
     const differ: string[] = [];
     for (const d of decimals) {
       const ours = toJson(lambda([], lit.decimal(d)));
-      const theirs = lite.parse(`|${d}D`);
+      const theirs = await parse(`|${d}D`);
       if (ours !== theirs) differ.push(`${d}: ours ${ours} lite ${theirs}`);
     }
     assert.deepEqual(differ.slice(0, 20), [], `${differ.length} of ${decimals.length} differ`);

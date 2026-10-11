@@ -267,6 +267,9 @@ public final class Compiler {
             java.util.@com.legend.base.Nullable Map<String, String> walls) {
         ParsedModel adopted = KnowledgeLayer.adoptAssociationQualifiedProperties(resolved, walls);
         ModelBuilder index = ModelBuilder.from(adopted);
+        // a name defined twice is refused before Phase E reads the index (the
+        // engine's order; D6b's "element-identity first", 2026-10-11)
+        PureModelContext.refuseDuplicates(index, walls);
         return new Layer(ModelNormalizer.normalize(adopted, index, walls), index);
     }
 

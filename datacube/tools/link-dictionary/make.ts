@@ -8,7 +8,7 @@
 // calculated-column and window functions, the chart marks) through the product's own writers (the
 // cube's, the page's, the protocol's) -- never typed by hand. And made ONCE per version: a link names
 // the dictionary it was made with (`p1.`), so a version's dictionary never changes after it ships
-// (src/share/link-p1.ts, pinned by its hash in test/share-link.test.ts). A new vocabulary is `p2`:
+// (src/share/link-p1.ts, pinned by its hash in test/share-link-node.test.ts). A new vocabulary is `p2`:
 // `bazel run //datacube:cut_link_dictionary` writes it (datacube/BUILD.bazel names the next version).
 
 import { col, fn, lambda, lit, toJson } from '../../../pure-protocol/src/index.ts';
@@ -118,7 +118,7 @@ if (process.argv[1]?.endsWith('make.ts')) {
   const version = process.argv[2] ?? 'p1';
   const text = makeDictionary();
   process.stdout.write(`// THE SHARE LINK'S DICTIONARY, version ${version} -- FROZEN: links made with it must open forever, so
-// these bytes never change (pinned by their hash in test/share-link.test.ts). Made once by
+// these bytes never change (pinned by their hash in test/share-link-node.test.ts). Made once by
 // datacube/tools/link-dictionary/make.ts from the product's own vocabulary; a new vocabulary is a
 // new version, never an edit here. No column name, value or title is in it.
 

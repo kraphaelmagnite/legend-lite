@@ -1,0 +1,150 @@
+"""The headless lane (//datacube:headless_test; docs/DATACUBE_HEADLESS_PYTHON_DESIGN_2026_10_11.md §6): DataCube's own
+non-screen tests run in V8 inside Python -- each test file's bundle in a Headless of its own, its planner answered by
+legend-lite's native library and its database Python's DuckDB, no WebAssembly -- and the host itself, over the
+product's bundle: its start-up check, and what it refuses.
+
+The bundles are //datacube:headless_test_bundles (the test files, bundled with the `headless` condition and the
+node:test and node:assert stand-ins); the product's is //datacube:headless_bundle.
+"""
+
+import json
+import os
+import sys
+import time
+import unittest
+from pathlib import Path
+
+from python.runfiles import runfiles
+
+# every file a runfiles path, resolved by the runfiles library before legend_lite reads one (python/tests/main.py's
+# rule): never the working directory, which this lane moves into each test's own folder
+RUNFILES = runfiles.Create()
+
+
+def located(name: str) -> Path:
+    path = RUNFILES.Rlocation(os.environ[name])
+    if not path or not Path(path).exists():
+        sys.exit(f'{name}: {os.environ[name]} is not in the runfiles')
+    return Path(path)
+
+
+os.environ['LEGEND_LITE_LIBRARY'] = str(located('LEGEND_LITE_LIBRARY'))
+BUNDLES = located('HEADLESS_TEST_BUNDLES')
+PRODUCT = located('HEADLESS_BUNDLE').read_text(encoding='utf-8')
+TMP = Path(os.environ['TEST_TMPDIR'])
+
+from legend_lite._headless import KINDS, Headless, InterfaceMismatch, check_interface  # noqa: E402 -- after the library's path
+from legend_lite._library import library  # noqa: E402
+
+
+class Host(unittest.TestCase):
+    """The host over the product's bundle."""
+
+    def test_the_bundle_and_the_library_agree_on_every_request_kind(self):
+        with Headless(PRODUCT, folder=TMP) as h:
+            kinds = h.evaluate('legendLiteHeadless.REQUEST_KINDS')
+        self.assertEqual(sorted(kinds), sorted(KINDS), "the bundle's kinds are the host's table's")
+        for kind, (function, _args) in KINDS.items():
+            self.assertTrue(library().exports(function), f'{kind}: the library exports {function}')
+
+    def test_a_kind_the_host_does_not_answer_fails_at_start_naming_both_sides(self):
+        with self.assertRaisesRegex(InterfaceMismatch, r"the bundle sends \[.*'novel'.*\]; this host answers"):
+            check_interface([*KINDS, 'novel'], library())
+
+    def test_there_is_no_webassembly_and_the_web_layer_is_there(self):
+        with Headless(PRODUCT, folder=TMP) as h:
+            self.assertEqual(h.evaluate('typeof WebAssembly'), 'undefined')
+            self.assertEqual(h.evaluate("[typeof TextEncoder, typeof URL, typeof AbortController, typeof crypto.subtle.digest]"),
+                             ['function'] * 4)
+
+    def test_a_plan_through_the_worker_runs_on_the_database(self):
+        model = ('###Relational\nDatabase a::DB ( Table t ( x INTEGER, s VARCHAR(8) ) )\n###Connection\n'
+                 'RelationalDatabaseConnection a::C { store: a::DB; type: DuckDB; specification: DuckDB { }; auth: Test; }\n'
+                 '###Runtime\nRuntime a::RT { mappings: []; connections: [ a::DB: [ c: a::C ] ]; }')
+        with Headless(PRODUCT, folder=TMP) as h:
+            h.execute("globalThis.planned = (async (model) => {"
+                      " const w = legendLite.worker();"
+                      " const ask = (m) => new Promise((ok) => { w.onmessage = (e) => ok(e.data); w.postMessage(m); });"
+                      " const held = await ask({ id: 1, kind: 'hold', model });"
+                      " const handle = Number(held.answer.split('\\n')[1]);"
+                      " const plan = await ask({ id: 2, kind: 'plan', handle, query: '|#>{a::DB.t}#->filter(r|$r.x > 1)->select(~[s])', runtime: 'a::RT' });"
+                      " const refused = await ask({ id: 3, kind: 'plan', handle, query: '|#>{a::DB.t}#', runtime: 'a::NoSuch' });"
+                      " const db = legendLite.database.connection;"
+                      " await db.query(\"CREATE TABLE t AS SELECT * FROM (VALUES (1, 'a'), (2, 'b'), (3, 'c')) v(x, s)\");"
+                      " const t = await db.query(JSON.parse(plan.answer.slice(3)).sql);"
+                      " const rows = []; for (let i = 0; i < t.numRows; i++) rows.push(t.getChildAt(0).get(i));"
+                      " return { rows, refused: [refused.ok, refused.answer.split('\\n')[0]] };"
+                      f" }})({json.dumps(model)});")
+            self.assertEqual(h.evaluate('planned'), {'rows': ['b', 'c'], 'refused': [True, 'ERR']},
+                             "planned by the native library, run on Python's DuckDB; a refusal is an answer, not a failure")
+
+    def test_every_timeout_fires_as_a_browsers_does(self):
+        # HTML's setTimeout: no delay, 0 and a negative one are all 0 (mini-racer's own throws or never fires for them,
+        # https://github.com/bpcreech/PyMiniRacer/issues/97: the host holds each to a millisecond)
+        with Headless(PRODUCT, folder=TMP) as h:
+            fired = h.evaluate("new Promise((done) => { const got = [];"
+                               " const note = (k) => () => { got.push(k); if (got.length === 4) done(got.sort()); };"
+                               " setTimeout(note('none')); setTimeout(note('zero'), 0); setTimeout(note('negative'), -5);"
+                               " setTimeout(note('ten'), 10); })")
+            self.assertEqual(fired, ['negative', 'none', 'ten', 'zero'])
+            self.assertEqual(h.evaluate("new Promise((done) => { const t = setTimeout(() => done('fired'), 5);"
+                                        " clearTimeout(t); setTimeout(() => done('cleared'), 20); })"), 'cleared')
+
+    def test_a_call_past_the_memory_cap_fails_and_the_engine_takes_no_more(self):
+        with Headless(PRODUCT, folder=TMP, memory_limit=256 * 1024 * 1024) as h:
+            with self.assertRaises(MemoryError):
+                h.evaluate('(() => { const keep = []; for (;;) keep.push(new Array(1e6).fill(1.5)); })()')
+            self.assertTrue(h.broken)
+            with self.assertRaisesRegex(RuntimeError, 'ran out of its memory'):
+                h.evaluate('1')
+
+    def test_a_call_that_never_answers_times_out_and_the_next_is_answered(self):
+        with Headless(PRODUCT, folder=TMP) as h:
+            with self.assertRaises(TimeoutError):
+                h.evaluate('new Promise(() => {})', timeout=0.5)
+            self.assertEqual(h.evaluate('1 + 1'), 2)
+
+    def test_a_registered_file_stays_in_the_folder(self):
+        with Headless(PRODUCT, folder=TMP / 'files') as h:
+            refused = h.evaluate("legendLite.database.registerFileText('../out.csv', 'a').then(() => 'written', (e) => String(e))")
+            self.assertIn("stays in the engine's folder", refused)
+            self.assertEqual(h.evaluate("legendLite.database.registerFileText('in.csv', 'a\\n1\\n').then(() => 'written')"), 'written')
+        self.assertEqual((TMP / 'files' / 'in.csv').read_text(), 'a\n1\n')
+
+
+class DataCubeTests(unittest.TestCase):
+    """Each test file's bundle, run in a Headless of its own: every test passes."""
+
+    def test_every_bundle(self):
+        bundles = sorted(BUNDLES.glob('*.test.js'))
+        self.assertGreater(len(bundles), 40, f'the bundles are not there: {BUNDLES}')
+        total = {'pass': 0, 'fail': 0, 'skip': 0}
+        failed: list[str] = []
+        for bundle in bundles:
+            name = bundle.name[:-len('.test.js')]
+            folder = TMP / name
+            folder.mkdir(parents=True, exist_ok=True)
+            # the database writes a relative file where the process stands: the test's own folder, never the runfiles
+            os.chdir(folder)
+            start = time.monotonic()
+            with self.subTest(name):
+                with Headless(bundle.read_text(encoding='utf-8'), folder=folder) as h:
+                    results = h.evaluate('legendLiteHeadless.run()')
+                counts = {s: sum(1 for r in results if r['status'] == s) for s in total}
+                for s in total:
+                    total[s] += counts[s]
+                print(f'{name:22} {counts["pass"]:4} pass {counts["fail"]:3} fail {counts["skip"]:3} skip'
+                      f'  ({time.monotonic() - start:.1f} s)', flush=True)
+                bad = [f"{name}: {r['name']}: {r.get('error', '')}" for r in results if r['status'] == 'fail']
+                failed += bad
+                self.assertGreater(len(results), 0, f'{name}: no test ran')
+                self.assertEqual(bad, [])
+                # none skipped: a test the lane does not run says why in BUILD (its file left out), never by a skip
+                self.assertEqual([r['name'] for r in results if r['status'] == 'skip'], [], f'{name}: skipped')
+        print(f'\n{len(bundles)} files: {total["pass"]} pass, {total["fail"]} fail, {total["skip"]} skip', flush=True)
+        if failed:
+            print('\n'.join(failed[:50]), file=sys.stderr)
+
+
+if __name__ == '__main__':
+    unittest.main(verbosity=2)

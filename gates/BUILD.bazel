@@ -162,6 +162,8 @@ test_suite(
         "//python:bindings_test",
         "//python:engine_test",
         "//python:frames_test",
+        # a page's grid run by DataCube's own code in V8: its view, its relation, its rows as pandas
+        "//python:headless_test",
         # a notebook's cube: the widget's calls and version, show() in a kernel (legend_lite/notebook.py)
         "//python:notebook_test",
         "//python:tools_build_test",
@@ -169,6 +171,9 @@ test_suite(
         "//python:wheel_test",
         # DataCube against Python's engine, in the pinned Chromium (the compiler's library in its runfiles)
         "//datacube:python_engine_test",
+        # DataCube's own non-screen tests in V8 inside Python: the native library's planner, Python's DuckDB, no
+        # WebAssembly (docs/DATACUBE_HEADLESS_PYTHON_DESIGN_2026_10_11.md §6; not in //gates:local: run it by name)
+        "//datacube:headless_test",
         # a notebook's cube in a real JupyterLab and a real marimo, legend-lite's wheel and the notebook installed as a
         # developer installs them (Linux and Apple-silicon Macs)
         "//datacube:jupyterlab_test",

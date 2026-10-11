@@ -29,7 +29,7 @@ import { listObjects, SessionExpired, sessionExpired, signIn, WarehouseEngine } 
 import { accessor, from } from '../../../pure-protocol/src/index.ts';
 import { levelLambda } from '../../src/query.ts';
 import { PlanThenRun } from '../../src/runner.ts';
-import { WasmPlanner } from '../../src/wasm-planner.ts';
+import { LitePlanner } from '../../src/lite-planner.ts';
 import { CASES, MODEL, queries, RUNTIME } from '../wasm-differential/cases.ts';
 
 const SOURCE = accessor('trades::DB', 'TRADES');
@@ -150,7 +150,7 @@ async function run(): Promise<void> {
   window.__liveSnapStage = 'starting the tab\'s DuckDB';
   const local: DuckDbEngine = (await startDuckDbInTab('vendor/')).engine;
   const worker = new URL('planner-worker.js', location.href).href;
-  const planner = new WasmPlanner({ model: MODEL, runtime: RUNTIME, workerUrl: worker });
+  const planner = new LitePlanner({ model: MODEL, runtime: RUNTIME, workerUrl: worker });
 
   await check('every cube case answers the same live on the warehouse and snapped in the tab', async () => {
     const liveRunner = new PlanThenRun(planner, live);

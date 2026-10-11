@@ -1,10 +1,14 @@
-// legend-lite's own parser and printer -- the tab's WASM module, through pure-protocol's test
-// helper -- for tests that check WHAT QUERY DataCube builds: fixtures parsed as the compiler
-// parses what a person typed, and queries read back as the compiler prints them. A test using
-// this runs in the WASM group (BUILD.bazel `_WASM_TESTS`).
+// legend-lite's own parser and printer -- the product's planner (LitePlanner's parse and compose:
+// legend-engine's pure/v1 grammar calls), from the test's host (#test-host) -- for tests that check
+// WHAT QUERY DataCube builds: fixtures parsed as the compiler parses what a person typed, and
+// queries read back as the compiler prints them. A test using this runs in the WASM group
+// (BUILD.bazel `_WASM_TESTS`). Every answer of the compiler is awaited, as DataCube's own planner
+// API is: the compiler may answer from another thread or process
+// (docs/DATACUBE_HEADLESS_PYTHON_DESIGN_2026_10_11.md §6). The query is still built synchronously,
+// so a refusal of the builder throws as before.
 
-import { readLambda, toJson, type Lambda, type ValueSpecification } from '../../pure-protocol/src/index.ts';
-import { ready } from '../../pure-protocol/test/lite.ts';
+import type { Lambda, ValueSpecification } from '../../pure-protocol/src/index.ts';
+import { plannerFor } from './catalog-builder.ts';
 import {
   childAggregateLambda,
   drillLambda,
@@ -19,11 +23,12 @@ import {
 import type { CubeSnapshot, FilterNode } from '../src/snapshot.ts';
 import { lambda } from '../../pure-protocol/src/index.ts';
 
-const lite = await ready();
+/** The grammar's planner: no model of its own is needed to parse and print. */
+const grammar = plannerFor('', '');
 
 /** E1's twin: what a person typed, as its lambda. */
 export async function liteParse(text: string): Promise<Lambda> {
-  return readLambda(lite.parse(text));
+  return grammar.parse(text);
 }
 
 /** E4's twin: a query as one line of Pure. */
@@ -32,48 +37,48 @@ export async function litePrint(query: Lambda): Promise<string> {
 }
 
 /** A calculated column's lambda from the body a person typed, `$x.a * 2`: parsed by lite. */
-export function row(body: string): Lambda {
-  return readLambda(lite.parse(`x|${body}`));
+export async function row(body: string): Promise<Lambda> {
+  return grammar.parse(`x|${body}`);
 }
 
 /** A relation expression a person typed, `#>{db::DB.T}#`: parsed by lite. */
-export function source(text: string): ValueSpecification {
-  const parsed = readLambda(lite.parse(`|${text}`)).body[0];
+export async function source(text: string): Promise<ValueSpecification> {
+  const parsed = (await grammar.parse(`|${text}`)).body[0];
   if (parsed === undefined) throw new Error(`not an expression: ${text}`);
   return parsed;
 }
 
 /** A query as one line of Pure, as lite prints it. */
-export function print(query: Lambda): string {
-  return lite.compose(toJson(query));
+export function print(query: Lambda): Promise<string> {
+  return grammar.compose(query, 'STANDARD');
 }
 
 /** A level's query, printed. */
-export function printLevel(s: CubeSnapshot, scope?: LevelScope, pivot?: PivotFacts): string {
+export function printLevel(s: CubeSnapshot, scope?: LevelScope, pivot?: PivotFacts): Promise<string> {
   return print(levelLambda(s, scope, pivot));
 }
 
 /** A pivot's values query, printed; null when the cube does not ask one. */
-export function printValues(s: CubeSnapshot): string | null {
+export function printValues(s: CubeSnapshot): Promise<string | null> {
   const q = pivotValuesLambda(s);
-  return q === null ? null : print(q);
+  return q === null ? Promise.resolve(null) : print(q);
 }
 
 /** A level's child-group aggregates query, printed, and the columns it answers. */
 export function printChildren(
   s: CubeSnapshot,
   scope: LevelScope,
-): { readonly pure: string; readonly columns: readonly string[] } | null {
+): Promise<{ readonly pure: string; readonly columns: readonly string[] } | null> {
   const q = childAggregateLambda(s, scope);
-  return q === null ? null : { pure: print(q.query), columns: q.columns };
+  return q === null ? Promise.resolve(null) : print(q.query).then((pure) => ({ pure, columns: q.columns }));
 }
 
 /** A drill's query, printed. */
-export function printDrill(s: CubeSnapshot, request: DrillRequest): string {
+export function printDrill(s: CubeSnapshot, request: DrillRequest): Promise<string> {
   return print(drillLambda(s, request));
 }
 
 /** A filter as the lambda `x|<condition>`, printed. */
-export function printFilter(node: FilterNode, typeOf?: TypeOf): string {
+export function printFilter(node: FilterNode, typeOf?: TypeOf): Promise<string> {
   return print(lambda(['x'], filterNode(node, 'x', typeOf)));
 }

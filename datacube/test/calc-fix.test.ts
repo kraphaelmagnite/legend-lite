@@ -3,20 +3,26 @@
 // own expression is refused.
 
 import assert from 'node:assert/strict';
-import { describe, it } from 'node:test';
+import { before, describe, it } from 'node:test';
 
 import { emptyOperands, isEmptyOperandRefusal, sayEmpty } from '../src/calc-fix.ts';
 import { derive, from } from '../../pure-protocol/src/index.ts';
 import { liteParse, litePrint } from './lite-compiler.ts';
 import { plannerFor } from './catalog-builder.ts';
+import type { InferredModel } from '../src/infer.ts';
+import type { LitePlanner } from '../src/lite-planner.ts';
 
-const m = await plannerFor('', 'local::RT').tableModel([
-  { name: 'notional', dataType: 'DOUBLE', logicalType: 'DOUBLE', precision: 53, scale: 0, notNull: false },
-  { name: 'qty', dataType: 'INTEGER', logicalType: 'INTEGER', precision: 32, scale: 0, notNull: false },
-  { name: 'px', dataType: 'DECIMAL(9,2)', logicalType: 'DECIMAL', precision: 9, scale: 2, notNull: false },
-], { table: 't', convertible: true, databaseType: 'DuckDB' });
+let m: InferredModel;
+let planner: LitePlanner;
+before(async () => {
+  m = await plannerFor('', 'local::RT').tableModel([
+    { name: 'notional', dataType: 'DOUBLE', logicalType: 'DOUBLE', precision: 53, scale: 0, notNull: false },
+    { name: 'qty', dataType: 'INTEGER', logicalType: 'INTEGER', precision: 32, scale: 0, notNull: false },
+    { name: 'px', dataType: 'DECIMAL(9,2)', logicalType: 'DECIMAL', precision: 9, scale: 2, notNull: false },
+  ], { table: 't', convertible: true, databaseType: 'DuckDB' });
+  planner = plannerFor(m.model, m.runtime);
+});
 const TYPES: Record<string, string> = { notional: 'Float', qty: 'Integer', px: 'Decimal' };
-const planner = plannerFor(m.model, m.runtime);
 const typeOf = async (text: string): Promise<string | undefined> => {
   const typed = await planner.relationType(from(m.source).extend([derive('u', await liteParse(text))]).lambda());
   return typed.find((c) => c.name === 'u')?.type;

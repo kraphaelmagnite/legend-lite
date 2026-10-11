@@ -5,22 +5,21 @@
 
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { engineClientRequire } from '../../engine-client/src/node-require.ts';
-import path from 'node:path';
 import { after, before, describe, it } from 'node:test';
+import { openDatabase, plannerOptions } from '#test-host';
 
-import { DuckDbEngine, type ArrowishConnection } from '../../engine-client/src/duckdb.ts';
+import { DuckDbEngine } from '../../engine-client/src/duckdb.ts';
 import {
   contextOf, enumerationsOf, enumsAsStrings, projectOf, sourceOf, unusable, type ModelElement,
 } from '../src/saved-queries.ts';
 import type { Query } from '../../query-store/src/wire.ts';
 import { sourceColumns } from '../src/source-columns.ts';
-import { WasmPlanner } from '../src/wasm-planner.ts';
+import { LitePlanner } from '../src/lite-planner.ts';
 import {
   agg, col, colSpecs, findAll, fn, from, isLambda, lambda, toJson, variable, type ValueSpecification,
 } from '../../pure-protocol/src/index.ts';
 import { plannerFor } from './catalog-builder.ts';
-import { runfileDirUrl, runfileFromEnv, runfileNamed } from '../../tools/js/runfiles.mts';
+import { runfileFromEnv, runfileNamed } from '../../tools/js/runfiles.mts';
 
 // the trading project as the site serves it (BUILD.bazel `:projects`, from query/demo/models)
 const MODELS = runfileFromEnv('TRADING_PROJECT');
@@ -32,18 +31,8 @@ let elements: ModelElement[];
 const parser = plannerFor(MODEL, 'demo::trading::Runtime');
 
 before(async () => {
-  const duckdb = engineClientRequire('@duckdb/duckdb-wasm/blocking');
-  const dist = path.dirname(engineClientRequire.resolve('@duckdb/duckdb-wasm/blocking'));
-  const db = await duckdb.createDuckDB(
-    {
-      mvp: { mainModule: path.join(dist, 'duckdb-mvp.wasm'), mainWorker: path.join(dist, 'duckdb-node-mvp.worker.cjs') },
-      eh: { mainModule: path.join(dist, 'duckdb-eh.wasm'), mainWorker: path.join(dist, 'duckdb-node-eh.worker.cjs') },
-    },
-    new duckdb.VoidLogger(),
-    duckdb.NODE_RUNTIME,
-  );
-  await db.instantiate();
-  engine = new DuckDbEngine(db.connect() as ArrowishConnection);
+  const db = await openDatabase();
+  engine = new DuckDbEngine(db.connection);
   for (const line of readFileSync(`${MODELS}/trading-seed.sql`, 'utf8').split('\n')) {
     const sql = line.trim();
     if (sql && !sql.startsWith('--')) await engine.run(sql, 0);
@@ -56,21 +45,21 @@ after(async () => {
 });
 
 /** The page's steps: parse, bind the saved values, read through the context, enumerations as names. */
-async function opened(q: Query): Promise<{ source: ValueSpecification; planner: WasmPlanner }> {
+async function opened(q: Query): Promise<{ source: ValueSpecification; planner: LitePlanner }> {
   const context = contextOf(q, elements);
   const values = new Map<string, ValueSpecification>();
   for (const v of q.defaultParameterValues ?? []) values.set(v.name, (await parser.parse(`|${v.content}`)).body[0]!);
   let source = sourceOf(await parser.parse(q.content), values);
-  const planner = new WasmPlanner({
+  const planner = new LitePlanner({
     model: MODEL, runtime: context.runtime, mapping: context.mapping,
-    enumerations: [...enumerationsOf(elements)], assetBaseUrl: runfileDirUrl('WASM_PLANNER'), cache: false,
+    enumerations: [...enumerationsOf(elements)], ...plannerOptions(), cache: false,
   });
   const named = new Set((await planner.relationType(lambda([], source))).filter((c) => c.enumeration).map((c) => c.name));
   if (named.size > 0) source = enumsAsStrings(source, named);
   return { source, planner };
 }
 
-async function rows(planner: WasmPlanner, query: ValueSpecification): Promise<unknown[][]> {
+async function rows(planner: LitePlanner, query: ValueSpecification): Promise<unknown[][]> {
   const plan = await planner.plan(lambda([], query));
   const table = await engine.run(plan.sql, 0);
   return Array.from({ length: table.rowCount }, (_, i) => table.columns.map((c) => c.values[i]));

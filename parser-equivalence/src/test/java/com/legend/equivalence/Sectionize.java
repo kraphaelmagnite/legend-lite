@@ -58,9 +58,9 @@ final class Sectionize {
      * existing {@code ###} headers count (an element already inside its
      * right section needs nothing; an existing header resets the running
      * scope, exactly as it will at parse time). Returns null when the
-     * snippet is not sectionizable (does not lenient-parse, or an element
-     * has no recorded offset); an EMPTY list means every element already
-     * sits in its section.
+     * snippet is not sectionizable (does not lenient-parse, an element
+     * has no recorded offset, or two elements share one path); an EMPTY
+     * list means every element already sits in its section.
      */
     static @com.legend.base.Nullable List<Insertion> plan(String text) {
         com.legend.model.ParsedModel pm;
@@ -75,8 +75,17 @@ final class Sectionize {
         List<com.legend.model.PackageableElement> els =
                 new ArrayList<>(pm.elements());
         Map<String, Integer> offs = pm.elementOffsets();
+        java.util.Set<String> keys = new java.util.HashSet<>();
         for (com.legend.model.PackageableElement e : els) {
-            if (offs.get(com.legend.model.ParsedModel.keyOf(e)) == null) {
+            String key = com.legend.model.ParsedModel.keyOf(e);
+            if (offs.get(key) == null) {
+                return null;
+            }
+            // two elements of one path (a mapping defined twice, a class and a mapping of one name): the side maps
+            // hold one offset for both, so neither can be placed. The engine refuses such a snippet, and lite does
+            // since 2026-10-11 ("Duplicated element"); a test that writes one to witness the refusal is not
+            // sectionizable, as a snippet that does not parse is not (PARK-25 in docs/PARKED_WORK_LEDGER.md)
+            if (!keys.add(key)) {
                 return null;
             }
         }

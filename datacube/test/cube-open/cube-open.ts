@@ -24,7 +24,7 @@ import type { CubeSnapshot } from '../../src/snapshot.ts';
 import { sourceColumns } from '../../src/source-columns.ts';
 import { TreeState } from '../../src/tree.ts';
 import { ingestFile, type DuckDbFiles } from '../../src/upload.ts';
-import { WasmPlanner } from '../../src/wasm-planner.ts';
+import { LitePlanner } from '../../src/lite-planner.ts';
 import { col, fn, lambda, lit, times, type ValueSpecification } from '../../../pure-protocol/src/index.ts';
 import { runfileDirUrl } from '../../../tools/js/runfiles.mts';
 
@@ -62,7 +62,7 @@ const CSV = HEADER + ROWS.join('\n') + '\n';
 
 let engine: DuckDbEngine;
 let files: DuckDbFiles;
-let planner: WasmPlanner;
+let planner: LitePlanner;
 
 before(async () => {
   const duckdb = engineClientRequire('@duckdb/duckdb-wasm/blocking');
@@ -77,7 +77,7 @@ before(async () => {
     registerFileText: async (name, text) => db.registerFileText(name, text),
     registerFileBuffer: async (name, buffer) => db.registerFileBuffer(name, buffer),
   };
-  planner = new WasmPlanner({ model: START, runtime: 's::RT', assetBaseUrl: MODULE_DIR, cache: false });
+  planner = new LitePlanner({ model: START, runtime: 's::RT', assetBaseUrl: MODULE_DIR, cache: false });
 });
 
 /** Read a file the way the page does, and describe it as a saved cube names it. */

@@ -65,10 +65,10 @@ Database t::DB ( Table T ( qty INTEGER, desk VARCHAR(32) ) )
     parse: liteParse,
     print: litePrint,
   };
-  const cube = (body: string): CubeSnapshot => ({
+  const cube = async (body: string): Promise<CubeSnapshot> => ({
     source: { query: accessor('t::DB', 'T') },
     columns: [{ name: 'qty', type: 'Integer' }, { name: 'desk', type: 'String' }],
-    derived: [{ name: 'qty_text', lambda: row(body) }],
+    derived: [{ name: 'qty_text', lambda: (await row(body)) }],
     rows: [],
     pivotOn: [],
     measures: [],
@@ -77,7 +77,7 @@ Database t::DB ( Table T ( qty INTEGER, desk VARCHAR(32) ) )
   });
 
   it('typed String by the compiler before anything is offered, then joinStrings', async () => {
-    const typed = await typeColumns(cube('$x.qty->toOne()->toString()'), compiler);
+    const typed = await typeColumns((await cube('$x.qty->toOne()->toString()')), compiler);
     const type = typed.snapshot.derived[0]?.type;
     assert.equal(type, 'String');
     assert.ok(offered(type).includes('joinStrings'));
@@ -91,7 +91,7 @@ Database t::DB ( Table T ( qty INTEGER, desk VARCHAR(32) ) )
   it('toString takes ONE value: on a column that may be empty the compiler refuses it, as upstream', async () => {
     // Pure's toString(Any[1]); a table column is [0..1]. Upstream's engine refuses the
     // same way ("Can't find a match for function 'toLower(Varchar(32)[0..1])'").
-    await assert.rejects(typeColumns(cube('$x.qty->toString()'), compiler), /toString/);
+    await assert.rejects(typeColumns((await cube('$x.qty->toString()')), compiler), /toString/);
   });
 });
 

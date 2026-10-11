@@ -84,7 +84,7 @@ class RelationMappingWindowSeamTest {
             (
               *test::Person[person]: Relation
               {
-                ~func test::personWithRank():meta::pure::metamodel::relation::Relation<Any>[1]
+                ~func test::personWithRank():Relation<Any>[1]
                 name: NAME,
                 age: AGE,
                 grp: GRP,

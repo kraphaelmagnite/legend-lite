@@ -163,7 +163,22 @@ class ParkedWorkLedgerTest {
             // PARK-22 (2026-10-09, the protocol program's leg 5): engine JSON with spans for a path literal across
             // lines is refused, the spans not saying where its lines break; designed with leg 8
             Map.entry("PARK-22 engine JSON with spans for a path literal across lines is refused",
-                    new Anchor("a multi-line path literal span", List.of("SpecIslandReader.java")))));
+                    new Anchor("a multi-line path literal span", List.of("SpecIslandReader.java"))),
+            // PARK-25 (2026-10-11, the DataCube line's duplicate-mapping report): services, data, connections,
+            // runtimes and clean-sheet mappings still slot last-wins by plain intern; a DSL mapping takes its slot
+            Map.entry("PARK-25 the shared element namespace misses services, data, connections, runtimes and clean-sheet mappings",
+                    new Anchor("putAtId\\(services, intern\\(sd\\.qualifiedName\\(\\)\\), sd\\)",
+                            List.of("ModelBuilder.java"))),
+            // PARK-26 (2026-10-11, the same audit): two spellings of one include resolve to one name, counted twice
+            // and satisfied once, so the mapping is refused as a cycle
+            Map.entry("PARK-26 a mapping included under two spellings is refused as an include cycle",
+                    new Anchor("if \\(fqn != null\\) \\{\\s+incs\\.add\\(fqn\\);",
+                            List.of("StoreSubstitutionRewrite.java"))),
+            // PARK-28 (2026-10-11, the descriptor-type refusal's audit): the descriptor's signature is cut away and
+            // the name alone resolves, where the engine resolves by the full id
+            Map.entry("PARK-28 a ~func descriptor's signature is not matched against the function's",
+                    new Anchor("sig < 0 \\? funcRef : funcRef\\.substring\\(0, sig\\)",
+                            List.of("MappingFromProtocol.java")))));
 
     private record Anchor(String pattern, List<String> files) {
     }

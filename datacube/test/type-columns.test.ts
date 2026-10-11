@@ -2,7 +2,7 @@
 // the COMPILER before any level query (docs/DATACUBE_TYPED_VALUES_DESIGN_2026_09_27.md).
 
 import assert from 'node:assert/strict';
-import { describe, it } from 'node:test';
+import { before, describe, it } from 'node:test';
 
 import { typeColumns } from '../src/plan.ts';
 import type { PlanColumn } from '../../engine-client/src/relation-type.ts';
@@ -12,20 +12,23 @@ import { liteParse, litePrint } from './lite-compiler.ts';
 import { accessor } from '../../pure-protocol/src/index.ts';
 import { row } from './lite-compiler.ts';
 
-const CUBE: CubeSnapshot = {
-  source: { query: accessor('db::DB', 'T') },
-  columns: [
-    { name: 'region', type: 'String' },
-    { name: 'amount', type: 'Float' },
-    { name: 'gone', type: 'Integer' },
-  ],
-  derived: [{ name: 'twice', lambda: row('$x.amount * 2') }],
-  rows: [],
-  pivotOn: [],
-  measures: [],
-  sorts: [],
-  epoch: 1,
-};
+let CUBE: CubeSnapshot;
+before(async () => {
+  CUBE = {
+    source: { query: accessor('db::DB', 'T') },
+    columns: [
+      { name: 'region', type: 'String' },
+      { name: 'amount', type: 'Float' },
+      { name: 'gone', type: 'Integer' },
+    ],
+    derived: [{ name: 'twice', lambda: await row('$x.amount * 2') }],
+    rows: [],
+    pivotOn: [],
+    measures: [],
+    sorts: [],
+    epoch: 1,
+  };
+});
 
 function compiler(answer: PlanColumn[], asked: string[]): QueryRunner {
   return {

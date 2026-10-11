@@ -5,11 +5,10 @@
 // LIST does not take.
 
 import assert from 'node:assert/strict';
-import { engineClientRequire } from '../../engine-client/src/node-require.ts';
-import path from 'node:path';
 import { after, before, describe, it } from 'node:test';
+import { openDatabase } from '#test-host';
 
-import { DuckDbEngine, type ArrowishConnection } from '../../engine-client/src/duckdb.ts';
+import { DuckDbEngine } from '../../engine-client/src/duckdb.ts';
 import { sampleById, sampleFileName } from '../src/samples.ts';
 import { forgetUpload, ingestFile, type DuckDbFiles } from '../src/upload.ts';
 import type { QueryEngine } from '../../engine-client/src/engine.ts';
@@ -24,34 +23,17 @@ const writer = plannerFor('', 'local::RT');
 
 let engine: DuckDbEngine;
 let files: DuckDbFiles;
-let copyOut: (name: string) => Uint8Array;
+/** A file the database wrote, read back by the database itself (read_blob): its bytes, on any host. */
+let copyOut: (name: string) => Promise<Uint8Array>;
 
 before(async () => {
-  const duckdb = engineClientRequire('@duckdb/duckdb-wasm/blocking');
-  const dist = path.dirname(engineClientRequire.resolve('@duckdb/duckdb-wasm/blocking'));
-  const db = await duckdb.createDuckDB(
-    {
-      mvp: {
-        mainModule: path.join(dist, 'duckdb-mvp.wasm'),
-        mainWorker: path.join(dist, 'duckdb-node-mvp.worker.cjs'),
-      },
-      eh: {
-        mainModule: path.join(dist, 'duckdb-eh.wasm'),
-        mainWorker: path.join(dist, 'duckdb-node-eh.worker.cjs'),
-      },
-    },
-    new duckdb.VoidLogger(),
-    duckdb.NODE_RUNTIME,
-  );
-  await db.instantiate();
-  engine = new DuckDbEngine(db.connect() as ArrowishConnection);
-  // The blocking bindings register synchronously; the picker's handle
-  // is the async one.
-  copyOut = (name) => db.copyFileToBuffer(name);
-  files = {
-    async registerFileText(name, text) { db.registerFileText(name, text); },
-    async registerFileBuffer(name, buffer) { db.registerFileBuffer(name, buffer); },
+  const db = await openDatabase();
+  engine = new DuckDbEngine(db.connection);
+  copyOut = async (name) => {
+    const read = await db.connection.query(`SELECT content FROM read_blob('${name}')`);
+    return read.getChildAt(0)!.get(0) as Uint8Array;
   };
+  files = db.files;
 });
 
 after(async () => {
@@ -145,7 +127,7 @@ describe('ingestFile with JSON', () => {
                     '4ac7a9e2-5b8f-4c1e-9a3d-2f6b8c0d1e7f'::UUID AS id,
                     TIME '13:14:15.678901' AS tod)
          TO 'zoned.parquet' (FORMAT PARQUET)`, 0);
-    const bytes = copyOut('zoned.parquet');
+    const bytes = await copyOut('zoned.parquet');
     const r = await ingestFile(engine, files, {
       name: 'zoned.parquet',
       text: async () => '',

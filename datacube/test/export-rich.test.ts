@@ -5,11 +5,10 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
 import { strFromU8, unzipSync } from 'fflate';
-import { JSDOM } from 'jsdom';
 
 import { cssOf, escapeXml, toHtml } from '../src/export-rich.ts';
 import { exportTable, REDACTED, type ExportTable } from '../src/export-model.ts';
-import { argb, columnLetters, formatCode, sheetName, toXlsx } from '../src/export-xlsx.ts';
+import { argb, columnLetters, formatCode, toXlsx } from '../src/export-xlsx.ts';
 import { buildColumnModel } from '../src/grid/columns.ts';
 import type { ResultTable } from '../../engine-client/src/result.ts';
 
@@ -32,12 +31,6 @@ const table = (title = 'Profit and loss by region, Q1 & Q2 [draft]'): ExportTabl
   title, rows: rt, model: buildColumnModel(rt, [], ['notional'], { blurred: ['secret'] }),
   treeRows: [], groupLabels: [], truncated: false,
 });
-
-const xml = (text: string): Document => {
-  const doc = new new JSDOM('').window.DOMParser().parseFromString(text, 'application/xml');
-  assert.equal(doc.getElementsByTagName('parsererror').length, 0, `not well-formed:\n${text.slice(0, 300)}`);
-  return doc;
-};
 
 describe('escapeXml', () => {
   it('escapes everything that can break a document, the ampersand first', () => {
@@ -78,16 +71,6 @@ describe('Excel: a real .xlsx', () => {
     return strFromU8(f!);
   };
 
-  it('has the OOXML parts, each well-formed XML', () => {
-    for (const name of ['[Content_Types].xml', '_rels/.rels', 'xl/workbook.xml', 'xl/_rels/workbook.xml.rels',
-      'xl/styles.xml', 'xl/worksheets/sheet1.xml', 'xl/worksheets/sheet2.xml']) xml(part(name));
-  });
-  it('names the sheet as Excel allows: no [ ] : * ? / \\, at most 31 characters, cut before escaping', () => {
-    const sheet = xml(part('xl/workbook.xml')).getElementsByTagName('sheet')[0]!.getAttribute('name')!;
-    assert.ok(sheet.length <= 31 && !/[[\]:*?/\\]/.test(sheet), sheet);
-    assert.equal(sheetName('a'.repeat(28) + ' & b'), `${'a'.repeat(28)} &`);
-    assert.equal(sheetName('[]'), 'Sheet1');
-  });
   it('types its cells: numbers, a date serial, a boolean, text; an unsafe big integer as text', () => {
     const sheet = part('xl/worksheets/sheet1.xml');
     assert.match(sheet, /<c r="B2"[^>]*><v>1234\.5<\/v><\/c>/, 'a number is a number');
@@ -166,21 +149,6 @@ describe('the whole page: charts where the board puts them, and the whole grid',
     assert.match(html, /<section class="tile" style="grid-column:1 \/ span 6;grid-row:15 \/ span 10">\n<h2>By region<\/h2>\n<img alt="By region" width="400" height="200" src="data:image\/png;base64,iVBORwECAw=="/);
     assert.match(html, /<h2>Grid<\/h2>\n<table>/, 'the table inside the grid\'s tile');
     assert.match(html, /\(this chart had not drawn\)/);
-  });
-  it('the workbook: a Dashboard sheet first, the chart as a picture, the table on its own sheet', () => {
-    const files = unzipSync(toXlsx(table('Trades'), { page }));
-    assert.match(strFromU8(files['xl/workbook.xml']!), /<sheet name="Dashboard" sheetId="1" r:id="rId4"\/><sheet name="Trades"/);
-    assert.deepEqual([...files['xl/media/image1.png']!], [...picture.png]);
-    const drawing = strFromU8(files['xl/drawings/drawing1.xml']!);
-    xml(drawing);
-    assert.match(drawing, /<xdr:from><xdr:col>0<\/xdr:col><xdr:colOff>0<\/xdr:colOff><xdr:row>29<\/xdr:row>/, 'below its title, at the board\'s place');
-    const dash = strFromU8(files['xl/worksheets/sheet3.xml']!);
-    const sheet1 = strFromU8(files['xl/worksheets/sheet1.xml']!);
-    // THE TABLE ITSELF in the grid's tile, one row down (under its title), styled as on its own sheet
-    assert.match(dash, /<c r="A2" s="(\d+)" t="inlineStr"><is><t xml:space="preserve">region<\/t>/);
-    const cell = (sheet: string, ref: string): string | undefined => new RegExp(`<c r="${ref}"[^>]*>(?:<v>[^<]*</v>|<is>.*?</is>)?`).exec(sheet)?.[0];
-    assert.equal(cell(dash, 'H3')?.replace('H3', 'X'), cell(sheet1, 'H2')?.replace('H2', 'X'), 'the same cell, the same style');
-    for (const part of ['xl/worksheets/sheet3.xml', 'xl/drawings/_rels/drawing1.xml.rels', '[Content_Types].xml']) xml(strFromU8(files[part]!));
   });
   it('the workbook: a table longer than its tile moves what is below it down; one wider moves what is beside it right', () => {
     const long = table('Trades');

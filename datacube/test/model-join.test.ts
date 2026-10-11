@@ -6,11 +6,10 @@
 // planned by legend-lite's own compiler (the WASM module the tab loads) and run on DuckDB, rows checked.
 
 import assert from 'node:assert/strict';
-import { engineClientRequire } from '../../engine-client/src/node-require.ts';
-import path from 'node:path';
 import { after, before, describe, it } from 'node:test';
+import { openDatabase } from '#test-host';
 
-import { DuckDbEngine, type ArrowishConnection } from '../../engine-client/src/duckdb.ts';
+import { DuckDbEngine } from '../../engine-client/src/duckdb.ts';
 import { plannerFor } from './catalog-builder.ts';
 
 const MODEL = `
@@ -120,18 +119,8 @@ let engine: DuckDbEngine;
 const planner = plannerFor(MODEL, 'page::Runtime', { mapping: 'page::Mapping' });
 
 before(async () => {
-  const duckdb = engineClientRequire('@duckdb/duckdb-wasm/blocking');
-  const dist = path.dirname(engineClientRequire.resolve('@duckdb/duckdb-wasm/blocking'));
-  const db = await duckdb.createDuckDB(
-    {
-      mvp: { mainModule: path.join(dist, 'duckdb-mvp.wasm'), mainWorker: path.join(dist, 'duckdb-node-mvp.worker.cjs') },
-      eh: { mainModule: path.join(dist, 'duckdb-eh.wasm'), mainWorker: path.join(dist, 'duckdb-node-eh.worker.cjs') },
-    },
-    new duckdb.VoidLogger(),
-    duckdb.NODE_RUNTIME,
-  );
-  await db.instantiate();
-  engine = new DuckDbEngine(db.connect() as ArrowishConnection);
+  const db = await openDatabase();
+  engine = new DuckDbEngine(db.connection);
   for (const sql of SEED) await engine.run(sql, 0);
 });
 

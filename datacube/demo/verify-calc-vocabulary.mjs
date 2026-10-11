@@ -25,7 +25,7 @@ import { CALC_FUNCTIONS } from '../src/calc.ts';
 import { LegendEngineExecutor } from '../../engine-client/src/engine-remote.ts';
 import { levelLambda } from '../src/query.ts';
 import { accessor } from '../../pure-protocol/src/index.ts';
-import { WasmPlanner } from '../src/wasm-planner.ts';
+import { LitePlanner } from '../src/lite-planner.ts';
 import { sourceColumns } from '../src/source-columns.ts';
 import { TRADES_KINDS, typeDifference } from './engine-cases.mjs';
 
@@ -55,7 +55,7 @@ const results = [];
 // ---- the local plane -----------------------------------------------
 let planner = null;
 try {
-  planner = new WasmPlanner({
+  planner = new LitePlanner({
     model: await readFile(new URL('./trades.pure', HERE), 'utf8'),
     runtime: 'trades::RT',
     assetBaseUrl: new URL('./vendor/', HERE).href,

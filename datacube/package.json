@@ -10,9 +10,16 @@
   "description": "",
   "type": "module",
   "private": true,
+  "imports": {
+    "#test-host": {
+      "headless": "./test/host/headless.ts",
+      "default": "./test/host/node.ts"
+    }
+  },
   "dependencies": {
     "echarts": "6.1.0",
-    "fflate": "0.8.3"
+    "fflate": "0.8.3",
+    "whatwg-url": "16.0.1"
   },
   "devDependencies": {
     "@types/jsdom": "30.0.0",

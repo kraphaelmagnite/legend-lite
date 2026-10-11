@@ -81,7 +81,7 @@ const NAMES = [
 const TYPES = ['String', 'Integer', 'Float', 'Date', 'Boolean'];
 const FNS: AggregateFn[] = ['sum', 'count', 'average', 'min', 'max', 'wavg'];
 
-function makeSnapshot(r: () => number): CubeSnapshot {
+async function makeSnapshot(r: () => number): Promise<CubeSnapshot> {
   const pick = <T>(xs: readonly T[]): T =>
     xs[Math.floor(r() * xs.length)] as T;
   const upto = (n: number): number => Math.floor(r() * (n + 1));
@@ -143,7 +143,7 @@ function makeSnapshot(r: () => number): CubeSnapshot {
   return {
     source: { query: element('t') },
     columns,
-    derived: r() < 0.3 ? [{ name: 'd0', lambda: row('$x.a + 1') }] : [],
+    derived: r() < 0.3 ? [{ name: 'd0', lambda: (await row('$x.a + 1')) }] : [],
     rows: some(3),
     pivotOn: some(2),
     measures,
@@ -191,15 +191,15 @@ function factsFor(s: CubeSnapshot): PivotFacts | undefined {
   return on.length === 0 ? undefined : { tuples: [on.map(() => 'v'), on.map(() => null)] };
 }
 
-function trySerialize(
+async function trySerialize(
   s: CubeSnapshot,
   scope?: Parameters<typeof printLevel>[1],
   seed?: number,
-): string | null {
+): Promise<string | null> {
   try {
     // A pivot's values come from its own query; the fuzz only writes
     // text, so each key gets a value and a NULL -- both condition forms.
-    return printLevel(s, scope, factsFor(s));
+    return await printLevel(s, scope, factsFor(s));
   } catch (e) {
     if (e instanceof CubeRefusal) return null;
     assert.fail(
@@ -209,12 +209,12 @@ function trySerialize(
 }
 
 describe('fuzzing the model layer', () => {
-  it('either serialises or REFUSES -- never anything else', () => {
+  it('either serialises or REFUSES -- never anything else', async () => {
     let refused = 0;
     for (let seed = 1; seed <= CASES; seed++) {
-      const s = makeSnapshot(rng(seed));
-      if (trySerialize(s, undefined, seed) === null) refused += 1;
-      trySerialize(s, { level: 1, parent: ['x'], limit: 10 }, seed);
+      const s = (await makeSnapshot(rng(seed)));
+      if ((await trySerialize(s, undefined, seed)) === null) refused += 1;
+      (await trySerialize(s, { level: 1, parent: ['x'], limit: 10 }, seed));
     }
     // The generator deliberately builds invalid cubes, so some must
     // refuse -- a run where nothing refused would mean the walls
@@ -226,11 +226,11 @@ describe('fuzzing the model layer', () => {
     );
   });
 
-  it('never emits an empty or dangling pipeline stage', () => {
+  it('never emits an empty or dangling pipeline stage', async () => {
     // `a->->b` or a trailing `->` means some stage rendered nothing,
     // which the compiler reports far from the cause.
     for (let seed = 1; seed <= CASES; seed++) {
-      const pure = trySerialize(makeSnapshot(rng(seed)), undefined, seed);
+      const pure = (await trySerialize((await makeSnapshot(rng(seed))), undefined, seed));
       if (pure === null) continue;
       assert.equal(pure.includes('->->'), false, `seed ${seed}: ${pure}`);
       assert.equal(pure.endsWith('->'), false, `seed ${seed}: ${pure}`);
@@ -255,9 +255,9 @@ describe('fuzzing the model layer', () => {
     }
   });
 
-  it('balances brackets in every generated query', () => {
+  it('balances brackets in every generated query', async () => {
     for (let seed = 1; seed <= CASES; seed++) {
-      const pure = trySerialize(makeSnapshot(rng(seed)), undefined, seed);
+      const pure = (await trySerialize((await makeSnapshot(rng(seed))), undefined, seed));
       if (pure === null) continue;
       for (const [open, close] of [
         ['(', ')'],
@@ -270,11 +270,11 @@ describe('fuzzing the model layer', () => {
     }
   });
 
-  it('a level query never groups by more columns than the cube has', () => {
+  it('a level query never groups by more columns than the cube has', async () => {
     for (let seed = 1; seed <= CASES; seed++) {
-      const s = makeSnapshot(rng(seed));
+      const s = (await makeSnapshot(rng(seed)));
       for (let level = 0; level <= s.rows.length + 1; level++) {
-        const pure = trySerialize(s, { level, parent: [] }, seed);
+        const pure = (await trySerialize(s, { level, parent: [] }, seed));
         if (pure === null) continue;
         const m = /groupBy\(~\[([^\]]*)\]/.exec(pure);
         if (m && m[1]) {
@@ -301,10 +301,10 @@ describe('fuzzing the model layer', () => {
     }
   });
 
-  it('builds a column model whose leaves match the table', () => {
+  it('builds a column model whose leaves match the table', async () => {
     for (let seed = 1; seed <= CASES; seed++) {
       const r = rng(seed);
-      const s = makeSnapshot(r);
+      const s = (await makeSnapshot(r));
       const table = tableFor(s, r);
       let model;
       try {
@@ -346,13 +346,13 @@ describe('fuzzing the model layer', () => {
     }
   });
 
-  it('gives every leaf a unique name, however odd the inputs', () => {
+  it('gives every leaf a unique name, however odd the inputs', async () => {
     // Two columns with the same name make the grid render one twice
     // and lose the other -- and duplicate names are exactly what a
     // pivot over a dimension containing the measure's name produces.
     for (let seed = 1; seed <= CASES; seed++) {
       const r = rng(seed);
-      const s = makeSnapshot(r);
+      const s = (await makeSnapshot(r));
       const table = tableFor(s, r);
       const model = buildColumnModel(
         table,
@@ -368,11 +368,11 @@ describe('fuzzing the model layer', () => {
     }
   });
 
-  it('produces a total order for sorting, or none at all', () => {
+  it('produces a total order for sorting, or none at all', async () => {
     // A partial order means two runs of the same query can disagree
     // about row order, which is how pagination tears.
     for (let seed = 1; seed <= CASES; seed++) {
-      const s = makeSnapshot(rng(seed));
+      const s = (await makeSnapshot(rng(seed)));
       const sorts = totalOrderSorts(s, s.rows);
       const names = sorts.map((x) => x.column);
       assert.equal(
@@ -391,12 +391,12 @@ describe('fuzzing the model layer', () => {
     }
   });
 
-  it('quotes or escapes every name that needs it', () => {
+  it('quotes or escapes every name that needs it', async () => {
     // A column called `a b`, `select` or `quote'name` must not be
     // pasted raw into the grammar.
     for (let seed = 1; seed <= CASES; seed++) {
-      const s = makeSnapshot(rng(seed));
-      const pure = trySerialize(s, undefined, seed);
+      const s = (await makeSnapshot(rng(seed)));
+      const pure = (await trySerialize(s, undefined, seed));
       if (pure === null) continue;
       // A bare `a b` in a column list is the failure shape.
       // Strip quoted runs, honouring backslash escapes -- a name
@@ -411,11 +411,11 @@ describe('fuzzing the model layer', () => {
     }
   });
 
-  it('never loses the pivot separator into a column name', () => {
+  it('never loses the pivot separator into a column name', async () => {
     for (let seed = 1; seed <= CASES; seed++) {
-      const s = makeSnapshot(rng(seed));
+      const s = (await makeSnapshot(rng(seed)));
       if (s.columns.some((c) => c.name.includes(PIVOT_SEPARATOR))) continue;
-      const pure = trySerialize(s, undefined, seed);
+      const pure = (await trySerialize(s, undefined, seed));
       if (pure === null) continue;
       // Only the pivot's OWN columns carry it, as the plan names them.
       const facts = factsFor(s);

@@ -122,7 +122,7 @@ export interface ModelAnswer {
   readonly notes: readonly string[];
 }
 
-/** The model's writer: the tab's module (WasmPlanner), asked on every plane. */
+/** The model's writer: the tab's module (LitePlanner), asked on every plane. */
 export interface ModelWriter {
   createClass(project: string, pkg: string, cls: ClassAction): Promise<ModelAnswer>;
   /** With no association, nothing is made: the answer's suggestions and joinable classes start the window. */

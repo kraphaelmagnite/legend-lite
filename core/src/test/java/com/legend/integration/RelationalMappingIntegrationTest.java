@@ -4564,20 +4564,22 @@ class RelationalMappingIntegrationTest {
         void testDataMutations() throws SQLException {
             sql("CREATE TABLE MUT (ID INT, NAME VARCHAR(50))",
                 "INSERT INTO MUT VALUES (1, 'first')");
-            String m = singleTableModel("M", "MUT", "store::DB", "model::M",
-                    "Class model::M { name: String[1]; }",
+            // the class is model::Mut, not model::M: that is the mapping's name, and a class and a mapping share one
+            // namespace, as in the engine ("Duplicated element"; refused since 2026-10-11)
+            String m = singleTableModel("Mut", "MUT", "store::DB", "model::M",
+                    "Class model::Mut { name: String[1]; }",
                     "ID INTEGER, NAME VARCHAR(50)",
                     "name: [store::DB] MUT.NAME");
 
-            var r1 = exec(m, "model::M.all()->project(~[name:x|$x.name])");
+            var r1 = exec(m, "model::Mut.all()->project(~[name:x|$x.name])");
             assertEquals(1, r1.rowCount());
 
             sql("INSERT INTO MUT VALUES (2, 'second')");
-            var r2 = exec(m, "model::M.all()->project(~[name:x|$x.name])");
+            var r2 = exec(m, "model::Mut.all()->project(~[name:x|$x.name])");
             assertEquals(2, r2.rowCount());
 
             sql("DELETE FROM MUT WHERE ID = 1");
-            var r3 = exec(m, "model::M.all()->project(~[name:x|$x.name])");
+            var r3 = exec(m, "model::Mut.all()->project(~[name:x|$x.name])");
             assertEquals(1, r3.rowCount());
             assertEquals("second", r3.rows().get(0).get(0).toString());
         }

@@ -56,7 +56,7 @@ function startup(bundle = join(DEMO, 'bundle.js')): string[] {
  *  startup as that panel is. Measured 381,890, main before it under its 381,000.
  *  383,000 -> 386,000 (2026-10-10, DataCube model step 2, Create a Class…, docs/DATACUBE_MODEL_DESIGN_2026_10_10.md §15):
  *  a grid's menu entry and its checks (query.ts classLambda, storeTableOf, writesClasses), the planner's route
- *  (wasm-planner.ts promoteRelationToModel), the page's model read and written with the page (page-document.ts version
+ *  (lite-planner.ts promoteRelationToModel), the page's model read and written with the page (page-document.ts version
  *  4, its tables written for the grids the page holds), each grid's table kept by name on reopening and reserved while
  *  a page opens, and the page file refused while its classes are only here (demo/boot.ts), at startup; the window, the
  *  page's model and the SDLC client are fetched the first time a class is made (src/create-class.ts, its own chunk).

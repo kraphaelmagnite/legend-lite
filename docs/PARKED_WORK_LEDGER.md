@@ -653,3 +653,109 @@ Number case projects its value again.
 **Anchor.** Pinned at the first statement's gap 1: `plainFloat(` in `AnsiSqlRenderer.java`, the Float literal written
 bare — which the restatement keeps (Rule 1 is interpreted Pure's). The anchor moves with the design's first code
 commit, to the whole Float's text (`floatPrint`).
+
+## PARK-25 — the shared element namespace misses services, data, connections, runtimes and clean-sheet mappings
+
+**Recorded** 2026-10-11 by the Bazel program session, from the DataCube line's report: a model holding two mappings of
+one name crashed the normalizer's include ordering (the cycle check counted the parsed mappings against the ordered
+names and named an empty cycle: an index error, not a refusal). Fixed the same day (GATES "A duplicate mapping is
+refused"): the check counts the names, and a parsed mapping takes its slot in the shared packageable-element namespace
+(`ModelBuilder.internElement`), so a mapping defined twice, or under a class's name, is `ModelIntegrity`'s "Duplicated
+element", as a class's is (the D6b batch, engine parity).
+
+**What happens today.** Services, `###Data` elements, connections (standalone and a runtime's inline ones) and runtimes
+still slot last-wins by plain `intern`: a second definition of one of those names in one text replaces the first
+silently. A clean-sheet (function-form) mapping is never ingested at parse (`ModelBuilder.indexed` answers true for
+it: the index holds nothing for the pre-E surface) and its product registers by plain `intern`, so one defined twice,
+under a class's name, or beside a DSL mapping of its name, is last-wins too. The module parse (`Compiler.parseSources`)
+drops a same-kind duplicate itself and reports it, so the corpora never see the same-kind case; a cross-kind collision
+(a runtime under a service's name, a clean-sheet mapping under a DSL mapping's) reaches the index and is not refused.
+legend-engine refuses every duplicated element. The same namespace holds the PACKAGES: an element whose path is also
+a package (`trades::domain` beside `trades::domain::Trade`) is refused by legend-engine 4.145.0 with "An element named
+'domain' already exists in the package 'trades'" (the DataCube line's audit, 2026-10-11, against the engine); lite's
+index registers no package, so nothing collides (not proven by a run). And the parsed model's side maps (`ParsedModel`'s
+offsets, imports, sources, spans) are keyed by path alone (`ParsedModel.keyOf`), so a cross-kind pair of one name shares
+one entry: the refusal's position is whichever element was recorded under the key (the engine points at the second),
+and parser-equivalence's section planner (`Sectionize.plan`) declines such a snippet as not sectionizable (2026-10-11,
+found by the conformance ratchet on the refusal's own test).
+
+**The fix.** Each of those kinds registers through `internElement` (a clean-sheet mapping's name takes its slot at
+parse, the surface itself staying out of the index), and every element's package prefixes take theirs as packages,
+so a path that is also a package is refused as the engine refuses it; the side maps key by kind and path, as the module
+parse's dedupe does, so a refusal points at the second element. A runtime's inline connections are named `rt$store$id` (the
+reserved `$` keeps them from a user's names); two inline connections of one runtime with the same store and id would
+then collide with each other, which the fix decides (the engine's answer). The six corpus passes and the render census
+judge whether any corpus model relied on the last win.
+
+**Acceptance.** A test per kind in `IncludeRulesTest`'s shape (the second definition refused by name, the module parse
+reporting the drop), one for a path that is also a package; the corpus passes identical.
+
+**Why parked.** The report was the mapping's, fixed in its landing; the other kinds change what a model with a
+collision does, so they take a judged landing of their own. The cost while parked: a cross-kind collision among those
+kinds compiles with the last definition and no word.
+
+**When.** Not scheduled: a small landing of its own, the user's call.
+
+**Anchor.** `putAtId(services, intern(sd.qualifiedName()), sd)` in `ModelBuilder.java`: the first of the plain-intern
+slots.
+
+## PARK-26 — a mapping included under two spellings is refused as an include cycle
+
+**Recorded** 2026-10-11 by the Bazel program session, from the audit of the duplicate-mapping fix (GATES "A
+duplicate mapping is refused"). `StoreSubstitutionRewrite.resolveAllStores` resolves each include path to a mapping
+name (the path as spelled, else under the includer's package) and counts the resolved names as the mapping's pending
+includes: `include w::A` and `include A` written in package `w` resolve to one name, counted twice and satisfied once,
+so the mapping is never ready and is refused as "mapping include cycle". The listed-twice check just before it
+("Duplicated mapping include") compares the paths as spelled, so it does not catch the pair.
+
+**What happens today.** A model including one mapping under both spellings is refused with the wrong reason. Not
+measured against the corpora.
+
+**The fix.** Establish legend-engine's rule for the pair (its "Duplicated mapping include" check: by the resolved
+mapping, or by the spelling), then either count a resolved name once or refuse the pair as a duplicated include.
+
+**Acceptance.** A test in `IncludeRulesTest` with both spellings, asserting the engine's answer.
+
+**Why parked.** The engine's rule for the pair is not in the repository's upstream notes, and the fix is a choice
+between accepting and refusing; the cost while parked is one wrong refusal reason on a shape no corpus is known to use.
+
+**When.** Not scheduled; with PARK-25 or on its own.
+
+**Anchor.** `if (fqn != null) {` followed by `incs.add(fqn);` in `StoreSubstitutionRewrite.java`: the resolved names
+counted as listed.
+
+## PARK-28 — a `~func` descriptor's signature is not matched against the function's
+
+**Recorded** 2026-10-11 by the Bazel program session, from the audit of the descriptor-type refusal (GATES "A `~func`
+descriptor spelling a type by its package path is refused"). legend-engine resolves a relation class mapping's `~func`
+descriptor by its full id (`f__Relation_1_`: the name, the parameter types, the return type and multiplicity, legend-pure's
+`functionDescriptorToId`), so `~func f():Any[*]` against `f():Relation<Any>[1]` is "Can't find the packageable element
+'f__Any_MANY_'" there (inferred from the id format and the engine fixture for a mismatched descriptor in
+`parser-equivalence/src/test/resources/engine-grammar-fixtures.jsonl`; not run).
+
+**What happens today.** `MappingFromProtocol.relationFunction` cuts the descriptor at `(` and resolves the name alone
+(`MappingNormalizer.relationFunctionPipeline`: by name, then by signature id), so a signature naming another return type
+or multiplicity, or none at all (`~func f()`, which the parser accepts), compiles against whichever overload the name
+finds. The `~src f():R[1]` form keeps the name only (`MappingProtocolParser`, the `~src` arm: `fd.nameEnd()`), so a
+signature tail there is accepted and dropped; the engine parses `~src` as an expression (a tail is likely a parse error
+there; not verified). A function activator's `function:` descriptor (`FunctionActivatorSectionGrammar`) is parsed only,
+never resolved, so a package path or a wrong signature there is never checked. The descriptor-type refusal
+(`refuseDescriptorTypes`) reads the types' spelling, not their match.
+
+**The fix.** Convert the descriptor to the engine's id (`SignatureMangle`'s format: head names, multiplicities) and
+resolve by it when a signature is written, refusing a mismatch as the engine does; the `~src` form's tail refused or
+matched the same way, after the engine's answer for it is read from its grammar; the activator's descriptor resolved
+when activators compile.
+
+**Acceptance.** `RelationFunctionDescriptorTest`: a descriptor naming another return type or multiplicity refused with
+the engine's message; `~func f()` without a signature answered as the engine answers it (read from its grammar first);
+the corpus passes identical.
+
+**Why parked.** The report was the package path's, fixed in its landing; matching the signature changes what resolves
+for every `~func` with a signature, so it takes a judged landing of its own, after the engine's answers for the
+no-signature and `~src` forms are read. The cost while parked: a descriptor whose signature does not match compiles
+here and fails in the engine, with no word.
+
+**When.** Not scheduled; a small landing of its own, the user's call.
+
+**Anchor.** `sig < 0 ? funcRef : funcRef.substring(0, sig)` in `MappingFromProtocol.java`: the signature cut away.

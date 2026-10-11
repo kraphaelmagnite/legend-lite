@@ -23,7 +23,7 @@ import type { Plan } from '../../../engine-client/src/relation-type.ts';
 import type { CubeView } from '../../src/cube.ts';
 import type { ResultTable } from '../../../engine-client/src/result.ts';
 import type { CubeSnapshot } from '../../src/snapshot.ts';
-import { WasmPlanner } from '../../src/wasm-planner.ts';
+import { LitePlanner } from '../../src/lite-planner.ts';
 import { MODEL, RUNTIME } from '../wasm-differential/cases.ts';
 import { accessor } from '../../../pure-protocol/src/index.ts';
 import { runfileDirUrl } from '../../../tools/js/runfiles.mts';
@@ -80,7 +80,7 @@ const CUBE: CubeSnapshot = {
 const EMPTY = '(empty)';
 
 let conn: ArrowishConnection;
-let planner: WasmPlanner;
+let planner: LitePlanner;
 
 /** The engine, counting what is in flight, so a test can wait for quiet. */
 class Watched implements QueryEngine {
@@ -235,7 +235,7 @@ async function seededConnection(): Promise<ArrowishConnection> {
 
 before(async () => {
   conn = await seededConnection();
-  planner = new WasmPlanner({ model: MODEL, runtime: RUNTIME, assetBaseUrl: MODULE_DIR, cache: false });
+  planner = new LitePlanner({ model: MODEL, runtime: RUNTIME, assetBaseUrl: MODULE_DIR, cache: false });
 });
 
 describe('a grouped pivot, judged by rows', () => {

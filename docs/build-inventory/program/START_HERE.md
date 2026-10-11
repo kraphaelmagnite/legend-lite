@@ -69,9 +69,30 @@ generated file, never a signature we typed ourselves.
 - **L7 "resolve once", steps 3 and 4, landed** (472f0f817; run 38094185136; GATES "L7 step 3"): every call built after the
   resolver is built by `compiler/spec/Calls` with its record (195 sites in 23 files); the read-time rule, the typer's bare
   path and `BareNames.catalog` are deleted; PARK-5 closed. L7 is complete.
+- **A duplicate mapping is refused, landed** (0b29453e1; run 38145210104; GATES "A duplicate mapping is refused"): the DataCube line's
+  report (two mappings of one name crashed the include ordering) fixed as the engine refuses it, "Duplicated element"
+  before Phase E; PARK-25 (the kinds still slotting last-wins, a path that is also a package, the side maps keyed by
+  path) and PARK-26 (two include spellings refused as a cycle) recorded.
+- **The `~func` descriptor refusal, landed** (eabda91b8; run 38152032814; GATES "A `~func` descriptor spelling a type by its package
+  path is refused"): the DataCube line's find against the engine; a descriptor's parameter and return types by simple
+  name, as legend-pure's `FunctionDescriptor.validateType` reads them, refused at the model door for both doors;
+  PARK-28 (the signature never matched against the function's) recorded.
+- **Pending the user (2026-10-11):** the two ceremony cuts promised with L7, designed in
+  `JUDGES_TARGET_DESIGN_2026_10_11.md`: the judges' committed baseline (files, or digests for the ledgers;
+  digests recommended) and the lane query (a gate script, since the query cannot be a Bazel target; the script
+  recommended). Nothing is built until both are ruled.
 - **Next: L4 (Phase 6)**, then L5 (Phase 4), L6 (Phase 5), the typing-order count, L8 (the bump). The order and
-  cadence: the plan's §6. Before L4: the DataCube line's compile phase split (promised 2026-10-10) and the Studio
-  line's leg 8 typing changes to review (c, e).
+  cadence: the plan's §6. Beside L4: the compile phase split over DataCube's model shape (mine: `model-scale.measure.ts`,
+  `classModel(n)` at 10 and 200 through `//core:compile_latency` or the eager probe, offered 2026-10-10; input to
+  DataCube's normalize-on-first-use design, the user's to schedule) and the Studio line's leg 8 typing changes to
+  review ((c), (f) and the step-2 records diff reviewed 2026-10-11; (e), the infix slice, not yet cut, to review when it
+  is). **L4's homework measured 2026-10-11** (`evidence/phase6/HOMEWORK_2026_10_11.md`, 6-H1 to 6-H9; the DataCube
+  phase split there too: a 200-source page compiles in about 13 ms on the JVM, 56 % of it the normalizer). What it
+  decides: 27 repositories cover the corpus as well as 38 (6-O1 (a)); upstream's visibility rule changes no pick
+  (6-O10); the manifest world equals today's composition except for the 178 ownership-filtered functions, whose
+  admission refuses 60 corpus tests through the platform's `project` form, so **PARK-11 (the TDS rows by id) comes
+  before Phase 6 admits them: the user's ruling**; the scanRelations exclusion changes nothing any more (keep as a
+  design statement or delete: the user's call). Nothing of Phase 6 is coded before those rulings.
 - **Ruled 2026-10-10 (the user):** the default world is made by upstream's own compiler at bump time, every body
   followed (F2, F3; the plan's decision 6); the pre-built boot layer is part of Phase 4, sized on the numbers
   (decision 2 as amended); the typer's order is measured before the bump (decision 7). Nothing is pending from the

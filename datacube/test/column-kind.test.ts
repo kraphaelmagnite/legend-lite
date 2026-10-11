@@ -63,39 +63,39 @@ describe('excludedFromPivot', () => {
   // pivot key is a dimension. The rule these tests replace dropped a marked key from the query,
   // so an Integer made a dimension went into the pivot zone and pivoted nothing (the user,
   // 2026-09-28).
-  it('a pivot KEY pivots even when marked excluded, as every dimension is', () => {
+  it('a pivot KEY pivots even when marked excluded, as every dimension is', async () => {
     const s: CubeSnapshot = {
       ...CUBE,
       columns: CUBE.columns.map((c) =>
         c.name === 'year' ? { ...c, excludedFromPivot: true } : c,
       ),
     };
-    const out = printLevel(s, undefined, { tuples: [['2023']] });
+    const out = (await printLevel(s, undefined, { tuples: [['2023']] }));
     assert.match(out, /if\(\$x\.year == 2023, /, 'split by year');
     assert.match(out, /2023__\|__total/);
   });
 
-  it('keeps a MEASURE marked excluded out of the spread', () => {
+  it('keeps a MEASURE marked excluded out of the spread', async () => {
     const s: CubeSnapshot = {
       ...CUBE,
       columns: CUBE.columns.map((c) =>
         c.name === 'notional' ? { ...c, excludedFromPivot: true } : c,
       ),
     };
-    const out = printLevel(s, undefined, { tuples: [['2023']] });
+    const out = (await printLevel(s, undefined, { tuples: [['2023']] }));
     assert.equal(out.includes('2023__|__total'), false, 'total is not spread by year');
   });
 });
 
 describe('treeColumnSort', () => {
-  it('orders the groups descending when asked', () => {
+  it('orders the groups descending when asked', async () => {
     // It applies at every level, including ones not yet opened, which
     // is why it is separate from the per-column sorts.
     const s: CubeSnapshot = { ...CUBE, treeColumnSort: 'desc' };
     assert.deepEqual(totalOrderSorts(s, ['region']), [
       { column: 'region', direction: 'desc' },
     ]);
-    assert.match(printLevel(s, undefined, { tuples: [['2023']] }), /sort\(\[~region->descending\(\)\]\)/);
+    assert.match((await printLevel(s, undefined, { tuples: [['2023']] })), /sort\(\[~region->descending\(\)\]\)/);
   });
 
   it('defaults to ascending', () => {

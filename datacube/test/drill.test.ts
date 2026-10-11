@@ -23,11 +23,11 @@ const SNAPSHOT: CubeSnapshot = {
 };
 
 describe('the drill query', () => {
-  it('pins the row path and the pivot value, and does not aggregate', () => {
-    const sql = printDrill(SNAPSHOT, {
+  it('pins the row path and the pivot value, and does not aggregate', async () => {
+    const sql = (await printDrill(SNAPSHOT, {
       path: ['EMEA', 'Rates'],
       pivotPath: ['2023'],
-    });
+    }));
     assert.equal(
       sql,
       // each condition parenthesized (the grammar applies < <= > >= left to right with && ||)
@@ -41,7 +41,7 @@ describe('the drill query', () => {
     assert.equal(sql.includes('pivot('), false);
   });
 
-  it('keeps the cube filter, so the drill sees the same population', () => {
+  it('keeps the cube filter, so the drill sees the same population', async () => {
     const s: CubeSnapshot = {
       ...SNAPSHOT,
       filter: {
@@ -52,38 +52,38 @@ describe('the drill query', () => {
       },
     };
     assert.match(
-      printDrill(s, { path: ['EMEA'] }),
+      (await printDrill(s, { path: ['EMEA'] })),
       /\(\$x\.notional > 0\.0\) && \(\$x\.region == 'EMEA'\)/,
     );
   });
 
-  it('drills the grand total to the whole filtered population', () => {
+  it('drills the grand total to the whole filtered population', async () => {
     assert.equal(
-      printDrill(SNAPSHOT, { path: [] }),
+      (await printDrill(SNAPSHOT, { path: [] })),
       `|trades->limit(${DEFAULT_DRILL_LIMIT})`,
     );
   });
 
-  it('matches a NULL group with isEmpty', () => {
+  it('matches a NULL group with isEmpty', async () => {
     assert.match(
-      printDrill(SNAPSHOT, { path: [null] }),
+      (await printDrill(SNAPSHOT, { path: [null] })),
       /\$x\.region->isEmpty\(\)/,
     );
   });
 
-  it('applies derived columns before filtering on them', () => {
+  it('applies derived columns before filtering on them', async () => {
     const s: CubeSnapshot = {
       ...SNAPSHOT,
-      derived: [{ name: 'net', lambda: row('$x.notional * 0.98') }],
+      derived: [{ name: 'net', lambda: (await row('$x.notional * 0.98')) }],
     };
     assert.match(
-      printDrill(s, { path: ['EMEA'] }),
+      (await printDrill(s, { path: ['EMEA'] })),
       /^\|trades->extend\(~\[net:x\|\$x\.notional \* 0\.98\]\)->filter\(/,
     );
   });
 
-  it('caps the rows, because a drill is a peek not an export', () => {
-    assert.match(printDrill(SNAPSHOT, { path: [], limit: 25 }), /->limit\(25\)$/);
+  it('caps the rows, because a drill is a peek not an export', async () => {
+    assert.match((await printDrill(SNAPSHOT, { path: [], limit: 25 })), /->limit\(25\)$/);
   });
 });
 

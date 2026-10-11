@@ -373,7 +373,7 @@ public final class Boundary {
      * a plan touches on its way past. Measured from the page, that is parsing the 300 KB Pure prelude, the system
      * metamodel, then resolving and normalizing both into the boot layer -- together ~1.1s of the ~1.3s.
      *
-     * <p>`WasmPlanner.warmUp` calls this while DuckDB is still starting, so the cost lands inside a wait the page was
+     * <p>`LitePlanner.warmUp` calls this while DuckDB is still starting, so the cost lands inside a wait the page was
      * making anyway instead of after it. {@code compileModel} is the public door to all of it, and takes the real
      * model so the graph it builds is the one the first plan wants.
      *

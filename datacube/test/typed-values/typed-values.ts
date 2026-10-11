@@ -18,7 +18,7 @@ import type { QueryEngine, RawTable } from '../../../engine-client/src/engine.ts
 import type { Plan } from '../../../engine-client/src/relation-type.ts';
 import type { ResultTable } from '../../../engine-client/src/result.ts';
 import type { CubeSnapshot } from '../../src/snapshot.ts';
-import { WasmPlanner } from '../../src/wasm-planner.ts';
+import { LitePlanner } from '../../src/lite-planner.ts';
 import { PlanError } from '../../src/planner.ts';
 import { catalogColumns } from '../../src/upload.ts';
 import { sourceColumns } from '../../src/source-columns.ts';
@@ -68,7 +68,7 @@ Runtime typed::RT
 `;
 
 let conn: ArrowishConnection;
-let planner: WasmPlanner;
+let planner: LitePlanner;
 
 /** The engine, recording what it ran and counting what is in flight. */
 class Watched implements QueryEngine {
@@ -164,7 +164,7 @@ before(async () => {
   await local.run('CREATE TABLE P (region VARCHAR(32), qty INTEGER, pnl DECIMAL(10,2), big BIGINT)', 0);
   await local.run(`INSERT INTO P VALUES ('EMEA', 1, -12.50, -9007199254740993), ('EMEA', 2, 0.00, 1),
     ('AMER', 3, 1234.56, 2)`, 0);
-  planner = new WasmPlanner({ model: MODEL, runtime: 'typed::RT', assetBaseUrl: MODULE_DIR, cache: false });
+  planner = new LitePlanner({ model: MODEL, runtime: 'typed::RT', assetBaseUrl: MODULE_DIR, cache: false });
 });
 
 describe('step 1: types from the compiler', () => {
@@ -239,7 +239,7 @@ describe('a source\'s columns come from the compiler', () => {
     const duck = new DuckDbEngine(conn);
     await duck.run(`CREATE TABLE every_type (${declared.map(([n, t]) => `${n} ${t}`).join(', ')})`, 0);
     const m = await planner.tableModel(await catalogColumns(duck, planner, 'every_type'), { table: 'every_type', convertible: true, databaseType: 'DuckDB' });
-    const own = new WasmPlanner({ model: m.model, runtime: m.runtime, assetBaseUrl: MODULE_DIR, cache: false });
+    const own = new LitePlanner({ model: m.model, runtime: m.runtime, assetBaseUrl: MODULE_DIR, cache: false });
     const columns = await sourceColumns(own, m.source, [{ name: 'big', kind: 'dimension' }]);
     const family = Object.fromEntries(columns.map((c) => [c.name, familyOf(c.type)]));
     assert.deepEqual(columns.map((c) => c.name), declared.map(([n]) => n), 'every column, in order');

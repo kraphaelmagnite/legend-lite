@@ -13,7 +13,7 @@ import { writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { it } from 'node:test';
 
-import { WasmPlanner } from '../src/wasm-planner.ts';
+import { LitePlanner } from '../src/lite-planner.ts';
 import { runfileDirUrl } from '../../tools/js/runfiles.mts';
 
 /** How many sources a page's model has, measured at each. */
@@ -72,7 +72,7 @@ function median(times: readonly number[]): number {
 }
 
 /** `query(k)` planned RUNS times over `planner` (a different `k` each time, so no plan is answered from a cache). */
-async function timed(planner: WasmPlanner, query: (k: number) => string): Promise<number> {
+async function timed(planner: LitePlanner, query: (k: number) => string): Promise<number> {
   const times: number[] = [];
   for (let run = 0; run < RUNS + 2; run += 1) {
     const lambda = await planner.parse(`|${query(run)}`);
@@ -86,7 +86,7 @@ async function timed(planner: WasmPlanner, query: (k: number) => string): Promis
 }
 
 /** The model's compile, the median of three -- each text a line apart, so none is a model held already. */
-async function compiled(base: WasmPlanner, model: string): Promise<number> {
+async function compiled(base: LitePlanner, model: string): Promise<number> {
   const times: number[] = [];
   for (let run = 0; run < 3; run += 1) {
     const planner = base.withModel(`${model}\n// compile ${run}\n`, 'page::Runtime', { mapping: 'page::Mapping' });
@@ -102,7 +102,7 @@ it('a page\'s model as it grows: its compile, and the median plan over it held, 
   const assets = runfileDirUrl('WASM_PLANNER');
   // one module for every planner (withModel), warmed -- its load, its boot layer and a first class model's code paths
   // are paid once, here, so a compile timed below is the model's alone
-  const base = new WasmPlanner({ model: classModel(2), runtime: 'page::Runtime', mapping: 'page::Mapping',
+  const base = new LitePlanner({ model: classModel(2), runtime: 'page::Runtime', mapping: 'page::Mapping',
     assetBaseUrl: assets, cache: false });
   await base.warmUp();
   await timed(base, (k) => `files::t0::T0.all()->filter(x|$x.id > ${k})->project(~[id: x|$x.id, next: x|$x.next.v])`);

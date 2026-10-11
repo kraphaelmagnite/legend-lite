@@ -403,9 +403,93 @@ public final class MappingFromProtocol {
                     rel.primaryKey());
         }
         int sig = funcRef.indexOf('(');
+        if (sig >= 0) {
+            refuseDescriptorTypes(funcRef, funcRef.substring(sig), rel.relationFunctionSourceInformation());
+        }
         return new ClassMapping.RelationFunction(rel.className(), rel.id(), null,
                 rel.root(), sig < 0 ? funcRef : funcRef.substring(0, sig), null,
                 cols, rel.primaryKey());
+    }
+
+    /**
+     * The engine's rule for a descriptor's types (legend-pure m3-core {@code FunctionDescriptor.validateType}, run by
+     * {@code functionDescriptorToId} on every descriptor the compiler resolves): each parameter type and the return
+     * type is a simple name, never a package path ("Package path not allowed in types"), and never a function type
+     * ("Unsupported type"); a type's ARGUMENTS are not read (the id keeps the head name alone). Lite resolves the
+     * name and drops the signature, so a descriptor the engine refuses compiled here (the DataCube line's find
+     * against 4.145.0: the engine, its id conversion failing, looks the raw text up as an element and reports
+     * "Can't find the packageable element"). Refused at every dialect: the signature means nothing in lite beyond
+     * the engine's id format, and a model written so compiles nowhere (2026-10-11).
+     *
+     * @param descriptor the whole descriptor, named in the refusal
+     * @param signature the descriptor from its {@code (}: {@code (T[m],U[m]):R<...>[m]}; the parser joins the tokens
+     *                  with no spaces, a JSON-carried descriptor may have them (removed here outside quotes, as the
+     *                  engine's lexer drops them, so the type is named as the engine names it)
+     * @param where the descriptor's position when the wire carries one, named in the refusal
+     */
+    static void refuseDescriptorTypes(String descriptor, String signature,
+            com.legend.protocol.@com.legend.base.Nullable SourceInfo where) {
+        StringBuilder compact = new StringBuilder(signature.length());
+        boolean quoted = false;
+        for (int k = 0; k < signature.length(); k++) {
+            char c = signature.charAt(k);
+            if (c == '\'') {
+                quoted = !quoted;
+            }
+            if (quoted || !Character.isWhitespace(c)) {
+                compact.append(c);
+            }
+        }
+        signature = compact.toString();
+        List<String> types = new ArrayList<>();
+        int depth = 0;
+        int start = 1;
+        int i = 1;
+        for (; i < signature.length(); i++) {
+            char c = signature.charAt(i);
+            if (c == '-' && i + 1 < signature.length() && signature.charAt(i + 1) == '>') {
+                i++;                                   // a function type's arrow, not a closing angle bracket
+                continue;
+            }
+            if (c == '(' || c == '<' || c == '{' || c == '[') {
+                depth++;
+            } else if (c == '>' || c == '}' || c == ']') {
+                depth--;
+            } else if (c == ')' && depth > 0) {
+                depth--;
+            } else if (c == ')') {
+                break;
+            } else if (c == ',' && depth == 0) {
+                types.add(signature.substring(start, i));
+                start = i + 1;
+            }
+        }
+        if (i > start) {
+            types.add(signature.substring(start, i));
+        }
+        if (i + 1 < signature.length() && signature.charAt(i + 1) == ':') {
+            types.add(signature.substring(i + 2));
+        }
+        for (String typeAndMult : types) {
+            String type = typeAndMult.strip();
+            int mult = type.lastIndexOf('[');
+            if (mult > 0 && type.endsWith("]")) {
+                type = type.substring(0, mult);
+            }
+            int args = type.indexOf('<');
+            String head = args < 0 ? type : type.substring(0, args);
+            String problem = head.startsWith("{") ? "Unsupported type: "
+                    : head.contains("::") ? "Package path not allowed in types: " : null;
+            if (problem != null) {
+                // the model door's refusal channel: the text door reports it at the element with its position
+                // (ParseException), the JSON door as the element's Unrepresentable (Compiler.compileModel reports
+                // that as NotImplementedException: the channel's wording, not this rule's); the module path walls
+                // the mapping either way
+                String at = where == null ? "" : " at " + where.startLine() + ":" + where.startColumn();
+                throw new UnsupportedMappingShape("~func '" + descriptor + "'" + at + ": " + problem + type
+                        + " (a function descriptor spells its types by simple name, as Legend Engine reads it)");
+            }
+        }
     }
 
     private static ClassMapping.RelationFunction.Col relationCol(

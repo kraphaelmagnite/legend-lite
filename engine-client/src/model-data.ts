@@ -63,7 +63,7 @@ export interface SeededTable extends DataTable {
 
 /**
  * Where a model's test-data statements come from: legend-lite's planner in the tab (engine-client's
- * WasmGrammar.testDataSql, DataCube's WasmPlanner.testDataSql): for each table `database` declares, its TableSeed, in
+ * WasmGrammar.testDataSql, DataCube's LitePlanner.testDataSql): for each table `database` declares, its TableSeed, in
  * order. A table the Database does not declare is refused.
  */
 export interface SeedSource {

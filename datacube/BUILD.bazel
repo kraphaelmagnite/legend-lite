@@ -9,8 +9,10 @@ load("//tools/java:defs.bzl", "legend_java_binary", "legend_java_library")
 load("@bazel_lib//lib:copy_file.bzl", "copy_file")
 load("@pypi//:requirements.bzl", "all_whl_requirements")
 load("@rules_python//python:py_binary.bzl", "py_binary")
+load("@rules_python//python:py_test.bzl", "py_test")
 load("//tools/platforms:defs.bzl", "COMPILER_LIBRARY_PLATFORMS", "compatible_with")
 load("@bazel_lib//lib:copy_to_directory.bzl", "copy_to_directory")
+load("@bazel_lib//lib:params_file.bzl", "params_file")
 load("@bazel_lib//lib:write_source_files.bzl", "write_source_files")
 load("//tools/browser:defs.bzl", "browser_test")
 load("@bazel_skylib//rules:build_test.bzl", "build_test")
@@ -74,6 +76,9 @@ js_library(
         # Apache ECharts: the chart windows (src/chart-render.ts is its one importer; only
         # the charts and components used are registered, via echarts/core).
         ":node_modules/echarts",
+        # whatwg-url, the URL standard's reference implementation: URL and URLSearchParams where an embedding engine
+        # has none (src/headless/url.ts, its one importer; docs/DATACUBE_HEADLESS_PYTHON_DESIGN_2026_10_11.md §3). MIT.
+        ":node_modules/whatwg-url",
     ],
 )
 
@@ -108,6 +113,8 @@ _SCANNED = {
     "state-guardrail": [":src"],
     # the WASM list against the files that load the planner (A28)
     "wasm-flag": ["BUILD.bazel", ":scanned_tests"],
+    # the headless lane's roster against the test files and the helpers they import
+    "headless-roster": ["BUILD.bazel", ":scanned_test_code"],
 }
 
 filegroup(
@@ -134,6 +141,11 @@ filegroup(
     srcs = glob(["test/*.test.ts"]),
 )
 
+filegroup(
+    name = "scanned_test_code",
+    srcs = glob(["test/**/*.ts"]),
+)
+
 # Each test's inputs by runfiles path ($(rlocationpath); tools/js/runfiles.mts), beside _EXTRA_DATA.
 # THE SHARE LINK'S NEXT DICTIONARY VERSION (P2-08; see :cut_link_dictionary)
 _NEXT_LINK_VERSION = "p2"
@@ -149,7 +161,7 @@ _EXTRA_ENV = {
     },
     # every dictionary version in the tree, and the next one's name: each version needs its hash pinned, and the
     # next one is not cut yet
-    "share-link": {
+    "share-link-node": {
         "LINK_VERSIONS": " ".join([f[len("src/share/link-"):-len(".ts")] for f in glob(["src/share/link-*.ts"])]),
         "NEXT_LINK_VERSION": _NEXT_LINK_VERSION,
     },
@@ -181,6 +193,7 @@ _EXTRA_DATA = {
     "adhoc-session": ["test/adhoc-fixture.ts"],
     "adhoc-mode": ["test/adhoc-fixture.ts"],
     "adhoc-transactions": ["test/adhoc-fixture.ts", "test/gate.ts"],
+    "adhoc-transactions-dom": ["test/adhoc-fixture.ts", "test/gate.ts"],
     # the cube as a person meets it, over a gated engine (Leg B's app-level tests)
     "cube-transactions": ["test/cube-fixture.ts", "test/gate.ts"],
     "cube-lifecycle": ["test/cube-fixture.ts", "test/gate.ts"],
@@ -189,6 +202,14 @@ _EXTRA_DATA = {
     "multi-cube": ["test/cube-fixture.ts", "test/gate.ts"],
     "chart-tiles": ["test/cube-fixture.ts", "test/gate.ts"],
     "page-app": ["test/cube-fixture.ts", "test/gate.ts"],
+    # the headless lane's stand-ins for node:assert and node:test, held to Node's own here
+    "headless-assert": ["test/headless/node-assert.ts"],
+    "headless-test-runner": [
+        "test/headless/node-test.ts",
+        "test/headless/runner-entry.ts",
+        "test/headless/runner-reporter.mjs",
+        "test/headless/runner-suite.ts",
+    ],
 }
 
 # the tests that write a model from a table's columns ask the compiler (T2): legend-lite's
@@ -241,7 +262,10 @@ _WASM_TESTS = [
     ) + (
         ["//engine-client:node_modules/@duckdb/duckdb-wasm"] if t[len("test/"):-len(".test.ts")] in _DUCKDB_USERS else []
     ) + (
-        ["test/catalog-builder.ts", "test/lite-compiler.ts", "//pure-protocol:typescript_sources"] if t[len("test/"):-len(".test.ts")] in _WASM_TESTS else []
+        ["test/catalog-builder.ts", "test/lite-compiler.ts"] if t[len("test/"):-len(".test.ts")] in _WASM_TESTS else []
+    ) + (
+        # the test's host (package.json "imports", #test-host): in Node, the module in-thread and DuckDB-WASM
+        ["test/host/node.ts"] if t[len("test/"):-len(".test.ts")] in _WASM_TESTS + _DUCKDB_USERS else []
     ),
     entry_point = t,
     env = _EXTRA_ENV.get(t[len("test/"):-len(".test.ts")], {}) | ({
@@ -249,6 +273,180 @@ _WASM_TESTS = [
     } if t[len("test/"):-len(".test.ts")] in _SCANNED else {}),
     wasm = t[len("test/"):-len(".test.ts")] in _WASM_TESTS,
 ) for t in _TESTS]
+
+# DATACUBE HEADLESS (docs/DATACUBE_HEADLESS_PYTHON_DESIGN_2026_10_11.md): DataCube's own non-screen code in V8 inside
+# Python -- its planner's worker answered by legend-lite's native library, its database Python's DuckDB, no WebAssembly.
+#
+# The product's bundle: src/headless/entry.ts as one script, its exports the global `legendLiteHeadless` (the wheel's
+# `datacube` extra carries it, step 4). --platform=neutral: it imports nothing of Node, and a module that did would not
+# bundle.
+esbuild_bundle(
+    name = "headless_bundle",
+    srcs = [":src"],
+    outs = ["headless/legend-lite-headless.js"],
+    args = [
+        "src/headless/entry.ts",
+        "--bundle",
+        "--format=iife",
+        "--global-name=legendLiteHeadless",
+        "--platform=neutral",
+        "--main-fields=module,main",
+        "--target=es2022",
+        "--log-level=warning",
+        "--outfile=headless/legend-lite-headless.js",
+    ],
+    visibility = ["//python:__pkg__"],
+)
+
+# THE HEADLESS LANE's test files: the non-screen tests, each bundled to run in V8 as the product's bundle runs -- built
+# with the `headless` condition (#test-host: the host's planner and database), node:test and node:assert stood in for
+# by test/headless/ (held to Node's own by headless_test_runner_test and headless_assert_test), and jsdom, which
+# a few import for tests not run here, a stub that refuses its use. A new non-screen test file joins this list.
+_HEADLESS_TESTS = [
+    "adhoc-query",
+    "adhoc-session",
+    "adhoc-state",
+    "adhoc-transactions",
+    "app",
+    "bands",
+    "calc",
+    "calc-fix",
+    "cancel",
+    "child-groups",
+    "column-kind",
+    "columns-selector",
+    "config",
+    "create-class",
+    "cube-document",
+    "cube-state",
+    "cube-store",
+    "dimensions",
+    "drill",
+    "duckdb",
+    "duckdb-cancel",
+    "editor",
+    "engine-remote",
+    "epoch",
+    "escaping",
+    "export",
+    "export-doc",
+    "export-model",
+    "export-rich",
+    "filter-editor",
+    "format",
+    "format-scale",
+    "fuzz",
+    "grid",
+    "group-derived",
+    "host",
+    "infer",
+    "json-shape",
+    "lite-planner",
+    "menu",
+    "model-join",
+    "model-route",
+    "offer-facts",
+    "page-document",
+    "pivot-panel",
+    "pivot-total",
+    "pivot-values",
+    "plane",
+    "planner",
+    "query",
+    "relation-type",
+    "remote",
+    "runner",
+    "sample",
+    "screen-colours",
+    "selection",
+    "share-link",
+    "sorting",
+    "style",
+    "tree",
+    "treeview",
+    "type-columns",
+    "upload",
+    "values",
+    "warehouse-session",
+    "window",
+    "window-columns",
+]
+
+# Test files the lane leaves out though they import nothing of Node, and why (each runs in Node's lane). A screen test
+# (jsdom) or one that takes Node as its reference (node:url, node:crypto) is left out by what it imports, which
+# headless_roster_test reads. A file that mixed them is split in two: its screen or Node half `<name>-dom` or
+# `<name>-node`, the rest in the lane under its own name.
+_HEADLESS_LEFT_OUT = {
+    # DataCube's HTTP clients against a stubbed fetch: the host has no fetch API (nothing headless speaks HTTP: §3)
+    "cancel-http": "the planner client's HTTP",
+    "engine-remote-http": "the engine executor's HTTP",
+    "planner-http": "the remote planner's HTTP",
+    "warehouse-session-http": "the warehouse sign-in's HTTP",
+    # the chart renderer (ECharts) draws on a DOM canvas: a screen test, though it imports no jsdom itself
+    "chart-echarts": "ECharts draws on a DOM canvas",
+    # the lane's own stand-ins and web layer, held to Node's built-ins: they need the Node they compare against
+    "headless-assert": "node:assert/strict, its reference",
+    "headless-test-runner": "node:test's own run, its reference",
+    "headless-web": "Node's web built-ins, its reference",
+}
+
+esbuild_bundle(
+    name = "headless_test_bundles",
+    testonly = True,
+    srcs = glob(["test/**/*.ts"]) + [
+        "test/headless/unavailable.cjs",
+        ":node_modules/fflate",
+        ":node_modules/echarts",
+        ":src",
+    ],
+    out_dirs = ["headless-tests"],
+    args = ["test/%s.test.ts" % t for t in _HEADLESS_TESTS] + [
+        "--bundle",
+        "--format=iife",
+        "--platform=neutral",
+        "--main-fields=module,main",
+        "--conditions=headless",
+        "--target=es2022",
+        "--inject:test/headless/prelude.ts",
+        "--alias:node:test=./test/headless/node-test.ts",
+        "--alias:node:assert/strict=./test/headless/node-assert.ts",
+        "--alias:node:assert=./test/headless/node-assert.ts",
+        "--alias:jsdom=./test/headless/unavailable.cjs",
+        "--outbase=test",
+        "--outdir=headless-tests",
+        "--log-level=warning",
+    ],
+)
+
+# THE HEADLESS LANE: each test file's bundle in a Headless of its own (legend_lite/_headless.py), every test passing,
+# and the host over the product's bundle (its start-up check, no WebAssembly, the folder its files stay in). In the
+# warehouse lane, beside python_engine_test: it loads the native library, which that lane builds first (the Compiler
+# Rewrite line's review); not in //gates:local, so run it by name before a push. Not on Windows on Arm, which has no
+# compiler library.
+py_test(
+    name = "headless_test",
+    size = "medium",
+    srcs = ["test/headless/run.py"],
+    data = [
+        ":headless_bundle",
+        ":headless_test_bundles",
+        "//native:compiler",
+    ],
+    env = {
+        "HEADLESS_BUNDLE": "$(rlocationpath :headless_bundle)",
+        "HEADLESS_TEST_BUNDLES": "$(rlocationpath :headless_test_bundles)",
+        "LEGEND_LITE_LIBRARY": "$(rlocationpath //native:compiler)",
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "PYTHONFAULTHANDLER": "1",
+        "PYTHONUTF8": "1",
+    },
+    main = "test/headless/run.py",
+    target_compatible_with = compatible_with(COMPILER_LIBRARY_PLATFORMS),
+    deps = [
+        "//python:headless",
+        "@rules_python//python/runfiles",
+    ],
+)
 
 # A MEASUREMENT, not a test (docs/DATACUBE_MODEL_DESIGN_2026_10_10.md §11): a page's model as it grows, planned by the
 # tab's own compiler, and a source read as a class against the same source read as a table. Manual, in //gates:heavy:
@@ -304,6 +502,7 @@ typescript.tsc_test(
         ":node_modules/@types/jsdom",
         ":node_modules/echarts",
         ":node_modules/fflate",
+        ":node_modules/whatwg-url",
         ":node_modules/@types/node",
         ":node_modules/jsdom",
         ":node_modules/playwright",
@@ -328,7 +527,7 @@ js_binary(
 )
 
 # THE SHARE LINK'S DICTIONARY (milestone 1b): made ONCE per version from the product's own
-# vocabulary, then frozen in src/share/link-<version>.ts, pinned by its hash in test/share-link.test.ts
+# vocabulary, then frozen in src/share/link-<version>.ts, pinned by its hash in test/share-link-node.test.ts
 # (links made with it must open forever). The tool reads the LIVE vocabulary, which grows (p1 has no
 # treemap mark), so a frozen version is held by its hash, never by re-running the tool (P2-08).
 js_binary(
@@ -349,8 +548,8 @@ js_binary(
 # The next version, from today's vocabulary: a tool run on demand, so not part of //... (manual; the build only
 # compiles, docs/BUILD_REBUILD_DESIGN_2026_10_05.md). To ship it, `bazel run //datacube:cut_link_dictionary` writes
 # src/share/link-<version>.ts once (a DRAFT, the docs:draft_own_corpus_ledger pattern: no diff test, the hash pin is
-# the freeze); then pin its hash in test/share-link.test.ts and move _NEXT_LINK_VERSION (above) on. share_link_test
-# fails until both are done.
+# the freeze); then pin its hash in test/share-link-node.test.ts and move _NEXT_LINK_VERSION (above) on.
+# share_link_node_test fails until both are done.
 js_run_binary(
     name = "link_dictionary_next",
     args = [_NEXT_LINK_VERSION],
@@ -426,14 +625,27 @@ filegroup(
     srcs = glob(["src/**/*.ts", "test/**/*.ts"]),
 )
 
+# the files the scan reads, by their paths, in a file the generator is handed: on its command line they passed the
+# 8191 characters a Windows .bat launcher takes (the branch CI run 38175909649, the headless lane's split test files)
+params_file(
+    name = "import_scan_list",
+    out = "import_scan.params",
+    args = ["$(rootpaths :import_scan)"],
+    data = [":import_scan"],
+    newline = "unix",
+)
+
 js_run_binary(
     name = "test_imports",
-    srcs = [":import_scan"],
+    srcs = [
+        ":import_scan",
+        ":import_scan_list",
+    ],
     outs = ["test_imports_generated.bzl"],
     args = [
         package_name() + "/test_imports_generated.bzl",
         package_name(),
-        "$(rootpaths :import_scan)",
+        "@$(rootpath :import_scan_list)",
     ],
     tool = ":test_imports_tool",
 )
@@ -450,7 +662,7 @@ write_source_files(
 
 # THE CUBE'S WASM DIFFERENTIAL: DataCube's serialiser writes the queries, the
 # JVM answers them (a build output), and the test plans them through the
-# product's WasmPlanner over //wasm:planner and compares.
+# product's LitePlanner over //wasm:planner and compares.
 js_binary(
     name = "emit_cube_queries",
     data = [":src"],

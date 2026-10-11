@@ -490,7 +490,8 @@ conviction, not menus.
   `OwnCorpusConformanceTest` (our own test Pure must parse on the
   4.138.2 oracle: spell a Relation mapping's function as the
   DESCRIPTOR `~func f():meta::pure::metamodel::relation::Relation<Any>[1]`,
-  never the mangled `f__Relation_1_`).
+  never the mangled `f__Relation_1_`; and since 2026-10-11 the type by its simple name,
+  `~func f():Relation<Any>[1]`: the package-path spelling is refused, as the engine refuses it).
 - **QueryService/Compiler.execute take a single EXPRESSION** — unit
   tests spell multi-statement bodies as `{| let …; expr; }`.
 - **Own-corpus mapping tests:** `Relation { ~func … }` class mappings

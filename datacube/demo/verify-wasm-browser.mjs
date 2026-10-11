@@ -1,10 +1,10 @@
 // The demo, in a real browser, with NO SERVER running.
 //
-// verify-wasm-planner.ts proves the module answers identically to the
-// JVM under Node. That is not the same claim as "the product works in
-// a browser": Node resolves paths differently, fetches differently,
-// and has no DOM. The point of the WASM planner is that a tab needs
-// no server, and only a browser can show that.
+// The cube's WASM differential (test/wasm-differential/) proves the module
+// answers identically to the JVM under Node. That is not the same claim
+// as "the product works in a browser": Node resolves paths differently,
+// fetches differently, and has no DOM. The point of the WASM planner is
+// that a tab needs no server, and only a browser can show that.
 //
 // Serves datacube/ over http (a file: origin cannot instantiate WASM
 // from fetch), loads demo/index.html (the default entry), and waits for

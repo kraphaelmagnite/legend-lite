@@ -2,7 +2,7 @@
 
 `planner.TabExports` — the tab's adapter over the boundary, `planner.Boundary`, and everything it reaches in
 `//core` — compiled ahead of time by TeaVM to a WebAssembly-GC module, and held to the JVM by
-differentials that run on every push. DataCube's `src/wasm-planner.ts`
+differentials that run on every push. DataCube's `src/lite-planner.ts`
 plans in the browser on this module, with no server.
 
 ```bash
@@ -100,7 +100,7 @@ product, is 34 MB, so the planner adds roughly 4% to an existing payload.
 - TeaVM's loader wants a URL in a browser and a FILESYSTEM PATH under
   Node. Handing Node a `file:` URL fails with an ENOENT that surfaces as
   "could not instantiate" and reads like a missing WASM-GC feature;
-  `WasmPlanner` converts, and says so.
+  `LitePlanner` converts, and says so.
 - `ServiceLoader` returns empty in WASM. Built-in section grammars are
   hardcoded and unaffected, but grammar *extensions* can never load in a
   WASM build.

@@ -1,15 +1,13 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { PlanError } from '../src/planner.ts';
 import { fromElement, toJson } from '../../pure-protocol/src/index.ts';
 import {
-  fileUrlToPath,
-  pathToFileUrl,
   PlannerUnavailableError,
-  WasmPlanner,
-} from '../src/wasm-planner.ts';
+  LitePlanner,
+} from '../src/lite-planner.ts';
+import type { PlannerWorker } from '../src/planner-protocol.ts';
 
 /** A module's OK answer: the SQL and its result type (here, typing nothing). */
 function ok(sql: string): string {
@@ -85,7 +83,7 @@ function planner(
     model?: string;
   } = {},
 ) {
-  return new WasmPlanner({
+  return new LitePlanner({
     model: extra.model ?? '###Relational\nDatabase trades::DB ( Table T ( a VARCHAR(1) ) )',
     runtime: 'trades::RT',
     ...(extra.cache === undefined ? {} : { cache: extra.cache }),
@@ -93,7 +91,7 @@ function planner(
   });
 }
 
-describe('WasmPlanner', () => {
+describe('LitePlanner', () => {
   it('returns the SQL an OK answer carries', async () => {
     const p = planner(() => ok('SELECT t0.a FROM T AS t0'));
     assert.equal((await p.planText('grammar')).sql,
@@ -313,7 +311,7 @@ describe('WasmPlanner', () => {
       // PlanError means "your query is wrong" and is shown to the
       // user. A missing asset is an operational fault; conflating
       // them files every failed deploy as a bad query.
-      const p = new WasmPlanner({
+      const p = new LitePlanner({
         model: 'm',
         runtime: 'r',
         loadRuntime: () => Promise.reject(new Error('404')),
@@ -328,7 +326,7 @@ describe('WasmPlanner', () => {
 
   it('lets a retry succeed after a transient load failure', async () => {
     let attempt = 0;
-    const p = new WasmPlanner({
+    const p = new LitePlanner({
       model: 'm',
       runtime: 'r',
       loadRuntime: async () => {
@@ -378,7 +376,7 @@ describe('WasmPlanner', () => {
   });
 });
 
-describe('WasmPlanner off the main thread: the models its worker holds', () => {
+describe('LitePlanner off the main thread: the models its worker holds', () => {
   /**
    * A stand-in Worker answering as planner-worker.ts does, over a fake module of its own: each worker its own table of
    * models held, as a real worker's module is. Node has no Worker; the planner uses one when `Worker` exists.
@@ -410,7 +408,7 @@ describe('WasmPlanner off the main thread: the models its worker holds', () => {
     }
   }
   const g = globalThis as unknown as { Worker?: unknown };
-  const workerPlanner = (): WasmPlanner => new WasmPlanner({ model: 'm', runtime: 'r', workerUrl: 'worker.js', cache: false });
+  const workerPlanner = (): LitePlanner => new LitePlanner({ model: 'm', runtime: 'r', workerUrl: 'worker.js', cache: false });
 
   it('dispose lets its model go to the worker running, and starts none to do it', async () => {
     FakeWorker.made = [];
@@ -441,9 +439,20 @@ describe('WasmPlanner off the main thread: the models its worker holds', () => {
       delete g.Worker;
     }
   });
+
+  it('a worker its host makes is used, with no Worker in the global scope: the same messages, answered as a tab answers them', async () => {
+    FakeWorker.made = [];
+    assert.equal(g.Worker, undefined, 'no Worker here, as in an embedded engine');
+    const p = new LitePlanner({ model: 'm', runtime: 'r', worker: () => new FakeWorker() as unknown as PlannerWorker, cache: false });
+    assert.equal((await p.planText('a')).sql, 'SELECT 1');
+    assert.equal(FakeWorker.made.length, 1);
+    assert.deepEqual(FakeWorker.made[0]!.holds, ['m'], 'its model held on the host\'s worker');
+    p.dispose();
+    assert.equal(FakeWorker.made[0]!.terminated, true, 'and let go with the planner');
+  });
 });
 
-describe('WasmPlanner: a plan in flight while its model changes', () => {
+describe('LitePlanner: a plan in flight while its model changes', () => {
   it('is planned against the model and runtime it began with, and not kept for the new model', async () => {
     const asked: string[] = [];
     const p = planner((m, q, r) => { asked.push(`${m}|${q}|${r}`); return ok('SELECT 1'); }, { model: 'old' });
@@ -456,61 +465,7 @@ describe('WasmPlanner: a plan in flight while its model changes', () => {
   });
 });
 
-describe('fileUrlToPath', () => {
-  // Node's own fileURLToPath is the reference; WasmPlanner cannot import
-  // it (it is bundled for the browser too). Both platform modes are
-  // checked on every platform, so a Windows-only fault fails on a Mac.
-  const VALID = [
-    'file:///C:/users/runneradmin/_bazel/x/wasm/planner/classes.wasm',
-    'file:///c:/lower/drive.wasm',
-    'file:///D:/a%20space/%E6%97%A5%E6%9C%AC/classes.wasm',
-    'file://server/share/planner/classes.wasm',
-    'file:///tmp/wasm/planner/classes.wasm',
-    'file:///Users/me/a%20b/classes.wasm',
-  ];
-
-  for (const windows of [true, false]) {
-    for (const url of VALID) {
-      it(`matches node's fileURLToPath (windows: ${windows}) for ${url}`, () => {
-        let expected: string | Error;
-        try {
-          expected = fileURLToPath(url, { windows });
-        } catch (e) {
-          expected = e as Error;
-        }
-        if (expected instanceof Error) {
-          assert.throws(() => fileUrlToPath(url, windows));
-        } else {
-          assert.equal(fileUrlToPath(url, windows), expected);
-        }
-      });
-    }
-  }
-});
-
-describe('pathToFileUrl', () => {
-  // Node's own pathToFileURL is the reference, in both platform modes
-  // on every platform -- the working directory is turned into the base
-  // every WASM asset resolves against, and `file://${cwd}` was wrong
-  // on Windows.
-  const CASES: [string, boolean][] = [
-    ['C:\\Users\\runneradmin\\work\\', true],
-    ['C:\\a space\\\u65e5\u672c\\x.wasm', true],
-    ['d:\\lower\\', true],
-    ['\\\\server\\share\\planner\\', true],
-    ['/Users/me/a b/', false],
-    ['/home/runner/work/x#y?z/', false],
-    ['/odd/100%@$=+,;\\name/', false],
-    ['C:\\odd\\100%@$=+,;\\', true],
-  ];
-  for (const [path, windows] of CASES) {
-    it(`matches node's pathToFileURL (windows: ${windows}) for ${path}`, () => {
-      assert.equal(pathToFileUrl(path, windows), pathToFileURL(path, { windows }).href);
-    });
-  }
-});
-
-describe('WasmPlanner.withModel: another source on the page, the same module', () => {
+describe('LitePlanner.withModel: another source on the page, the same module', () => {
   it('plans over its own model and runtime, loading the module once', async () => {
     let loads = 0;
     const asked: string[] = [];

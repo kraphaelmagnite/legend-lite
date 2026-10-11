@@ -21,7 +21,7 @@
 import { refusePlanner, RUNTIME, SNAP_TARGET, SOURCE, type Engine, type PlaneWord } from './boot.ts';
 import { pageConfig } from './page-config.ts';
 import { UpstreamPlanner } from '../src/planner.ts';
-import { WasmPlanner } from '../src/wasm-planner.ts';
+import { LitePlanner } from '../src/lite-planner.ts';
 
 const WORKER = (): string => new URL('./planner-worker.js', import.meta.url).href;
 
@@ -32,7 +32,7 @@ export async function plannerFor(plane: PlaneWord, model: string): Promise<Engin
 
 /** The planner in this tab: legend-lite's compiler as WebAssembly, off the main thread. */
 async function inTab(model: string): Promise<Engine> {
-  const planner = new WasmPlanner({
+  const planner = new LitePlanner({
     model,
     runtime: RUNTIME,
     // Off the main thread: building the boot layer is ~600ms of synchronous WebAssembly, which on
@@ -72,7 +72,7 @@ async function onServer(model: string, which: 'remote' | 'engine'): Promise<Engi
   const planner = new UpstreamPlanner({ baseUrl: url, model, runtime: RUNTIME });
   // legend-lite's module beside the server's planner, nothing loaded until first asked: it writes a table's model, and a
   // saved query's project's test data as the server's statements
-  const writer = new WasmPlanner({ model: '', runtime: RUNTIME, workerUrl: WORKER() });
+  const writer = new LitePlanner({ model: '', runtime: RUNTIME, workerUrl: WORKER() });
   return {
     planner,
     source: SOURCE,

@@ -84,6 +84,14 @@ reaches Python over the notebook's own widget channel, not HTTP, so it works whe
 kernel's machine (a remote JupyterHub). While a cell runs, the cube waits for it, as any notebook widget does.
 `ll.show(df, inline=False)` opens a tab from a kernel instead (Spyder's console, qtconsole: they show no widgets).
 
+**DataCube in code, headless** (`pip install '...whl[datacube,pandas]'`, which adds mini-racer's V8): a page's grid
+computed by DataCube's own code, in the same process, with no browser -- `grid.view()` is what the grid shows (its
+groups, totals, pivot and what its row cap cut, as DataCube computes them), `grid.relation` its rows at their finest
+level as Pure (the relation Create a Class makes a class of), and `grid.to_pandas()` every one of those rows, from the
+frames' own database. DataCube plans through the compiler's library and queries Python's DuckDB; nothing runs as
+WebAssembly. Safe inside a notebook's running loop: the engine runs on a thread of its own. On Linux the extra needs
+glibc 2.27 (mini-racer's wheels), where legend-lite alone needs 2.17.
+
 **In a marimo notebook** (`pip install '...whl[notebook,pandas]' marimo`): `ll.show(df)` is the cube for the cell to
 show, marimo's way -- as the cell's last expression (`ll.show(df)`, or `cube = ll.show(df)` then `cube`). When the cell
 that makes `df` runs again, the cube's cell runs again and shows the new frame, the old cube closed with its run; an

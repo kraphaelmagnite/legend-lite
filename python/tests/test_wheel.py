@@ -51,8 +51,15 @@ for name in ("widget.js", "widget.css"):
     widget._answer({"kind": "call", "id": name, "method": "GET", "path": "/" + name, "query": "", "body": None})
 notebook = {"loader": " as default" in widget._esm, "answers": [(c["status"], len(b[0])) for c, b in sent]}
 widget.close()
+# the datacube extra: a page's grid run by DataCube's own code in V8, from the wheel alone (its bundle inside it)
+grid = ll.Page("headless").grid(pd.DataFrame({"desk": ["FX", "EQ", "FX"], "qty": [1.5, 2.5, 4.0]}), name="hl",
+                                rows=["desk"], measures={"qty": "sum"})
+view = grid.view()
+names = [c["name"] for c in view.columns]
+headless = {"groups": sorted([r[names.index("__tree")], r[names.index("qty")]] for r in view.rows),
+            "bundle": __import__("legend_lite._headless", fromlist=["x"])._BUNDLE.as_posix()}
 print(json.dumps({"module": ll.__file__, "library": __import__("legend_lite._library", fromlist=["x"]).library().path.as_posix(),
-                  "page": page, "cube": sorted(cube_json), "rows": rows, "notebook": notebook}))
+                  "page": page, "cube": sorted(cube_json), "rows": rows, "notebook": notebook, "headless": headless}))
 '''
 
 
@@ -236,7 +243,8 @@ class Label(unittest.TestCase):
             metadata = wheel.read(info).decode()
         self.assertIn('Requires-Python: >=3.12', metadata)
         self.assertIn('License: Apache-2.0', metadata)
-        for requirement in ('duckdb>=1.5.5', 'pyarrow>=23.0.1', "anywidget>=0.11.0; extra == 'notebook'"):
+        for requirement in ('duckdb>=1.5.5', 'pyarrow>=23.0.1', "anywidget>=0.11.0; extra == 'notebook'",
+                            "mini-racer>=0.14.1; extra == 'datacube'"):
             self.assertIn(f'Requires-Dist: {requirement}', metadata)
 
 
@@ -273,3 +281,6 @@ class Installed(unittest.TestCase):
         self.assertTrue(out['notebook']['loader'], out['notebook'])
         self.assertEqual([status for status, _ in out['notebook']['answers']], [200, 200], out['notebook'])
         self.assertGreater(out['notebook']['answers'][0][1], 500_000, out['notebook'])
+        # the datacube extra installed: a grid viewed by DataCube's own code, its bundle the wheel's
+        self.assertEqual(out['headless']['groups'], [['EQ', 2.5], ['FX', 5.5]], out['headless'])
+        self.assertTrue(Path(out['headless']['bundle']).is_relative_to(venv), out['headless'])

@@ -197,9 +197,11 @@ public final class ModelBuilder implements com.legend.compiler.StoreLookups {
 
     /**
      * Element FQNs registered MORE THAN ONCE in the packageable-element
-     * namespace (classes, enums, associations, profiles, databases — one
-     * shared namespace, engine parity: {@code PureModelBuilder} rejects
-     * "Duplicated element"). Recorded here at ingest — last-wins slotting
+     * namespace (classes, enums, associations, profiles, measures, databases
+     * and the mapping DSL's mappings — one shared namespace, engine parity:
+     * {@code PureModelBuilder} rejects "Duplicated element"; services, data,
+     * connections, runtimes and clean-sheet mappings still slot last-wins,
+     * PARK-25 in {@code docs/PARKED_WORK_LEDGER.md}). Recorded here at ingest — last-wins slotting
      * has already discarded the loser by the time integrity runs — and
      * THROWN by {@code ModelIntegrity} so the poison-not-drop/wallSink
      * discipline applies uniformly (D6b frontend-leniency batch).
@@ -504,7 +506,11 @@ public final class ModelBuilder implements com.legend.compiler.StoreLookups {
     }
 
     private void ingestLegacyMapping(LegacyMappingDefinition md) {
-        putAtId(legacyMappings, intern(md.qualifiedName()), md);
+        // a parsed DSL mapping takes its slot in the shared element namespace (a mapping defined twice, or under
+        // a class's name, is ModelIntegrity's "Duplicated element", refused before Phase E reads this index;
+        // before 2026-10-11 it was a silent last-wins that the include ordering then misread as an empty cycle);
+        // its normalized product (the MappingDefinition arm above) registers by plain intern, under the same name
+        putAtId(legacyMappings, internElement(md.qualifiedName()), md);
         // R2: within one MappingDefinition a class maps EITHER once, or
         // through multiple set-ID'd ClassMappings of which exactly ONE
         // carries the root marker (* picks the .all() set). Anything else —

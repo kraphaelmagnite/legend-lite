@@ -19,3 +19,7 @@ colorama==0.4.6
 jupyterlab==4.6.4
 # the notebook cube's real-marimo test only (//datacube:marimo_test): marimo, the reactive notebook
 marimo==0.25.1
+# DataCube headless in Python (2026-10-11; docs/DATACUBE_HEADLESS_PYTHON_DESIGN_2026_10_11.md, the user's ruling: V8):
+# mini-racer, V8 14.4 with its ICU data inside the wheel (py3-none, all five targets), runs DataCube's own non-screen
+# bundle in the Python process (legend_lite/_headless.py; the wheel's `datacube` extra; //datacube:headless_test)
+mini-racer==0.14.1

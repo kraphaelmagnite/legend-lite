@@ -162,6 +162,8 @@ class _Session:
         self.pages: list[PageTab | PageCube] = []
         self._engine: Engine | None = None
         self._web: WebServer | None = None
+        # DataCube's own code over these frames, headless (legend_lite._headless): made on first use
+        self._headless: Any = None
         self._lock = threading.RLock()
         self._hooked = False
         # a cube was opened in a browser: a person is looking, so a plain script's end keeps the engine for them
@@ -172,6 +174,19 @@ class _Session:
             if self._engine is None:
                 self._engine = Engine(self.frames, site=_site())
             return self._engine
+
+    def headless(self) -> Any:
+        """DataCube's own non-screen code, in V8, over these frames' database (the `datacube` extra): made on first
+        use, one per session, as one state owner holds a grid's state on screen."""
+        with self._lock:
+            if self._headless is not None and self._headless.broken:
+                # it ran out of its memory: a new one, the frames as they are
+                self._headless.close()
+                self._headless = None
+            if self._headless is None:
+                from ._headless import Headless, bundle
+                self._headless = Headless(bundle(), connection=self.frames.connection)
+            return self._headless
 
     def web(self) -> WebServer:
         """The engine over HTTP, for the tabs: started by the first."""
@@ -189,8 +204,10 @@ class _Session:
             shown = name.lower() in self.cubes or any(f.lower() == name.lower()
                                                       for view in self.pages for f in view._page._frames())
             self.frames.register(name, frame, mode)
-            engine = self.engine()
-            if shown or engine.seen(name):
+            # an engine is made by what shows a frame (a tab, a notebook's cube, a page shown): none yet, nothing has
+            # been served and nobody is told; a page's grid read headless (Grid.view) needs none
+            engine = self._engine
+            if engine is not None and (shown or engine.seen(name)):
                 # shown again under its name (or again after it was closed): a page showing it reads it again
                 engine.changed(name)
             return name
@@ -369,6 +386,8 @@ def _release(key: int) -> None:
         except Exception:
             # its channel may have gone with the session: the frame is still let go below
             pass
+    if session._headless is not None:
+        session._headless.close()
     session.frames.close()
 
 

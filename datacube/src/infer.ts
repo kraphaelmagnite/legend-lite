@@ -109,7 +109,7 @@ export interface InferOptions {
 }
 
 /**
- * THE MODEL WRITER for a table (legend-lite's module: `WasmPlanner` implements it). A column of a
+ * THE MODEL WRITER for a table (legend-lite's module: `LitePlanner` implements it). A column of a
  * type no Database declares is refused, naming it (a `PlanError` with the compiler's words); given
  * `snapDatabaseType`, the model carries the snap runtime too, and says so in its type.
  */

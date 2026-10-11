@@ -103,7 +103,7 @@ class StackDesignWitnessTest {
             Mapping w::IntoFunc (
               *w::Thing : Operation { %s(t1, t2) }
               w::Thing[t1] : Relational { ~mainTable [w::DB] T1 id: T1.ID, name: T1.NAME }
-              w::Thing[t2] : Relation { ~func w::thingsFn():meta::pure::metamodel::relation::Relation<Any>[1] id: ID, name: NAME }
+              w::Thing[t2] : Relation { ~func w::thingsFn():Relation<Any>[1] id: ID, name: NAME }
               *w::Owner : Relational { ~mainTable [w::DB] O id: O.ID,
                 things[t1]: [w::DB]@O_T1,
                 things[t2]: [w::DB]@O_T2 }

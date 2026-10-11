@@ -8618,3 +8618,150 @@ warehouse, datacube, ui -- on every platform (26 jobs); the PCT, corpus, stress 
 writer on `pure_v1` and DataCube's own code, and alters no compile path they use. Pushed to main as `6e57d350c`, a
 fast-forward (main unmoved since the run), on the user's "Push it", after their question whether the tests had got
 slower (answered by the measures above).
+
+## 2026-10-11 — A duplicate mapping is refused, never an index error (the Bazel program)
+
+**Landed 2026-10-11 as 0b29453e1** (branch `build/dup-mapping`; run 38145210104, full gate.yml on all platforms: green on every job after one re-run of windows / warehouse (a runner filesystem error in the Node module tree during analysis of `//datacube:jupyterlab_test`, which the change does not touch; the same error L7 step 3's run met once); the first run on the tree before the rebase onto datacube-m3, 38122177071, green on every job).
+Announced in `docs/IN_FLIGHT.md` the same day (37a3edb2c). The DataCube line reported it while writing tests: a model
+holding two mappings of one name, one including another, crashed `compileModel` with an `IndexOutOfBoundsException`
+from the normalizer's include ordering instead of a refusal.
+
+1. **The cause, two halves.** `StoreSubstitutionRewrite.resolveAllStores` counted the parsed mappings (a duplicate
+   twice) against the names it had ordered (once), read the difference as an include cycle, and indexed the cycle's
+   members — none, since every name was ordered. And a parsed mapping never took its slot in the shared element
+   namespace: the D6b batch (`docs/STAMP_DISCIPLINE_PROGRAM.md`) covered classes, enums, associations, profiles,
+   measures and databases, and mappings slotted last-wins by plain `intern`, so only the cycle check noticed.
+2. **The fix.** The cycle check counts the graph's names (`byFqn`): the ordered names are always among them, so a
+   difference names a member. `ModelBuilder.ingestLegacyMapping` registers the DSL mapping through `internElement`,
+   and the duplicate is refused as a class's is — and BEFORE Phase E reads the index (`ModelIntegrity.refuseDuplicates`,
+   called by `Compiler.normalizeLayer`; the engine's order, D6b's "element-identity first"), so a second copy's own
+   shape (a self-include, a repeated include) never speaks first: `compileModel` throws "Duplicated element 'w::M'";
+   the module path (`parseSources`) drops a same-kind duplicate at parse and reports it, as before, and walls a
+   cross-kind collision (a class and a mapping of one name) under the name. The gate's check keeps the arm for a
+   graph element shadowing a boot FQN. The normalized product still registers by plain `intern` under the same name.
+3. **Not fixed, recorded:** services, `###Data`, connections (a runtime's inline ones too), runtimes and clean-sheet
+   mappings still slot last-wins (`docs/PARKED_WORK_LEDGER.md` PARK-25, anchored on the services slot); two include
+   spellings of one mapping are refused as a cycle (PARK-26, anchored on the resolved names' count; the audit's find);
+   PARK-25 also records a path that is also a package, which the engine refuses ("An element named 'domain' already
+   exists in the package 'trades'"; the DataCube line's audit the same day) and lite, registering no package, does not.
+4. **Judges.** the six corpus passes against the baseline built from main 741f24f9a the same day: 22 result files identical, 0 differing (`evidence/dup-mapping/corpus_passes_compare.txt`); the render census, main's tree against the change, every JVM lane with the probe: 52543 (lane, dialect, kind, text) entries; 0 differ (`evidence/dup-mapping/render_census_compare.txt`); the local gate 328 targets green on the final tree (`bazel test --lockfile_mode=error //gates:local`); `//parser-equivalence/...` 6 targets green; the lane-membership query empty. The judges' one find: `RelationalMappingIntegrationTest.testDataMutations` named its class
+   `model::M`, as its mapping; the engine refuses the pair (one namespace), and so does lite now; the class is `model::Mut`
+   and the `//gates:core` lane's census was run again on the fixed tree (the only lane holding the test). The
+   parser-equivalence ratchet `own_corpus.matched` moves 2823 → 2832 (the nine elements of the new test models in
+   `IncludeRulesTest` joined the own corpus and matched; measured on the tree rebased onto 6e57d350c, whose own models had
+   moved it 2814 → 2823).
+5. **The parsed model's side maps key by path alone** (`ParsedModel.keyOf`), so a class and a mapping of one name
+   share one offset, imports and span entry; parser-equivalence's conformance ratchet caught it on the refusal's own
+   test (the planner placed the mapping at the class's offset and asked for a `###Mapping` header). `Sectionize.plan`
+   declines such a snippet as not sectionizable, as it declines one that does not parse; the keying, and the
+   refusal's position (the recorded element's, where the engine points at the second), are in PARK-25.
+6. **The audit** (`evidence/dup-mapping/AUDIT.md`: ready after fixes, 0 blockers, 5 should-fix, 3 nits, every one
+   answered): the refusal moved before Phase E (it had reported a self-include as a cycle); the cross-kind and
+   self-include cases tested; the wording narrowed to the DSL's mappings and clean-sheet mappings parked; a dangling
+   citation and a "below" fixed.
+
+## 2026-10-11 — A `~func` descriptor spelling a type by its package path is refused, as the engine refuses it (the Bazel program)
+
+**Landed 2026-10-11 as eabda91b8** (branch `build/func-descriptor`; run 38152032814, full gate.yml on all platforms: green on every job, 50 of 50, no re-run; main's own run of the previous landing (38147522593, on 0b29453e1) had timed out once in `//warehouse:tests_native` on linux / warehouse (300 s), a job the same commit passed in 38145210104 and again in this run, so its failed job was re-run rather than rolled back).
+Announced in `docs/IN_FLIGHT.md` the same day (9a6873d07). The DataCube line's find against legend-engine 4.145.0,
+writing the model writer's tests: a relation class mapping's `~func f():meta::pure::metamodel::relation::Relation<Any>[1]`
+compiled in lite and failed in the engine.
+
+1. **The engine's rule.** legend-pure's `FunctionDescriptor.validateType` (m3-core, `navigation/function/FunctionDescriptor.java`),
+   run by `functionDescriptorToId` on every descriptor the compiler resolves (`compiler/toPureGraph/PureModel.java`,
+   the prerequisite pass), allows no package path in a parameter or return type ("Package path not allowed in types:
+   <type>") and no function type ("Unsupported type"); a type's arguments are not read (the id keeps the head name).
+   The id conversion failing, the compiler looks the raw text up as an element and reports "Can't find the packageable
+   element".
+2. **Lite.** `MappingFromProtocol.relationFunction` cut the descriptor at its signature and resolved the name alone, so
+   the signature's spelling was never read. Now `refuseDescriptorTypes` reads each parameter type's and the return
+   type's head name (the multiplicity stripped, the arguments skipped, as the engine does) and refuses a package path
+   or a function type through the model door's own channel (`UnsupportedMappingShape`): the text door reports it at
+   the element with the descriptor's position, the JSON door as the element's `Unrepresentable`, the module path walls
+   the mapping. At every dialect: the signature means nothing in lite beyond the engine's id format, and a model written
+   so compiles nowhere. Not touched: the parser's descriptor scan, the activator's `function:` descriptor (parse-only in
+   lite), the wire.
+3. **Tests.** `RelationFunctionDescriptorTest` (the return type, a parameter type, a function type refused; the
+   simple-name form with and without the signature, and a package path inside a type argument, compile); the two
+   fixtures that spelled the long form (`RelationMappingWindowSeamTest`, `StackDesignWitnessTest`) rewritten to the
+   simple name, the only such texts in the repository (no corpus text uses the form). The parser-equivalence ratchet is unchanged (`own_corpus.matched` 2832) and the
+   lane green.
+4. **Judges.** the six corpus passes against the baseline built from main 9a6873d07 the same day: 22 result files identical, 0 differing (`evidence/func-descriptor/corpus_passes_compare.txt`); the render census, main's tree against the change, every JVM lane with the probe: 52550 (lane, dialect, kind, text) entries; 0 differ (`evidence/func-descriptor/render_census_compare.txt`); the local gate 329 targets green on the final tree (`bazel test --lockfile_mode=error //gates:local`); `//parser-equivalence/...` 6 targets green; the lane-membership query empty. The main-side census was run twice: the first run's swap to main's
+   source left the branch's new test file in place, so main's test library did not build and the core lane's records were
+   missing on that side (3384 entries "differ", all absent on main); the chain scripts now remove branch-only files
+   during the swap, and the second run is the one compared.
+5. **The audit** (`evidence/func-descriptor/AUDIT.md`: ready after fixes, 0 blockers, 5 should-fix, 6 notes, every one
+   answered): the JSON door tested (the text's protocol JSON read back and compiled, refused with the engine's phrase);
+   a JSON-carried descriptor's spaces removed outside quotes before the scan, as the engine's lexer drops them; PARK-28
+   records that the signature itself is never matched against the function's (the engine resolves by the full id
+   `f__Relation_1_`, lite by the name alone; the `~src f():R[1]` form drops its tail at parse; the activator's
+   `function:` descriptor is parse-only), anchored on the signature cut and pinned in `ParkedWorkLedgerTest`; the
+   identity guard's NAME_AFFIX_TEST re-pinned 51 → 52 with the reason (a descriptor TYPE's spelling tested for a package
+   path: the engine's rule on text never resolved into a declaration, not a name's affix); a unit type and a type
+   variable tested as accepted; the handoff note of 2026-09-02 corrected.
+6. **Two differences from the announcement, and one from the engine.** The refusal rides the model door's own channel
+   (`UnsupportedMappingShape`): a positioned `ParseException` from text, `Unrepresentable` from JSON, which
+   `Compiler.compileModel` reports as `NotImplementedException` (the channel's wording, not this rule's), not the
+   `ModelException` the announcement named; and a function type in a parameter or return position is refused too
+   ("Unsupported type"), the same `validateType`. Lite's message names the rule and the type where the engine reports
+   "Can't find the packageable element '<descriptor>'" at the class mapping (its id conversion fails and the raw text is
+   looked up): a deliberate difference, so an engine-fixture comparison of this case sees two messages.
+
+## 2026-10-11 — DataCube headless in Python: DataCube's own code in V8, planned by the native library, run on Python's DuckDB, no WebAssembly (the DataCube + Python line)
+
+The design is `docs/DATACUBE_HEADLESS_PYTHON_DESIGN_2026_10_11.md`. The user agreed it and ruled §10: one package, V8,
+before the model plan's Python calls, the rename. It was reviewed by the Plan Gen / Exec Split and Compiler Rewrite
+lines. The evidence is in `docs/datacube-headless-evidence-2026-10-11/`. Branch `datacube-headless`, 25 commits and this one.
+CI: run 38177320130 (warehouse, checks, datacube, ui and parser_equivalence on all platforms) green but for Windows'
+datacube lane, a Windows-only path in the new runner test, fixed and run again in 38178422811 (datacube on all
+platforms), green; the only change after them is main's IN_FLIGHT line, rebased onto. `//gates:local` green before.
+
+1. **What it is.**
+   - Python runs DataCube's non-screen TypeScript in V8 (mini-racer 0.14.1).
+   - DataCube's own planner plans over its worker protocol (`datacube/src/planner-protocol.ts`). The host answers each
+     request kind with the native library's function that delegates to the same `Boundary` function as the tab's
+     export. Three were added for this: `lite_plan_text_held`, `lite_relation_type_text_held`, `lite_test_data_sql`.
+   - Its queries run on Python's DuckDB, through `DuckDbEngine` and Arrow IPC.
+   - WebAssembly is deleted from the V8 context before anything loads.
+   - DataCube's side is `datacube/src/headless/`: the web layer to its standards, the host's worker and connection, and
+     the grid. Python's side is `legend_lite/_headless.py`: V8 on a loop of legend-lite's own, and the one table of
+     request kinds, which is also the start-up check against the library's exports.
+2. **What a person gets.**
+   - `grid.view()`: what a page's grid shows, as DataCube computes it, with its configuration folded in and its columns
+     laid out as the screen lays them out.
+   - `grid.relation`: its rows at their finest level, as Create a Class makes them.
+   - `grid.to_pandas()`: every one of those rows, from the frames' own database.
+   - These are safe inside a notebook's running loop.
+   - `pip install legend-lite[datacube]` gives this; the wheel carries the bundle.
+   - `WasmPlanner` is renamed `LitePlanner`, with Plan Gen.
+3. **The lane, `//datacube:headless_test`, in `//gates:warehouse`.**
+   - **67 of DataCube's test files, 1,122 tests, all passing**, the same count Node runs for them. Each runs through the
+     production paths, built with a `headless` condition (`#test-host`) that swaps only where a test's planner and
+     database come from.
+   - The 14 files that mixed screen, HTTP or Node-reference tests were each split in two (`-dom`, `-http`, `-node`):
+     324 tests, as before.
+   - `headless_roster_test` keeps every test file in the lane, left out by name with a reason, or Node-only by what it
+     imports.
+   - **The judges are held to Node's own:**
+     - `node-assert.ts` against `node:assert/strict`, over 66+ value pairs and every expectation kind;
+     - `node-test.ts` against Node's own node:test, which runs the same suite in a child Node, and its mock timers too;
+     - the web layer against Node's built-ins, and against the DOM standard alone where Node 22 departs from it.
+   - The lane asserts no test was skipped.
+   - The host's own checks: the request kinds both ways, no WebAssembly, a plan through the worker run on DuckDB, the
+     memory cap, a timeout, every `setTimeout` form, and a registered file's folder.
+4. **Reviews and audit.**
+   - Plan Gen: found two worker kinds answered by other functions than the tab's (`plan`, `relationType`); now closed.
+   - Compiler Rewrite: the lane in warehouse, the roster guard, parser_equivalence in CI.
+   - The branch's audit: 2 blockers (the grid's configuration not folded in; two locks in opposite orders) and 9
+     should-fix, every one answered (design §14).
+   - Windows CI found the test-imports generator's command line past 8191 characters with the split's files. It now
+     takes a `params_file`. And the live node:test comparison handed Node its reporter as a drive path, which a module
+     specifier cannot be; it is now a `file:` URL.
+5. **Upstream.** mini-racer's `setTimeout` throws for a delay of 0 or less and never fires with none
+   (https://github.com/bpcreech/PyMiniRacer/issues/97: not by design, not reported before, not fixed in 0.14.1). The
+   host holds each delay to a millisecond until the pin moves past the fix.
+6. **Left for later:**
+   - the design's step 3, the page engine (`page.export`);
+   - step 5, the model plan's Python `create_*`;
+   - the TeaVM unmodifiable-collections fix, the Compiler Rewrite line's, which the user rules on: a 200-class page's
+     tab compile goes from 4.2 s to 73 ms with it.

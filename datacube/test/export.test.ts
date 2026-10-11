@@ -7,6 +7,9 @@ import { exportTable, REDACTED } from '../src/export-model.ts';
 import { buildColumnModel } from '../src/grid/columns.ts';
 import type { ResultTable } from '../../engine-client/src/result.ts';
 
+/** base64 as its bytes, by the web's own atob (a test reads an export's bytes as a page would). */
+const fromBase64 = (text: string): Uint8Array => Uint8Array.from(atob(text), (c) => c.charCodeAt(0));
+
 const TABLE: ResultTable = {
   columns: [
     { name: 'region', type: 'String', values: ['EMEA', 'AMER', null] },
@@ -143,12 +146,12 @@ describe('toEml: an unsent draft, to the letter', () => {
     assert.ok(!/[^\r]\n/.test(eml), 'no bare LF');
     const subject = /\r\nSubject: (.*?)\r\nX-Unsent/s.exec(eml)?.[1] ?? '';
     const decoded = [...subject.matchAll(/=\?UTF-8\?B\?([^?]+)\?=/g)]
-      .map((m) => Buffer.from(m[1]!, 'base64').toString('utf8')).join('');
+      .map((m) => new TextDecoder().decode(fromBase64(m[1]!))).join('');
     assert.equal(decoded, 'Café P&L — Q1');
     assert.equal(encodedWords('plain'), 'plain');
   });
   it('has a text and an HTML body saying what is attached', () => {
-    const body = Buffer.from(/text\/plain; charset="UTF-8"\r\nContent-Transfer-Encoding: base64\r\n\r\n([A-Za-z0-9+/=\r\n]+?)\r\n--/.exec(eml)?.[1] ?? '', 'base64').toString('utf8');
+    const body = new TextDecoder().decode(fromBase64(/text\/plain; charset="UTF-8"\r\nContent-Transfer-Encoding: base64\r\n\r\n([A-Za-z0-9+/=\r\n]+?)\r\n--/.exec(eml)?.[1] ?? ''));
     assert.equal(body, 'Café: 2 rows.');
     assert.match(eml, /Content-Type: text\/html; charset="UTF-8"/);
   });
@@ -156,7 +159,7 @@ describe('toEml: an unsent draft, to the letter', () => {
     const [, attachment] = mimeParts(eml, '=_mixed_datacube');
     assert.match(attachment ?? '', /filename="Caf_ report\.pdf"; filename\*=UTF-8''Caf%C3%A9%20report\.pdf/);
     const b64 = (attachment ?? '').split('\r\n\r\n')[1]?.replace(/\r\n/g, '') ?? '';
-    assert.deepEqual([...Buffer.from(b64, 'base64')], [...bytes], 'byte for byte');
+    assert.deepEqual([...fromBase64(b64)], [...bytes], 'byte for byte');
     assert.ok((attachment ?? '').split('\r\n').every((l) => l.length <= 998), 'no line past RFC 5322\'s limit');
   });
 });

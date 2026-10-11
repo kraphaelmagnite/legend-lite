@@ -5,13 +5,17 @@
 // package that the generator cannot resolve to a declared file fails it (the sandbox alone would not catch a missed
 // TRANSITIVE import: Node resolves a source's own imports from where Bazel copied it, beside every other source).
 //
-// Usage: test-imports <out.bzl> <package> <file>...  (files by their repository paths, as $(rootpaths) gives them)
+// Usage: test-imports <out.bzl> <package> <file>... (files by their repository paths, as $(rootpaths) gives them; an
+// `@<list>` argument is a file of such paths, how BUILD.bazel hands them over: on a command line they pass Windows'
+// limit)
 import { readFileSync, writeFileSync } from 'node:fs';
 import { posix } from 'node:path';
 
 const [out, pkg, ...rest] = process.argv.slice(2);
 if (out === undefined || pkg === undefined) throw new Error('usage: test-imports <out.bzl> <package> <file>...');
-const files = new Set(rest.flatMap((a) => a.split(' ')).filter((f) => f.length > 0));
+const files = new Set(rest
+  .flatMap((a) => (a.startsWith('@') ? readFileSync(a.slice(1), 'utf8').split(/\s+/) : a.split(' ')))
+  .filter((f) => f.length > 0));
 
 // a static import, export-from or import(): a type-only import is counted too (it costs a file, never a miss)
 const IMPORT = /(?:\bfrom\s*|\bimport\s*\(?\s*)(['"])(\.{1,2}\/[^'"]+)\1/g;

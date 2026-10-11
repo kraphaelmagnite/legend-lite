@@ -27,6 +27,21 @@ class Corpus(unittest.TestCase):
         self.assertGreater(refusals, 0, 'the corpus holds refusals too: none came back as one')
         print(f'{len(queries)} answers identical to the JVM, {refusals} of them refusals')
 
+    def test_every_answer_over_the_model_held_is_the_jvms(self):
+        # a DataCube planner's `plan`, as the headless host answers it (lite_plan_text_held over Boundary.planHeld, the
+        # tab's planHeldOrError): the model compiled once, each query planned against it, the same answers
+        model = Path(os.environ['LEGEND_LITE_CORPUS_MODEL']).read_text()
+        queries = [l.split('\t', 1) for l in Path(os.environ['LEGEND_LITE_CORPUS_QUERIES']).read_text().split('\n') if l]
+        jvm = dict(re.findall(r'<<<([^>]+)>>>\n([\s\S]*?)\n<<<END>>>\n', Path(os.environ['LEGEND_LITE_JVM_ANSWERS']).read_text()))
+        held = library().call('lite_hold_model', model)
+        self.assertTrue(held.startswith('OK\n'), held)
+        handle = held[3:]
+        try:
+            differ = [name for name, q in queries if library().call('lite_plan_text_held', handle, q, 'trades::RT') != jvm.get(name)]
+        finally:
+            library().call('lite_release_model', handle)
+        self.assertEqual(differ, [], f'{len(differ)} answers differ over the model held: {differ[:10]}')
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -141,7 +141,10 @@ class IdentityGuardrailTest {
             // 208 -> 205 (2026-10-06, build rebuild Phase 3: measured when the table became the one authority)
             Map.entry("NAME_COMPARE_REVERSED", 79), // 81 -> 79 (2026-10-10, L7 "resolve once" steps 3-4: readers read the record)
             Map.entry("LITERAL_NAME_COMPARE", 65),   // 64 -> 65 (2026-09-27, T4a): protocol/ProtocolUpgrade, upstream's protocol converter for a Result variable ("meta::pure::mapping::Result" on the WIRE, before any resolution)
-            Map.entry("NAME_AFFIX_TEST", 51),
+            Map.entry("NAME_AFFIX_TEST", 52),
+            // 51 -> 52 (2026-10-11, the ~func descriptor refusal: MappingFromProtocol.refuseDescriptorTypes tests a
+            // descriptor TYPE's spelling for a package path, the engine's FunctionDescriptor.validateType rule on text
+            // that is never resolved into a declaration; not an element name's affix)
             Map.entry("NAME_CUTTING", 107),   // 105 -> 106 (2026-10-09, Phase 3 rebased onto main: protocol leg 2 step 3's PersistenceReader.kindOf splits a wire-type KEY at ':' (76ed304bf), not a function name; the pin follows the count); 106 -> 105 (2026-10-06, build rebuild Phase 3: measured); 104 -> 106 (2026-09-27, T4a): protocol/PureComposer prints as upstream's printer does -- it strips a wire function name's package to match its special forms and splits a path to quote each segment; 105 -> 104 (2026-09-26, step 2: the unroller's bare-name cut retired with its by-name fold test)
             // 106 -> 107 (2026-10-10, L7 step 4: a bare signature-id reference is qualified by its base in the resolver's
             // pointer arm (qualifyIdByBase), once, where the typer walked the tiers from the bare base at every read)

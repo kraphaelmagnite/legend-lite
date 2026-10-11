@@ -12,6 +12,9 @@
 // So the module lives here. The main thread stays free for DuckDB and
 // for rendering, and the two startups genuinely run at once.
 //
+// Its messages are planner-protocol.ts's, the contract every host of the
+// planner answers (Python's headless host too).
+//
 // This worker deliberately contains no planning logic of its own: it
 // forwards to the module's `holdModelOrError`, `releaseModel`, `planHeldOrError`,
 // `planJsonHeldOrError`, `relationTypeHeldOrError`, `tableModelOrError`,
@@ -20,6 +23,8 @@
 // design exists to avoid. The models it holds (compiled once, planned
 // against many times: docs/DATACUBE_MODEL_DESIGN_2026_10_10.md §8) are
 // the module's, so they live as long as this worker does.
+
+import type { Request, Response } from './planner-protocol.ts';
 
 interface TeavmModule {
   readonly exports: {
@@ -35,25 +40,6 @@ interface TeavmModule {
     testDataSqlOrError(model: string, database: string, tablesJson: string): string;
   };
 }
-
-/** What the main thread sends. */
-export type Request =
-  // a model held: compiled the first time its text is, the answer its handle
-  | { readonly id: number; readonly kind: 'hold'; readonly model: string }
-  | { readonly id: number; readonly kind: 'release'; readonly handle: number }
-  | { readonly id: number; readonly kind: 'plan'; readonly handle: number; readonly query: string; readonly runtime: string }
-  | { readonly id: number; readonly kind: 'relationType'; readonly handle: number; readonly query: string }
-  | { readonly id: number; readonly kind: 'tableModel'; readonly table: string }
-  | { readonly id: number; readonly kind: 'catalogColumnsSql'; readonly schema: string; readonly table: string }
-  | { readonly id: number; readonly kind: 'planJson'; readonly handle: number; readonly lambda: string; readonly runtime: string }
-  // one pure/v1 call: its path (`/api/pure/v1/...`), its raw query string ('' for none) and its body
-  | { readonly id: number; readonly kind: 'pureV1'; readonly path: string; readonly query: string; readonly body: string }
-  | { readonly id: number; readonly kind: 'testData'; readonly model: string; readonly database: string; readonly tables: string };
-
-/** What it gets back. `answer` is the export's raw tagged string. */
-export type Response =
-  | { readonly id: number; readonly ok: true; readonly answer: string }
-  | { readonly id: number; readonly ok: false; readonly error: string };
 
 let modulePromise: Promise<TeavmModule> | undefined;
 
@@ -88,7 +74,7 @@ function answerOf(module: TeavmModule, msg: Request): string {
   }
 }
 
-self.onmessage = async (e: MessageEvent<Request & { base?: string }>) => {
+self.onmessage = async (e: MessageEvent<Request>) => {
   const msg = e.data;
   try {
     if (!modulePromise) {

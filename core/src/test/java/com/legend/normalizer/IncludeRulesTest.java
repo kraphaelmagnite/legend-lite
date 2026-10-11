@@ -112,4 +112,49 @@ class IncludeRulesTest {
         ModelException e2 = assertThrows(ModelException.class, () -> Compiler.compileModel(dupInclude));
         assertTrue(e2.getMessage().contains("Duplicated mapping include"), e2.getMessage());
     }
+
+    @Test
+    @DisplayName("a mapping defined twice is a duplicate element, never an include cycle")
+    void duplicateMappingIsADuplicateElement() {
+        // 2026-10-11: the include ordering's cycle check counted the parsed mappings (a duplicate twice)
+        // against the ordered names (once) and named an empty cycle: an index error, not a refusal
+        String dupMapping = CLASSES + """
+                ###Mapping
+                Mapping w::A ( *w::Person[a] : Relational { ~mainTable [w::DB] PERSON_A name: PERSON_A.NAME } )
+                Mapping w::M ( include mapping w::A )
+                Mapping w::M ( include mapping w::A )
+                """;
+        ModelException e = assertThrows(ModelException.class, () -> Compiler.compileModel(dupMapping));
+        assertTrue(e.getMessage().contains("Duplicated element 'w::M'"), e.getMessage());
+        // the module parse drops the second definition itself and reports it; the survivor compiles
+        Compiler.ParsedModule parsed = Compiler.parseSources(List.of(new Compiler.ModelSource("m.pure", dupMapping)));
+        assertTrue(parsed.duplicateElements().toString().contains("w::M"), parsed.duplicateElements().toString());
+        Map<String, String> survivorWalls = Compiler.buildModule(parsed.model()).walls();
+        assertTrue(survivorWalls.isEmpty(), survivorWalls.toString());
+        // the second copy includes itself: refused by name before the include ordering reads it (the engine's
+        // order), not as a cycle
+        String selfInclude = CLASSES + """
+                ###Mapping
+                Mapping w::A ( *w::Person[a] : Relational { ~mainTable [w::DB] PERSON_A name: PERSON_A.NAME } )
+                Mapping w::M ( include mapping w::A )
+                Mapping w::M ( include mapping w::M )
+                """;
+        ModelException e2 = assertThrows(ModelException.class, () -> Compiler.compileModel(selfInclude));
+        assertTrue(e2.getMessage().contains("Duplicated element 'w::M'"), e2.getMessage());
+        // across kinds: a class and a mapping of one name; the module parse keeps both (it keys by kind), the
+        // build walls the name
+        String crossKind = CLASSES + """
+                ###Pure
+                Class w::M { id: Integer[1]; }
+                ###Mapping
+                Mapping w::A ( *w::Person[a] : Relational { ~mainTable [w::DB] PERSON_A name: PERSON_A.NAME } )
+                Mapping w::M ( include mapping w::A )
+                """;
+        ModelException e3 = assertThrows(ModelException.class, () -> Compiler.compileModel(crossKind));
+        assertTrue(e3.getMessage().contains("Duplicated element 'w::M'"), e3.getMessage());
+        Compiler.ParsedModule both = Compiler.parseSources(List.of(new Compiler.ModelSource("m.pure", crossKind)));
+        assertTrue(both.duplicateElements().isEmpty(), both.duplicateElements().toString());
+        Map<String, String> walls = Compiler.buildModule(both.model()).walls();
+        assertEquals("Duplicated element 'w::M'", walls.get("w::M"), walls.toString());
+    }
 }

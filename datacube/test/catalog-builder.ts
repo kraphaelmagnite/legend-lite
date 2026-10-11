@@ -1,11 +1,10 @@
-// Planners for tests: legend-lite's own WASM module, the same one the tab loads.
+// Planners for tests: legend-lite's own planner, through the test's host (#test-host) -- in Node the module the tab
+// loads, in the headless lane the native library behind the host's worker.
 
-import { WasmPlanner } from '../src/wasm-planner.ts';
-import { runfileDirUrl } from '../../tools/js/runfiles.mts';
+import { plannerOptions } from '#test-host';
+import { LitePlanner } from '../src/lite-planner.ts';
 
-const MODULE_DIR = runfileDirUrl('WASM_PLANNER');
-
-/** A planner over a model, from the same module. */
-export function plannerFor(model: string, runtime: string, how: { readonly mapping?: string } = {}): WasmPlanner {
-  return new WasmPlanner({ model, runtime, ...how, assetBaseUrl: MODULE_DIR, cache: false });
+/** A planner over a model, from the test's host. */
+export function plannerFor(model: string, runtime: string, how: { readonly mapping?: string } = {}): LitePlanner {
+  return new LitePlanner({ model, runtime, ...how, ...plannerOptions(), cache: false });
 }

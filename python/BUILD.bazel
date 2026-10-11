@@ -19,6 +19,7 @@ py_library(
     srcs = glob(
         ["legend_lite/**/*.py"],
         exclude = [
+            "legend_lite/_headless.py",
             "legend_lite/datacube.py",
             "legend_lite/engine.py",
             "legend_lite/frames.py",
@@ -47,6 +48,22 @@ py_library(
     deps = [
         ":compiler",
         "@pypi//duckdb",
+        "@pypi//pyarrow",
+    ],
+)
+
+# DataCube's own non-screen code in V8 (docs/DATACUBE_HEADLESS_PYTHON_DESIGN_2026_10_11.md; the wheel's `datacube` extra,
+# step 4): mini-racer's V8, the native library's planner and Python's DuckDB, no WebAssembly. Its bundle is
+# //datacube:headless_bundle; its lane //datacube:headless_test.
+py_library(
+    name = "headless",
+    srcs = ["legend_lite/_headless.py"],
+    imports = ["."],
+    visibility = ["//datacube:__pkg__"],
+    deps = [
+        ":compiler",
+        "@pypi//duckdb",
+        "@pypi//mini_racer",
         "@pypi//pyarrow",
     ],
 )
@@ -186,6 +203,38 @@ py_test(
     ],
 )
 
+# Grids headless (docs/DATACUBE_HEADLESS_PYTHON_DESIGN_2026_10_11.md §4): a page's grid run by DataCube's own code in V8
+# -- grid.view(), grid.relation, grid.to_pandas() -- each checked against pandas computing the same. The bundle is
+# DataCube's (//datacube:headless_bundle), as the wheel's `datacube` extra will carry it (step 4).
+py_test(
+    name = "headless_test",
+    size = "medium",
+    srcs = [
+        "tests/main.py",
+        "tests/test_headless.py",
+    ],
+    args = ["test_headless"],
+    data = [
+        "//datacube:headless_bundle",
+        "//native:compiler",
+    ],
+    env = select({
+        "//tools/platforms:windows_x86_64": _ENV | {
+            "LEGEND_LITE_DATACUBE": "$(rlocationpath //datacube:headless_bundle)",
+            "PROCESSOR_ARCHITECTURE": "AMD64",
+        },
+        "//conditions:default": _ENV | {"LEGEND_LITE_DATACUBE": "$(rlocationpath //datacube:headless_bundle)"},
+    }),
+    main = "tests/main.py",
+    target_compatible_with = _PLATFORMS,
+    deps = [
+        ":headless",
+        ":legend_lite",
+        "@pypi//pandas",
+        "@rules_python//python/runfiles",
+    ],
+)
+
 # The engine: legend-engine's pure/v1 API over frames, as DataCube's remote client calls it -- the compiler's answers
 # through HTTP, execute in upstream's Arrow format with DuckDB's rows over the frame as it is then, the refusals in the
 # engine's error shape, and only its own page answered (its token, a local Host, no cross-origin answer).
@@ -314,11 +363,21 @@ copy_to_directory(
     root_paths = ["datacube/dist"],
 )
 
+# DataCube's headless bundle (docs/DATACUBE_HEADLESS_PYTHON_DESIGN_2026_10_11.md, step 4), beside the package where
+# legend_lite/_headless.py looks for it: about 1.3 MB of DataCube's own non-screen code, run in V8 by the `datacube`
+# extra's mini-racer
+copy_file(
+    name = "wheel_datacube",
+    src = "//datacube:headless_bundle",
+    out = "legend_lite/_datacube/legend-lite-headless.js",
+)
+
 # every module of legend_lite, across its libraries (py_wheel takes a target's own files only)
 py_package(
     name = "wheel_package",
     packages = ["python.legend_lite"],
     deps = [
+        ":headless",
         ":legend_lite",
         ":notebook",
     ],
@@ -343,6 +402,9 @@ py_wheel(
         "@graalvm//:THIRD_PARTY_LICENSE.txt": "GRAALVM-THIRD-PARTY-LICENSE.txt",
     },
     extra_requires = {
+        # DataCube's own code in Python, headless (Grid.view, relation, to_pandas): V8, by mini-racer (its Linux wheels
+        # are manylinux_2_27, so this extra needs glibc 2.27 where the wheel alone needs 2.17)
+        "datacube": ["mini-racer>=0.14.1"],
         # the cube under a notebook's cell (legend_lite/notebook.py)
         "notebook": ["anywidget>=0.11.0"],
         "pandas": ["pandas>=3.0.6"],
@@ -369,6 +431,7 @@ py_wheel(
     target_compatible_with = _PLATFORMS,
     version = "0.1.0",
     deps = [
+        ":wheel_datacube",
         ":wheel_package",
         ":wheel_site",
     ] + select({
@@ -378,9 +441,9 @@ py_wheel(
     }),
 )
 
-# the packages the wheel needs, pandas with its own, and the notebook extra's (anywidget, ipywidgets, IPython), as the
-# test installs them (the pinned wheels, offline)
-_WHEEL_TEST_PACKAGES = ["duckdb", "numpy", "pandas", "pyarrow", "python_dateutil", "six", "tzdata"] + _NOTEBOOK_PACKAGES
+# the packages the wheel needs, pandas with its own, the datacube extra's (mini-racer) and the notebook extra's
+# (anywidget, ipywidgets, IPython), as the test installs them (the pinned wheels, offline)
+_WHEEL_TEST_PACKAGES = ["duckdb", "mini_racer", "numpy", "pandas", "pyarrow", "python_dateutil", "six", "tzdata"] + _NOTEBOOK_PACKAGES
 
 # per system: the packages, and the test's settings naming their wheels
 _WHEEL_TEST_PACKAGES_POSIX = _WHEEL_TEST_PACKAGES + _NOTEBOOK_PACKAGES_POSIX
