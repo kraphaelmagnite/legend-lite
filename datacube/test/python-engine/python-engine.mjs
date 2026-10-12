@@ -55,6 +55,9 @@ const served = JSON.parse(first);
 const origin = served.url;
 
 let failed = false;
+// the browser closing at the end: a message the engine sends meanwhile (an answer to a call a view taken down made, say)
+// finds its page gone, which is the test's own close and no case's failure (CI runs 38175909649 and 38187695487)
+let closing = false;
 let browser;
 try {
   browser = await chromium.launch();
@@ -242,7 +245,11 @@ try {
           const views = m.buffers.map((b) => new DataView(Uint8Array.from(atob(b), (c) => c.charCodeAt(0)).buffer));
           model.fire('msg:custom', m.content, views);
         }
-      }, [line.slice(0, space), line.slice(space + 1)]).catch((e) => { console.log(`FAIL a widget message: ${e}`); failed = true; });
+      }, [line.slice(0, space), line.slice(space + 1)]).catch((e) => {
+        if (closing) return;
+        console.log(`FAIL a widget message: ${e}`);
+        failed = true;
+      });
     }
   };
   await widgets.route(`${origin}/widgets.html`, (r) => r.fulfill({
@@ -361,6 +368,7 @@ try {
     failed = true;
   }
 } finally {
+  closing = true;
   await browser?.close();
   // stopped and WAITED for: the engine serves until its input closes, and is gone before the test reports
   engine.stdin.end();
