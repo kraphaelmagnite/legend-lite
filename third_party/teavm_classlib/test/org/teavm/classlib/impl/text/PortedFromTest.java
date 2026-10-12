@@ -11,8 +11,9 @@ import org.junit.jupiter.api.Test;
 
 /**
  * The corrected classes replace TeaVM's WHOLE, so they must be the version they were ported from: a TeaVM bump that
- * left them as they are would compile 0.15.0's TDouble, TFloat, TAbstractStringBuilder and TBigDecimal into the newer
- * library. This fails on a bump until the files are re-ported (README.md) and this version moves with them.
+ * left them as they are would compile 0.15.0's TDouble, TFloat, TAbstractStringBuilder, TBigDecimal and TCollections
+ * into the newer library. This fails on a bump until the files are re-ported (README.md) and this version moves with
+ * them.
  */
 class PortedFromTest {
 

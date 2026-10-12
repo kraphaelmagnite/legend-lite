@@ -8765,3 +8765,45 @@ platforms), green; the only change after them is main's IN_FLIGHT line, rebased 
    - step 5, the model plan's Python `create_*`;
    - the TeaVM unmodifiable-collections fix, the Compiler Rewrite line's, which the user rules on: a 200-class page's
      tab compile goes from 4.2 s to 73 ms with it.
+
+## 2026-10-11 — TeaVM's unmodifiable set and map wrappers look up instead of scan: the tab boots in 0.3 s instead of 3.6 s (the Compiler Rewrite line)
+
+The design is `docs/build-inventory/program/TEAVM_UNMODIFIABLE_DESIGN_2026_10_11.md`; the evidence
+`docs/build-inventory/program/evidence/teavm-unmodifiable/`. The user ruled its §5 option 1, through the DataCube +
+Python line's session ("lets get it all done"): the one-file port now; the TeaVM 0.16.0 bump stays a landing of its own (not L8, the upstream
+Legend release's bump) and deletes the file. Branch `build/teavm-unmodifiable`. CI: run 38187695487 (every lane, every platform, as for a toolchain
+change: the module is in several lanes), green on every job after one re-run of linux-arm / warehouse: the DataCube
+line's `//datacube:python_engine_test` closed its browser page in its last case ("a widget message"), the same failure
+as that line's own run 38175909649 before its landing, a race in the test that line is fixing; its 25 other cases,
+among them the one that loads the changed module, passed first time. `//gates:local` green before (347 tests, twice:
+on the landing and on its amendment after the audit); the lane query empty.
+
+1. **The cause.** The DataCube line measured the tab compiling a 200-class page in 4.0 s (3,975 ms) where the native library
+   takes 30 ms. An unobfuscated build of the module (its name section kept) named it: TeaVM 0.15.0's
+   `Collections.unmodifiableSet` and `unmodifiableMap` override `iterator`, `size` and `remove` only, so `contains` and
+   `get` fall to `TAbstractCollection`'s and `TAbstractMap`'s scans through the iterator. The compiler's universe of
+   known names (`ModelNormalizer.resolveSynthesized`) sits in one such set, and `NameResolver` asks it per candidate name
+   per package; the JDK's wrappers delegate, so the server never saw it. TeaVM fixed its own (master `5971683cf1`,
+   2026-10-01; released in 0.16.0).
+2. **What landed.** `third_party/teavm_classlib/src/org/teavm/classlib/java/util/TCollections.java`: TeaVM 0.15.0's
+   file with that change ported (the set and the map wrappers answer `contains`, `containsAll`, `isEmpty`, `get`,
+   `containsKey`, `containsValue` and `size` from the wrapped instance; the collection wrapper, which TeaVM has not
+   changed and core uses nowhere, stays as 0.15.0's), with the package's notice header; the README row; the BUILD
+   comment and the test selection; `PortedFromTest`'s list. No edit in `core/`, `tools/teavm/` or `wasm/`: the compiler
+   stays as written, and the platform's library is held to the JDK's contract, as its number conversions already are.
+3. **How it is held.** `TCollectionsTest` (JVM, `//third_party/teavm_classlib:tests`, the `core` lane): a counting set
+   and a counting map, wrapped, answer every lookup right and open no iterator (against TeaVM's own file the same test
+   fails: 7 iterators and 8 entry sets opened for the lookups), and `add`, `remove`, `clear`, `put` and both iterators'
+   `remove` still refuse; the wrapper is a view, not a copy. The module: `//wasm:conformance_test`,
+   `//wasm:differential_test`, `//wasm:round_trip_test`, and DataCube's, Studio's and Query's tests in the full run. No
+   timing gate (CI's runners vary too much for one); the receipt is the DataCube line's rerun of
+   `//datacube:model_scale_measure` on the landed module, added to the evidence README when it arrives.
+4. **The numbers** (the production build run in Node; before is the DataCube line's
+   `evidence/teavm-unmodifiable/before_obfuscated_node_datacube.jsonl`, after `after_fixed_node.jsonl`, both in the
+   evidence README's table): a cold module loaded, booted and holding an empty model, 3,575 to 299 ms (the native
+   library 101); the same holding a two-class model, 3,429 to 155; a warm module holding 1, 10, 50 and 200 classes,
+   9, 131, 762 and 3,975 ms to 2, 4, 17 and 73 (native 0.7, 1.6, 6.0 and 30.0). The named build the profile ran on
+   was a little slower before (3,618 and 4,239). The module: 5,093,390 to 5,093,779 bytes, the same for the measured
+   port and the landed file (the collection wrapper's methods are unreachable from the planner and dropped).
+5. **Not chased:** `Class.getEnumConstants` (2.5 % of the profile: TeaVM's `EnumSet` asks for the constants on every
+   lookup) and the module's remaining 2.4x over the native library.

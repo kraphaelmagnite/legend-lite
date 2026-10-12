@@ -81,6 +81,17 @@ generated file, never a signature we typed ourselves.
   `JUDGES_TARGET_DESIGN_2026_10_11.md`: the judges' committed baseline (files, or digests for the ledgers;
   digests recommended) and the lane query (a gate script, since the query cannot be a Bazel target; the script
   recommended). Nothing is built until both are ruled.
+- **Ruled, landing (2026-10-11, evening): the tab's planner 12x faster to boot, 54x on a 200-class page**
+  (`TEAVM_UNMODIFIABLE_DESIGN_2026_10_11.md`; evidence `evidence/teavm-unmodifiable/`): the DataCube line measured the
+  tab's 4 s compile as the page's and the module's (130x the native library); an unobfuscated build names it: TeaVM
+  0.15.0's `Collections.unmodifiableSet` and `unmodifiableMap` scan where the JDK's look up, and the compiler's
+  universe of known names sits in one. TeaVM's own fix (master 2026-10-01, in 0.16.0) ported onto 0.15.0 as one
+  file of `third_party/teavm_classlib`, measured on the production build: boot 3,575 to 299 ms, a 200-class page
+  3,975 to 73 ms (the native library: 30 ms). The user ruled 2026-10-11, through the DataCube + Python line's
+  session ("lets get it all done"): the port now, as `third_party/teavm_classlib`'s fifth TeaVM file with its JVM test;
+  the 0.16.0 bump stays a landing of its own (not L8, the upstream Legend bump) and deletes the file. Branch `build/teavm-unmodifiable`; GATES "TeaVM's
+  unmodifiable set and map wrappers look up instead of scan" (CI run 38187695487, green after one re-run of a DataCube browser test's known race). The DataCube line's rerun of
+  `//datacube:model_scale_measure` on the landed module is the receipt still to come.
 - **Next: L4 (Phase 6)**, then L5 (Phase 4), L6 (Phase 5), the typing-order count, L8 (the bump). The order and
   cadence: the plan's §6. Beside L4: the compile phase split over DataCube's model shape (mine: `model-scale.measure.ts`,
   `classModel(n)` at 10 and 200 through `//core:compile_latency` or the eager probe, offered 2026-10-10; input to

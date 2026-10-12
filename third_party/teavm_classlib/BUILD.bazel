@@ -1,5 +1,6 @@
 # TeaVM's class library CORRECTED where lite needs it exact (docs/WEB_IMAGE_SPIKE_2026_10_10.md, step 2; PARK-23):
-# four of TeaVM 0.15.0's own classes (Apache 2.0: their headers kept, a notice of each change added) and one new one,
+# five of TeaVM 0.15.0's own classes (Apache 2.0: their headers kept, a notice of each change added; four number
+# conversions, and TCollections with TeaVM's own later fix of its unmodifiable wrappers' lookups ported) and one new one,
 # ExactDecimal, written from the Java SE specification and the published algorithms under the clean-room rule. teavm_wasm
 # (//tools/teavm) puts this jar ahead of TeaVM's own on the compiler's class path, so these classes are the ones every
 # module compiles. README.md says what changed and why; each class goes when a TeaVM release carries its fix.
@@ -25,7 +26,8 @@ legend_java_library(
     ],
 )
 
-# ExactDecimal and the corrected TBigDecimal held to the JDK on the JVM (both are plain Java), value by value (the
+# ExactDecimal and the corrected TBigDecimal held to the JDK on the JVM (both are plain Java), value by value, and the
+# corrected TCollections wrappers held to the JDK's contract (lookups open no iterator; mutation refused) (the
 # module's own differential is //wasm:conformance_test)
 junit_test(
     name = "tests",
@@ -35,6 +37,7 @@ junit_test(
     select = [
         "--select-package=org.teavm.classlib.impl.text",
         "--select-package=org.teavm.classlib.java.math",
+        "--select-package=org.teavm.classlib.java.util",
     ],
     deps = [
         ":fixes",
