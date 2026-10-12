@@ -157,9 +157,9 @@ export function writePageOf(o: {
 }
 
 /**
- * The page's model as the page writes it: its tables kept for the cubes the page holds, and only those -- a grid
- * removed since its class was made takes its table's name with it, as the reader holds every kept name to a cube of
- * the page (the audit's B1: a page written otherwise would never open again).
+ * The page's model as the page writes it: its tables and classes kept for the cubes the page holds, and only those --
+ * a grid removed since its class was made takes its table's name and its class with it, as the reader holds every
+ * kept name to a cube of the page (the audit's B1: a page written otherwise would never open again).
  */
 function keptFor(model: PageModelRef, cubes: readonly { readonly id: string }[]): PageModelRef {
   const ids = new Set(cubes.map((c) => c.id));
@@ -167,7 +167,10 @@ function keptFor(model: PageModelRef, cubes: readonly { readonly id: string }[])
   for (const [cube, table] of Object.entries(model.tables)) if (ids.has(cube)) tables[cube] = table;
   const classes: Record<string, string> = {};
   for (const [cube, cls] of Object.entries(model.classes ?? {})) if (ids.has(cube)) classes[cube] = cls;
-  return { ...model, tables, ...(Object.keys(classes).length > 0 ? { classes } : {}) };
+  // its classes likewise: none kept, none written -- the model's own would keep the class of a grid removed, which the
+  // reader refuses as it refuses a table's
+  const { classes: _was, ...rest } = model;
+  return { ...rest, tables, ...(Object.keys(classes).length > 0 ? { classes } : {}) };
 }
 
 /** The page as a JSON-ready object: each cube as its own document writes itself. */
