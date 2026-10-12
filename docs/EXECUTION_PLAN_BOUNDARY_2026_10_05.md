@@ -204,6 +204,19 @@ Phase 3's decoding, agreed with the DataCube + Python line on 2026-10-12, works 
 - One rule for each (Pure type, SQL type) pair, kept as data that all three hosts read, instead of three hand-written
   decoders.
 
+What phase 3 starts from (found by the DataCube line on 2026-10-12; the first point checked here):
+- `exec/Executor.java`'s `shapeRow` matches the database's columns to the plan's by position, and checks only the
+  count. Phase 3 compares names too.
+- Values are decoded by the SQL type and the driver's object, not by the Pure type:
+  - an INT32 stays an Integer;
+  - a DECIMAL(38,0) becomes a Long, or a BigInteger past 63 bits;
+  - a DateTime is a LocalDateTime with no zone;
+  - a DuckDB Variant is a `JsonNode`.
+- StrictTime has no case: `SqlType` has no TIME, so the driver's object passes through as it is.
+- A Variant held as a STRUCT is cast to JSON in the SQL only when the query projects. A `SELECT *` answers the raw
+  STRUCT, and each executor writes its JSON its own way. (TS quotes a nested BIGINT: `{"tier":"2"}`.) The planner
+  should always answer a Variant as the database's JSON text. That point went to the Compiler Rewrite line.
+
 ## 9. Phase 1 — the query path
 
 **Scope.** The paths whose result is TEXT THE DATABASE BUILDS: the server's `pure/v1/execution/execute` (with
