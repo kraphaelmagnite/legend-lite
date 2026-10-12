@@ -195,6 +195,15 @@ connection.
 subset, temp-table and allocation nodes); (3) the runner for Pure test bodies (W6.2: `StatementExecutor`, typed-row
 decoding, the judges out of `exec`, the guard at zero); (4) the compatibility mode.
 
+Phase 3's decoding, agreed with the DataCube + Python line on 2026-10-12, works like this:
+- A result's rows are decoded by the columns of the plan's `TdsResult`: each column's Pure type and the SQL type the
+  database answers with (`TdsColumn.sqlType`).
+- Boundary's plan answer carries that same field. Today it is `{sql, type}`, Pure types only
+  (`wasm/src/main/java/planner/Boundary.java:125-126`). With the field, DataCube's TypeScript and Python executors decode
+  as the Java runner does.
+- One rule for each (Pure type, SQL type) pair, kept as data that all three hosts read, instead of three hand-written
+  decoders.
+
 ## 9. Phase 1 — the query path
 
 **Scope.** The paths whose result is TEXT THE DATABASE BUILDS: the server's `pure/v1/execution/execute` (with
