@@ -1,7 +1,7 @@
 # DataCube: one app, every host (design, 2026-10-11)
 
-Status: **a proposal for the user's rulings** (§13). Nothing here is built. It supersedes parts of four agreed designs,
-each named in §13 with what changes.
+Status: **agreed** (the user, 2026-10-11: "agree on all 6 ruling"; §13, §14). Nothing here is built yet. It supersedes
+parts of four agreed designs, each named in §13 with what changes.
 
 ## 0. In one paragraph
 
@@ -213,6 +213,17 @@ DuckDB**. Python's DuckDB can read the machine's files, so a page must not be ab
 The browser tab keeps planning and running in-page, as today. Its DuckDB is inside the browser's sandbox, so the page
 may write SQL for it.
 
+**The tenet, stated precisely** (the user asked, 2026-10-11, whether "everything goes through Python native" was already
+decided: it was, as the Python show design's rule). With the planner chosen on every host (R3):
+- **the SQL Python runs is always written by the planner the person chose, and asked for by Python, never by the
+  page**;
+- on the `local` plane that planner is Python's native library, so everything does go through it;
+- on `remote` it is legend-lite's server;
+- on `engine` it is legend-engine, exactly as the tab's `engine` plane runs legend-engine's SQL in the tab's DuckDB.
+
+No Legend protocol logic is written in Python for it: the remote planner is called by DataCube's own TypeScript, run
+headless in Python (R6), and Python only carries the request.
+
 ### 4.4 Sources by host
 
 The picker's sections come from the engine service. A host offers what its database can open:
@@ -252,9 +263,25 @@ their revisions is the SDLC. So **every host's model home is an SDLC**, reached 
 - in the tab: the in-page SDLC (WebAssembly, IndexedDB) or a server, as today;
 - **on a Python host and headless: Python's SDLC**, the same `Sdlc.java` rules and the Depot's, built into Python's
   native library over `GitStorage`.
-  - It keeps projects as a real git repository in a folder (Q1).
   - Python serves it at its own address (`/sdlc/api`, `/depot/api`) to the browser side.
   - Headless calls it in-process, as the browser's in-page SDLC turns each `fetch` into one call (`wasm-server.ts`).
+
+**Python's is the browser's, in Python's terms** (Q1, the user's principle: "the python analogous version of what we did
+there so its all consistent"):
+
+| The browser's in-page SDLC | Python's |
+|---|---|
+| this site's storage in this browser profile (IndexedDB), shared by every page and app of the site (DataCube, Studio, Query) | this user's storage on this machine: the operating system's per-user data folder (macOS `~/Library/Application Support/legend-lite`, Linux `~/.local/share/legend-lite`, Windows `%LOCALAPPDATA%\legend-lite`), shared by every notebook and script of the user; `ll.home()` says where |
+| the SDLC's records (git objects, refs, projects) kept as IndexedDB records | the same records as a bare git repository there (`GitStorage`): the same keys on disk, and `git push` works on it |
+| a project made quietly at the page's first class, named after the page, in DataCube's group and workspace | the same: the same app code makes it |
+| a page points to its project, pinned to its revision | the same |
+| leaving it is deliberate: a bundle when a page travels, a push when it is promoted to a team SDLC | the same |
+| a link shared says "its classes stay in this browser" | a notebook handed over points to a project only its author has, said the same way, with the same remedies |
+| IndexedDB serializes what several tabs write | a lock around each SDLC call, held across Python processes (two notebooks at once) |
+| the tab's config points the model home at a server instead | `ll.home(path)` points it at a folder of one's choosing (Studio's level 1: a repository beside the notebook, kept in its git) or a server |
+
+Saved pages (§5) and saved queries follow the same rule: Python's per-user folder, as the browser's saved pages and
+query store are per site.
 
 The page document's `model` keeps one form, the SDLC's: the project, the workspace, the package, each grid's table and
 class, and (owed already: model design §6 says so, `PageModelRef` has no field for it) the revision the page is pinned
@@ -356,16 +383,22 @@ Python's in-process services.
    - **2c.** The planes on Python: the headless `fetch`; the remote planners called by Python.
    - **2d.** The page store on Python: Open… and Save into a folder.
 3. **Python's model home.**
-   - The SDLC, Depot and query store in the native library over folders, served by Python.
-   - The model actions in Python's pages.
-   - `grid.create_class` and the rest back from the parked branch, on this home.
+   - The SDLC, Depot and query store in the native library over Python's per-user folders (§6), served by Python.
+   - Nothing is built for Create a Class… itself: the app's model actions are already on Python's pages from step 2,
+     and appear once this service answers.
+   - `grid.create_class` and the rest come back from the parked branch, as the cores of those same actions (§8).
+
+**On Python, the work is services, never features** (the user, 2026-10-11: "i thought we were doing all of this work so
+python gets all of this for 'free'"). Every feature's code comes with the app. What a host must build is only the
+service a feature reads or writes: a database for upload, a page store for Save, a model home for Create a Class….
+Until the service answers, its entries are not offered (§3.4).
 4. **Headless pages:** the cores, `page.export`.
 5. **Studio and Query from Python:** the site served by Python; `ll.studio()`, `ll.query()`. Built with the Studio line.
 
 Each landing goes through an audit, the local gate, CI on the affected lanes on every platform, then main; Bazel
 changes are reviewed by the Compiler Rewrite line, and planner-boundary changes by the Plan Gen line, as always.
 
-## 13. Rulings this needs (each supersedes something agreed)
+## 13. Ruled (the user, 2026-10-11: "agree on all 6 ruling"; each supersedes something agreed)
 
 - **R1. One app for every host.** It supersedes:
   - the Python show design's "a page of its own … so the demo's `boot.ts` … untouched";
@@ -379,25 +412,22 @@ changes are reviewed by the Compiler Rewrite line, and planner-boundary changes 
 - **R3. The planner is chosen on every host** (§4.1). It supersedes `guardrails.test.ts`'s single reader of
   `?planner=` in `demo/boot.ts`, replaced by one reader per host. The rest of the 2026-09-30 rule stays: chosen once,
   shown, never substituted.
-- **R4. On a Python host the page sends Pure, never SQL** (§4.3). This keeps the Python show design's rule, and it is
-  why the planner on a Python host is called by Python, not by the page. **Recommended.** The alternative (the page
-  plans in the browser and sends SQL to Python's DuckDB) would let any page that has the token run SQL against the
-  machine's files.
+- **R4. On a Python host the page sends Pure, never SQL** (§4.3). This keeps the Python show design's rule, already a
+  tenet, stated precisely for every plane in §4.3. It is why the planner on a Python host is called by Python, not by
+  the page. The alternative (the page plans in the browser and sends SQL to Python's DuckDB) would let any page that has
+  the token run SQL against the machine's files.
 - **R5. Data in goes to the host's database**, Snap included. It supersedes the show design's "the only feature that
   mode refuses is Snap into the tab, by design": on a Python host, Snap copies into Python's DuckDB.
 - **R6. The headless host gains `fetch`** (§4.3), for the remote planners. It supersedes headless design §3's "the
   fetch API is left out".
 
-## 14. Open questions (forks only you can decide)
+## 14. The two questions, answered
 
-- **Q1. Where Python's model home and page folder live by default.**
-  - (a) **Beside the notebook or script**, in a `legend/` folder of the project: the classes go into the project's git
-    with the notebook, and Studio's level 1 ("the model home with the local-git backend over a folder") is exactly
-    that.
-  - (b) **Per user**, in `~/.legend-lite/`: every notebook sees the same projects, nothing is added to a project's
-    folder.
-
-  **Recommended: (a)**, with `ll.home(path)` to point anywhere, (b) included.
-- **Q2. The order of steps 2 and 3.** Step 2 (Python's pages open the app) can land before Python has a model home;
-  Create a Class… is then not offered on Python's pages until step 3. **Recommended:** keep the order. Each step stands
-  alone, and step 3 then adds the model actions to pages that already are the app.
+- **Q1. Where Python's model home and page folder live by default.** The user's principle (2026-10-11): "python should
+  mimic as close a s posible/as much as makes sense the decisions we made for browser/indeDB SDLC - it should be the
+  python analogous version of what we did there so its all consistent". Applied: **the per-user store** (§6's table),
+  the analogue of the browser's per-site storage. A folder beside the notebook is the opt-in (`ll.home(path)`), the
+  analogue of pointing the tab at a server. This replaces the first revision's recommendation of a `legend/` folder
+  beside the notebook by default, which no browser decision mirrors.
+- **Q2. The order of steps 2 and 3.** The user, 2026-10-11: "i think it should become the app before yes". Step 2
+  lands before Python has a model home; the model actions appear on Python's pages when step 3's service answers.
