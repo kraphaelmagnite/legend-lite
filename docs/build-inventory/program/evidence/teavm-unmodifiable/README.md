@@ -1,11 +1,12 @@
 # The tab's 4 s compile of a 200-class page: TeaVM's unmodifiable wrappers (2026-10-11)
 
-The DataCube + Python line measured (`docs/datacube-model-homework-2026-10-11/boot-split/`, once on main) that the
+The DataCube + Python line measured (`docs/datacube-model-homework-2026-10-11/boot-split/`, on main since 8c8b92d54) that the
 tab's planner module holds a 200-class page in 3,975 ms where the same Java takes 30 ms in the native library and
 about 13 ms on a warm JVM (`../phase6/HOMEWORK_2026_10_11.md`), that the cost is the page's model and not the boot, and
 that 85 % of it sits in four functions whose names the obfuscated build strips. This folder names them, finds the cause
 and measures the fix. The design that follows is `../../TEAVM_UNMODIFIABLE_DESIGN_2026_10_11.md`. Run by hand on macOS
-arm64, outside any Bazel target; nothing here is landed.
+arm64, outside any Bazel target; nothing here is a Bazel target. The fix landed as `third_party/teavm_classlib`'s `TCollections.java`
+(`docs/GATES.md`, 2026-10-11, "TeaVM's unmodifiable set and map wrappers look up instead of scan").
 
 ## What was run, in order
 
@@ -43,14 +44,20 @@ arm64, outside any Bazel target; nothing here is landed.
 
 ## Results (ms; a warm module's hold is the median of 3)
 
-| what | before (named build) | after the fix | the native library |
-|---|---|---|---|
-| a cold module: load, boot, an empty model held | 3,618 | **299** | 101 |
-| a cold module: load, boot, classModel(2) held | 3,569 | **155** | -- |
-| warm: classModel(1) | 9 | 2 | 0.7 |
-| warm: classModel(10) | 140 | 4 | 1.6 |
-| warm: classModel(50) | 802 | 17 | 6.0 |
-| warm: classModel(200) | 4,239 | **73** | 30.0 |
+| what | before (production build, the DataCube line's) | before (named build) | after the fix | the native library |
+|---|---|---|---|---|
+| a cold module: load, boot, an empty model held | 3,575 | 3,618 | **299** | 101 |
+| a cold module: load, boot, classModel(2) held | 3,429 | 3,569 | **155** | -- |
+| warm: classModel(1) | 9 | 9 | 2 | 0.7 |
+| warm: classModel(10) | 131 | 140 | 4 | 1.6 |
+| warm: classModel(50) | 762 | 802 | 17 | 6.0 |
+| warm: classModel(200) | 3,975 | 4,239 | **73** | 30.0 |
+
+The like-for-like comparison is the first and third columns, both the production (obfuscated) build: the named
+build is a little slower before. The landed file (the set and the map delegation only) builds the same
+5,093,779-byte module as the measured port, which also had the collection wrapper's: `unmodifiableCollection` is
+unreachable from the planner and its methods are dropped (the planner built by `//wasm:differential_test` on the
+landing branch, 2026-10-11).
 
 The native column is the DataCube line's (`boot-split/native.txt`). After the fix the module is about 2.4x the native
 library on this compile, the ratio the module's header comment gives for a plan; the per-class cost no longer grows.

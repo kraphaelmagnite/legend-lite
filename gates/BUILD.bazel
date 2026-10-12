@@ -31,7 +31,7 @@ test_suite(
         "//core:postgres_arm_test",
         "//spec:spec_tests",
         "//json:tests",
-        # TeaVM's corrected number conversions against the JDK, on the JVM (seconds)
+        # TeaVM's corrected number conversions and unmodifiable wrappers against the JDK, on the JVM (seconds)
         "//third_party/teavm_classlib:tests",
         "//pure-protocol:twins_test",
         "//tools/engine-runner:smoke_test",

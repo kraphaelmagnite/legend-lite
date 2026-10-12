@@ -1,8 +1,9 @@
 # The tab's planner, 12x faster to boot and 58x on a 200-class page: TeaVM's unmodifiable wrappers (design, 2026-10-11)
 
-**Status: measured, nothing landed; the user rules (§5).** Evidence: `evidence/teavm-unmodifiable/`. Raised by the
+**Status: ruled 2026-10-11 (§5, option 1: the port now; the TeaVM 0.16.0 bump a landing of its own); landing on
+branch `build/teavm-unmodifiable`.** Evidence: `evidence/teavm-unmodifiable/`. Raised by the
 DataCube + Python line's measurement of the tab's compile (`docs/datacube-model-homework-2026-10-11/boot-split/`, on
-their branch until it lands), after the Compiler Rewrite line's phase split (`evidence/phase6/HOMEWORK_2026_10_11.md`).
+main since 8c8b92d54), after the Compiler Rewrite line's phase split (`evidence/phase6/HOMEWORK_2026_10_11.md`).
 
 ## 0. In one paragraph
 
@@ -25,7 +26,7 @@ production build with the DataCube line's own harness. The port is one file in t
   anonymous classes overriding `iterator`, `size` and `remove` (the map: `entrySet` and `remove`), nothing else, so
   every lookup falls to `TAbstractCollection`'s and `TAbstractMap`'s linear scans.
 - The compiler is right as written: `resolveSynthesized` builds its universe once and wraps it unmodifiable
-  (a `LinkedHashSet`: hash lookups on the JVM and in GraalVM's image). Twenty more sites in core wrap sets and maps
+  (a `LinkedHashSet`: hash lookups on the JVM and in GraalVM's image). 148 more calls, in 79 files of `core/src/main`, wrap sets and maps
   the same way (the platform's registries, the prelude's universe, `Implementation`'s positions), which is where the
   boot's 3.6 s went. `unmodifiableCollection`, which TeaVM has not fixed, core uses nowhere.
 - Upstream: TeaVM master `5971683cf1` (2026-10-01, "classlib: fix O(n) performance in Collections.unmodifiableMap")
@@ -44,7 +45,7 @@ whole at the bump).
 
 Not the alternatives:
 - Unwrapping the compiler's hot set (`Set.copyOf`, or the bare `HashSet`) would dodge the library in one call site,
-  leave the twenty others slow, and make the next `unmodifiableSet` the next 4 s. The compiler stays mainstream-shaped;
+  leave the 148 others slow, and make the next `unmodifiableSet` the next 4 s. The compiler stays mainstream-shaped;
   the platform's library is held to the JDK's contract, as the number conversions already are.
 - Bumping TeaVM to 0.16.0 now is the right end state but a landing of its own: the four corrected number files are
   re-ported onto 0.16.0's sources (the package's rule), the conformance ledger re-judged, the module's differentials
@@ -54,8 +55,9 @@ Not the alternatives:
 ## 3. How it is held
 
 - **On the JVM** (`//third_party/teavm_classlib:tests`, in the `core` lane; the file is plain Java): a counting set and a
-  counting map, each answering its lookups directly and counting its `iterator()` calls, wrapped by `unmodifiableSet`
-  and `unmodifiableMap`: `contains`, `containsAll`, `isEmpty`, `get`, `containsKey`, `containsValue` and `size` answer
+  counting map, each answering its lookups directly and counting the iterators (the set) or the entry sets (the map)
+  it hands out, wrapped by `unmodifiableSet` and `unmodifiableMap`: `contains`, `containsAll`, `isEmpty`, `get`,
+  `containsKey`, `containsValue` and `size` answer
   right and open no iterator; `add`, `remove`, `put` and the iterator's `remove` still refuse.
 - **In the module**: `//wasm:conformance_test`, `//wasm:differential_test` and `//wasm:round_trip_test`, DataCube's
   tests and browser harnesses, Studio's and Query's (every tab loads this module): the lanes `datacube`,
@@ -69,8 +71,11 @@ Not the alternatives:
 - `third_party/teavm_classlib/src/org/teavm/classlib/java/util/TCollections.java` (0.15.0's file plus the port, with
   the package's notice header), a README row naming `5971683cf1` and 0.16.0, the JVM test above, a `docs/GATES.md`
   entry, the IN_FLIGHT line first (the module every line's tab loads changes).
-- Risk: delegation only, so no answer changes, only its cost; the module grows by the new methods (a few hundred
-  bytes: 5,093,390 to 5,093,779). The file replaces TeaVM's whole, so a TeaVM bump re-ports or deletes it: at 0.16.0 it
+- Risk: delegation only, so no answer changes except where the module now agrees with the JDK, whose wrappers
+  delegate (a wrapped sorted set or map whose comparator disagrees with `equals`, an identity-keyed set, a null key
+  into a sorted map; `core/src/main` wraps none such); the module grows by the new methods (a few hundred bytes:
+  5,093,390 to 5,093,779, the same for the measured port and the landed file, since the collection wrapper's methods
+  are unreachable from the planner and dropped). The file replaces TeaVM's whole, so a TeaVM bump re-ports or deletes it: at 0.16.0 it
   is deleted, since that release is the fix.
 - Not chased now: the 2.5 % in `Class.getEnumConstants` (TeaVM's `EnumSet` asks for the constants on every lookup),
   and the module's remaining 2.4x over the native library, the ratio the module's header gives for a plan.
