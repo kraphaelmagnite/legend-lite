@@ -374,8 +374,20 @@ The tab's module and Python's native library are adapters: each export a one-lin
   (docs/build-inventory/program/TEAVM_UNMODIFIABLE_DESIGN_2026_10_11.md, on its branch): TeaVM 0.15.0's unmodifiable set
   and map scan the whole collection on every lookup, and the compiler's name resolution asks them for every candidate
   package of every name. With upstream's fix (TeaVM 0.16.0) ported, measured on this harness: the boot 3,618 to 299 ms,
-  a 200-class page 4,239 to 73 ms. Not landed; the user rules between the port and the TeaVM bump. After it lands,
-  `//datacube:model_scale_measure` reruns on the module as the receipt.
+  a 200-class page 4,239 to 73 ms. The user ruled for the port (2026-10-11), and it landed as 39218e803; the TeaVM bump
+  stays its own landing.
+
+  **After the port** (2026-10-11, 39218e803, `//datacube:model_scale_measure` on its module, measured as above), ms:
+
+  | classes | compile, once | table read | class read | class, one end walked |
+  |---|---|---|---|---|
+  | 1 | 47 | 1 | 3 | -- |
+  | 10 | 31 | 2 | 2 | 3 |
+  | 50 | 69 | 1 | 3 | 5 |
+  | 200 | 321 | 2 | 9 | 12 |
+
+  A 200-class page compiles in a third of a second, not 4 s: about 12x. (The boot-split harness's 73 ms holds one text
+  once; this table's compile is the median of three texts, so the two are not the same clock.)
 
 ## 12. Withdrawn from revision 2
 
