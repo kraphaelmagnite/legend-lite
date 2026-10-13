@@ -3,7 +3,7 @@
 
 import type { ModelHomeConfig } from '../../../depot-client/src/model-home.ts';
 import type { QueryEngine } from '../../../engine-client/src/engine.ts';
-import type { SeededTable, TestData } from '../../../engine-client/src/model-data.ts';
+import type { ProjectDatabases, ProjectRunner } from '../../../engine-client/src/project-data.ts';
 import type { Engine, QueryStore } from '../backend/engine.ts';
 import type { WasmGrammar } from '../../../engine-client/src/legend/wasm-grammar.ts';
 import type { PureModelContextText } from '../backend/wire.ts';
@@ -59,10 +59,10 @@ export interface LoadedProject {
   readonly context: PureModelContextText;
   readonly graph: ModelGraph;
   /**
-   * Its own test data, where queries run in this tab (a project opened by name: its relational Data elements' tables,
-   * by-name.ts): made the tab's rows whenever it is the version opened (AppContext.activate).
+   * It brings its own rows, where queries run in this tab (a project opened by name: its relational Data elements',
+   * by-name.ts): in the version's own database inside the tab's DuckDB, the screens on it as it opens (activate).
    */
-  readonly tables?: readonly SeededTable[];
+  readonly ownData?: boolean;
 }
 
 export function gavOf(p: ProjectConfig): string {
@@ -148,16 +148,22 @@ export class AppContext {
   depotProjects: readonly { readonly groupId: string; readonly artifactId: string }[] = [];
   readonly #loading = new Map<string, Promise<LoadedProject>>();
 
-  /** Where a project's test data goes: DuckDB in this tab (set by the page; none when queries run elsewhere). */
-  testData: TestData | undefined;
+  /**
+   * Where a project's own rows go: its database inside this tab's DuckDB (C5), the screens' engine pointed there as
+   * it opens, the tab's own connection beside (set by the page; none when queries run elsewhere).
+   */
+  tabProjects: { readonly databases: ProjectDatabases; readonly runner: ProjectRunner; readonly host: QueryEngine } | undefined;
 
   /**
-   * A project's test data made the tab's rows -- every time it is the one opened, since another version, filling the
-   * same tables, may have been opened since. Only the screen that will show the project asks (App's #render, once it
-   * knows no later navigation overtook it), so a load that answered late cannot swap the rows under another screen.
+   * The screens' engine pointed at the project's own database (made and filled the first time; another version keeps
+   * its own) -- or at the tab's own connection, for a project with none. Only the screen that will show the project
+   * asks (App's #render, once it knows no later navigation overtook it), so a load that answered late cannot move
+   * the engine under another screen.
    */
   async activate(p: LoadedProject): Promise<void> {
-    if (p.tables && this.testData) await this.testData.use(p.gav, p.tables);
+    if (!this.tabProjects) return;
+    const { databases, runner, host } = this.tabProjects;
+    runner.use(p.ownData ? (await databases.engineFor(p.context.code, p.gav, host)).engine : undefined);
   }
 
   /**

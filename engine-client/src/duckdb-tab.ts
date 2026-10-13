@@ -15,6 +15,11 @@ export interface DuckDbInTab {
   readonly data: FileSink;
   /** The database itself: what a host registers a person's file on, and lets go of it (DataCube's upload.ts). */
   readonly db: duckdb.AsyncDuckDB;
+  /**
+   * Another connection to the same database, set up as the first (its extensions from the site, its session the
+   * planner's): what a project's own database is queried on (project-data.ts), its names pointed there alone.
+   */
+  connect(): Promise<DuckDbEngine>;
 }
 
 /**
@@ -42,9 +47,14 @@ export async function startDuckDbInTab(vendor: string,
   });
   const db = new duckdb.AsyncDuckDB(new duckdb.ConsoleLogger(duckdb.LogLevel.WARNING), new Worker(bundle.mainWorker!));
   await db.instantiate(bundle.mainModule, bundle.pthreadWorker);
-  const engine = new DuckDbEngine((await db.connect()) as unknown as ArrowishConnection);
-  await ownExtensions(engine, asset('duckdb-extensions'));
-  await setUpSession(engine, setup);
+  // every connection set up alike: a setting of DuckDB's may be a session's, so none is left to the first's
+  const connect = async (): Promise<DuckDbEngine> => {
+    const connection = new DuckDbEngine((await db.connect()) as unknown as ArrowishConnection);
+    await ownExtensions(connection, asset('duckdb-extensions'));
+    await setUpSession(connection, setup);
+    return connection;
+  };
+  const engine = await connect();
   return {
     engine,
     data: {
@@ -52,5 +62,6 @@ export async function startDuckDbInTab(vendor: string,
       run: (sql) => engine.run(sql, 0),
     },
     db,
+    connect,
   };
 }

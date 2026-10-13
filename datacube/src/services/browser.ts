@@ -8,7 +8,7 @@
 
 import type { AsyncDuckDB } from '../../../engine-client/src/duckdb-wasm.ts';
 import type { DuckDbEngine } from '../../../engine-client/src/duckdb.ts';
-import type { SeedSource } from '../../../engine-client/src/model-data.ts';
+import type { ProjectDatabases, ProjectDataSource } from '../../../engine-client/src/project-data.ts';
 import type { WarehouseBinding } from '../../../engine-client/src/warehouse.ts';
 import type { QueriesModule, QueryReader } from '../../../query-store/src/index.ts';
 import type { Planner } from '../cube.ts';
@@ -43,7 +43,8 @@ export interface TabPlanner {
   readonly planner: Planner;
   readonly label: string;
   readonly tables: TableModels;
-  readonly seeds: SeedSource;
+  /** legend-lite's planner for a project's own database (C5, engine-client's project-data.ts). */
+  readonly projects: ProjectDataSource;
   readonly models: {
     another(model: string, runtime: string, how?: ModelOptions): Planner;
     elements(text: string): Promise<unknown[]>;
@@ -62,8 +63,8 @@ export interface TabConfig {
 export interface BrowserServicesOptions {
   readonly plane: PlaneService;
   readonly planner: TabPlanner;
-  /** This tab's DuckDB: its connection's engine, and the database files are registered on. */
-  readonly duckdb: { readonly engine: DuckDbEngine; readonly db: AsyncDuckDB };
+  /** This tab's DuckDB: its connection's engine, the database files are registered on, and its other connections. */
+  readonly duckdb: { readonly engine: DuckDbEngine; readonly db: AsyncDuckDB; connect(): Promise<DuckDbEngine> };
   readonly config: TabConfig;
   /** Where the page is, for the links it makes (Studio on a project). */
   readonly location: { readonly href: string };
@@ -83,6 +84,7 @@ export async function browserServices(o: BrowserServicesOptions): Promise<Servic
       stores = undefined;
       throw e;
     }));
+  let projectKeeper: Promise<ProjectDatabases> | undefined;
   return {
     engine: {
       plane: o.plane,
@@ -97,7 +99,14 @@ export async function browserServices(o: BrowserServicesOptions): Promise<Servic
         another: (model, runtime, how) => o.planner.models.another(model, runtime, how),
         elements: (text) => o.planner.models.elements(text),
         tables: o.planner.tables,
-        seeds: o.planner.seeds,
+        // a project's own rows, in a database of their own inside this tab's DuckDB (C5): the keeper fetched with the
+        // first saved query a page opens by name, never with the grid's start
+        projects: () => (projectKeeper ??= import('../../../engine-client/src/project-data.ts').then(({ ProjectDatabases: Keeper }) =>
+          new Keeper({
+            databaseType: o.duckdb.engine.databaseType,
+            run: (sql) => o.duckdb.engine.run(sql, 0),
+            connect: () => o.duckdb.connect(),
+          }, o.planner.projects))),
         engine: o.duckdb.engine,
       },
     },

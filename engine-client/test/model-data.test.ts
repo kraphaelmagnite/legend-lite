@@ -5,15 +5,16 @@
 
 import assert from 'node:assert/strict';
 import path from 'node:path';
-import { before, describe, it } from 'node:test';
+import { afterEach, before, describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 import { DuckDbEngine, type ArrowishConnection } from '../src/duckdb.ts';
 import { WasmGrammar } from '../src/legend/wasm-grammar.ts';
 import { answer, type PlannerModule } from '../src/legend/planner-answer.ts';
 import type { RequestBody } from '../src/legend/planner-protocol.ts';
-import { dataTables, loadDataTables, seeded, TestData, type FileSink } from '../src/model-data.ts';
-import { TabTables, withTestData, type Model } from '../src/tab-data.ts';
+import { dataTables, loadDataTables, seeded, type FileSink } from '../src/model-data.ts';
+import { ProjectDatabases, ProjectRunner } from '../src/project-data.ts';
+import { TabTables, type Model } from '../src/tab-data.ts';
 import { engineClientRequire } from '../src/node-require.ts';
 import { runfileDirUrl } from '../../tools/js/runfiles.mts';
 
@@ -160,43 +161,112 @@ Database demo::party::OtherDB
   });
 });
 
-describe("one model's test data at a time, versions of one project filling the same tables (TestData)", () => {
-  it("opening an earlier version again reads its own rows, not the later one's", async () => {
-    const data = new TestData(sink());
-    const one = await tablesOf(await version(V1));
-    const head = await tablesOf(await version(V2));
-    await data.use('p:1.0.0', one);
-    assert.deepEqual((await rowsOf('PARTY')).map((r) => r[0]), [1, 2]);
-    await data.use('p:HEAD', head);
-    assert.deepEqual((await rowsOf('PARTY')).map((r) => r[0]), [3]);
-    await data.use('p:1.0.0', one);
-    assert.deepEqual((await rowsOf('PARTY')).map((r) => r[0]), [1, 2]);
-  });
+/** Every keeper a test made: each test drops its databases, as a tab drops its own as it leaves. */
+const keepers: ProjectDatabases[] = [];
+/** The tab's project databases over this file's DuckDB: each on a connection of its own, as the tab's start opens one. */
+const projectsOf = (options: { readonly idleMs?: number; readonly most?: number } = {}): ProjectDatabases => {
+  const made = new ProjectDatabases({
+    databaseType: 'DuckDB',
+    run: (sql) => engine.run(sql, 0),
+    connect: async () => new DuckDbEngine(db.connect() as ArrowishConnection),
+  }, planner, options);
+  keepers.push(made);
+  return made;
+};
+afterEach(async () => {
+  for (const k of keepers.splice(0)) await k.dropAll();
+});
 
-  it('drops a table an earlier version made that this one does not fill', async () => {
-    const data = new TestData(sink());
-    await data.use('a', await tablesOf(await version(V1, DESK)));
-    assert.deepEqual(await rowsOf('DESK'), [[5, 'Rates Desk', 'US']]);
-    await data.use('b', await tablesOf(await version(V2)));
-    await assert.rejects(rowsOf('DESK'), /DESK/);
-  });
-
-  it("runs each query in the same turn as its version's rows, whatever another query asked for meanwhile", async () => {
-    const data = new TestData(sink());
-    const one = withTestData(engine, data, 'p:1.0.0', await tablesOf(await version(V1)));
-    const head = withTestData(engine, data, 'p:HEAD', await tablesOf(await version(V2)));
-    const [a, b, c] = await Promise.all([rowsOf('PARTY', one), rowsOf('PARTY', head), rowsOf('PARTY', one)]);
+describe("each version of a project in a database of its own (C5, ProjectDatabases)", () => {
+  it("answers each version's own rows at once -- none swapped for another -- and the tab's own connection sees none", async () => {
+    const projects = projectsOf();
+    const [one, head] = await Promise.all([
+      projects.engineFor(partyText(V1), 'p:1.0.0', engine),
+      projects.engineFor(partyText(V2), 'p:HEAD', engine),
+    ]);
+    assert.ok(one.fresh && head.fresh);
+    const [a, b, c] = await Promise.all([rowsOf('PARTY', one.engine), rowsOf('PARTY', head.engine), rowsOf('PARTY', one.engine)]);
     assert.deepEqual([a, b, c].map((rows) => rows.map((r) => r[0])), [[1, 2], [3], [1, 2]]);
+    await assert.rejects(rowsOf('PARTY'), /PARTY/);
+    assert.equal((await projects.engineFor(partyText(V1), 'p:1.0.0', engine)).fresh, false);
+    await projects.dropAll();
+    assert.deepEqual(projects.names, []);
+  });
+
+  it('makes one database for one version asked for twice at once', async () => {
+    const projects = projectsOf();
+    const [a, b] = await Promise.all([
+      projects.engineFor(partyText(V1), 'p:1.0.0', engine),
+      projects.engineFor(partyText(V1), 'p:1.0.0', engine),
+    ]);
+    assert.equal(a.name, b.name);
+    assert.equal(projects.names.length, 1);
+    await projects.dropAll();
+  });
+
+  it("runs a model with no Data rows on the tab's own connection: no database of its own", async () => {
+    const projects = projectsOf();
+    const bare = partyText(V1).replace(/###Data[\s\S]*$/, '');
+    const answer = await projects.engineFor(bare, 'p:bare', engine);
+    assert.equal(answer.engine, engine);
+    assert.equal(answer.name, undefined);
+    assert.deepEqual(projects.names, []);
+  });
+
+  it('drops a database left idle, and makes it again when next asked', async () => {
+    const projects = projectsOf({ idleMs: 20 });
+    const one = await projects.engineFor(partyText(V1), 'p:1.0.0', engine);
+    await rowsOf('PARTY', one.engine);
+    assert.equal(projects.names.length, 1);
+    await new Promise((r) => setTimeout(r, 80));
+    assert.deepEqual(projects.names, []);
+    const left = await engine.run('SELECT database_name FROM duckdb_databases()', 0);
+    assert.ok(!left.columns[0]!.values.includes(one.name!), String(left.columns[0]!.values));
+    assert.equal((await projects.engineFor(partyText(V1), 'p:1.0.0', engine)).fresh, true);
+    await projects.dropAll();
+  });
+
+  it('drops the least recently used idle database past the most it keeps', async () => {
+    const projects = projectsOf({ most: 2 });
+    const a = await projects.engineFor(partyText(V1), 'p:a', engine);
+    const b = await projects.engineFor(partyText(V1), 'p:b', engine);
+    await rowsOf('PARTY', a.engine);      // a used last: b is the least recently used
+    const c = await projects.engineFor(partyText(V2), 'p:c', engine);
+    assert.deepEqual([...projects.names].sort(), [a.name, c.name].sort());
+    assert.ok(!projects.names.includes(b.name!));
+    await projects.dropAll();
+  });
+
+  it("is not closed by one of its users: closing its engine leaves the database to its keeper", async () => {
+    const projects = projectsOf();
+    const one = await projects.engineFor(partyText(V1), 'p:1.0.0', engine);
+    await one.engine.close();
+    assert.deepEqual((await rowsOf('PARTY', one.engine)).map((r) => r[0]), [1, 2]);
+    await projects.dropAll();
   });
 });
 
+/** Studio's tables over this file's DuckDB: the model's database, and the runner the screens run on. */
+function tabTables(): { tabs: TabTables; runner: ProjectRunner } {
+  const runner = new ProjectRunner(engine);
+  const register = async (name: string, bytes: Uint8Array): Promise<void> => db.registerFileBuffer(name, bytes);
+  return { tabs: new TabTables(projectsOf(), runner, engine, register, planner), runner };
+}
+
 describe("a table's rows from a person's file (plan A2)", () => {
-  const rows = (): Promise<unknown[][]> => rowsOf('PARTY');
+  let runner: ProjectRunner;
+  /** The workspace's tables, with `runner` the engine its screens run on. */
+  const tables = (): TabTables => {
+    const made = tabTables();
+    runner = made.runner;
+    return made.tabs;
+  };
+  const rows = (): Promise<unknown[][]> => rowsOf('PARTY', runner);
   const enc = (s: string): Uint8Array => new TextEncoder().encode(s);
 
   it("says where each declared table's rows are from, and how many", async () => {
     const v1 = await version(V1);
-    const tabs = new TabTables(sink(), engine, planner);
+    const tabs = tables();
     await tabs.load(v1);
     assert.deepEqual((await tabs.tables(v1)).map((t) => [t.database, `${t.schema}.${t.table}`, t.source, t.rows]),
       [['demo::party::PartyDB', 'PARTY.PARTY', { kind: 'test', element: 'demo::party::PartyData' }, 2]]);
@@ -204,7 +274,7 @@ describe("a table's rows from a person's file (plan A2)", () => {
 
   it('fills a table from a CSV, kept over the test data until reset', async () => {
     const v1 = await version(V1);
-    const tabs = new TabTables(sink(), engine, planner);
+    const tabs = tables();
     await tabs.load(v1);
     await tabs.put(v1, 'PARTY', 'PARTY', { name: 'parties.csv', bytes: enc('ID,NAME,COUNTRY\n7,Osprey Fund,NZ\n') });
     assert.deepEqual(await rows(), [[7, 'Osprey Fund', 'NZ']]);
@@ -219,11 +289,11 @@ describe("a table's rows from a person's file (plan A2)", () => {
   it("drops a table the model's test data no longer fills (its Data element changed), and keeps a file's", async () => {
     const withDesk = await version(V1, DESK);
     const v1 = await version(V1);
-    const tabs = new TabTables(sink(), engine, planner);
+    const tabs = tables();
     await tabs.load(withDesk);
     await tabs.put(withDesk, 'PARTY', 'PARTY', { name: 'parties.csv', bytes: enc('ID,NAME,COUNTRY\n7,Osprey Fund,NZ\n') });
     await tabs.load(v1);
-    await assert.rejects(rowsOf('DESK'), /DESK/);
+    await assert.rejects(rowsOf('DESK', runner), /DESK/);
     assert.deepEqual(await rows(), [[7, 'Osprey Fund', 'NZ']]);
     assert.deepEqual((await tabs.tables(v1)).map((t) => [t.table, t.source.kind]), [['PARTY', 'file']]);
     await tabs.reset(v1, 'PARTY', 'PARTY');
@@ -231,8 +301,9 @@ describe("a table's rows from a person's file (plan A2)", () => {
 
   it("fills a table from a file whose name DuckDB would read as a pattern (sales[2024].csv)", async () => {
     const v1 = await version(V1);
-    const tabs = new TabTables(sink(), engine, planner);
+    const tabs = tables();
     await tabs.put(v1, 'PARTY', 'PARTY', { name: 'parties[2024]*?.csv', bytes: enc('ID,NAME,COUNTRY\n8,Kestrel Bank,DE\n') });
+    await tabs.load(v1);
     assert.deepEqual(await rows(), [[8, 'Kestrel Bank', 'DE']]);
     assert.deepEqual((await tabs.tables(v1))[0]!.source, { kind: 'file', name: 'parties[2024]*?.csv' });
     await tabs.reset(v1, 'PARTY', 'PARTY');
@@ -240,14 +311,16 @@ describe("a table's rows from a person's file (plan A2)", () => {
 
   it('fills a table from Parquet, each declared column by name, converted to its type', async () => {
     await engine.run("COPY (SELECT 'AU' AS COUNTRY, 9 AS ID, 'Wattle Capital' AS NAME, true AS EXTRA) TO 'made.parquet' (FORMAT PARQUET)", 0);
-    const tabs = new TabTables(sink(), engine, planner);
-    await tabs.put(await version(V1), 'PARTY', 'PARTY', { name: 'parties.parquet', bytes: db.copyFileToBuffer('made.parquet') });
+    const tabs = tables();
+    const v1 = await version(V1);
+    await tabs.put(v1, 'PARTY', 'PARTY', { name: 'parties.parquet', bytes: db.copyFileToBuffer('made.parquet') });
+    await tabs.load(v1);
     assert.deepEqual(await rows(), [[9, 'Wattle Capital', 'AU']]);
   });
 
   it('refuses a file of another kind, a table no Database declares, a file without a declared column, and a value its column cannot take', async () => {
     const v1 = await version(V1);
-    const tabs = new TabTables(sink(), engine, planner);
+    const tabs = tables();
     await assert.rejects(tabs.put(v1, 'PARTY', 'PARTY', { name: 'parties.json', bytes: enc('[]') }), /a \.csv or a \.parquet file/);
     await assert.rejects(tabs.put(v1, 'PARTY', 'NOPE', { name: 'x.csv', bytes: enc('A\n1\n') }), /a file fills PARTY\.NOPE, which no Database of the model declares/);
     await engine.run("COPY (SELECT 1 AS ID) TO 'thin.parquet' (FORMAT PARQUET)", 0);
@@ -257,7 +330,7 @@ describe("a table's rows from a person's file (plan A2)", () => {
 
   it('a refused file leaves the table as it was: its rows, and where they are from', async () => {
     const v1 = await version(V1);
-    const tabs = new TabTables(sink(), engine, planner);
+    const tabs = tables();
     await tabs.load(v1);
     await assert.rejects(tabs.put(v1, 'PARTY', 'PARTY', { name: 'bad.csv', bytes: enc('ID,NAME,COUNTRY\nseven,Osprey Fund,NZ\n') }), /seven/);
     assert.deepEqual((await rows()).map((r) => r[0]), [1, 2]);
@@ -284,7 +357,7 @@ Database demo::party::ThirdDB
   )
 )
 `);
-    const tabs = new TabTables(sink(), engine, planner);
+    const tabs = tables();
     await assert.rejects(tabs.put(two, 'PARTY', 'DESK', { name: 'desks.csv', bytes: enc('ID,NAME,COUNTRY\n5,Rates Desk,US\n') }),
       /a file fills PARTY\.DESK, which more than one Database declares \(demo::party::OtherDB, demo::party::ThirdDB\)/);
   });
@@ -309,15 +382,18 @@ Data demo::plain::PlainData
   }#
 }
 `;
+  let at: ProjectRunner;
   const tRows = async (): Promise<unknown[][]> => {
-    const t = await engine.run('SELECT ID, "first name" FROM T ORDER BY ID', 0);
+    const t = await at.run('SELECT ID, "first name" FROM T ORDER BY ID', 0);
     return Array.from({ length: t.rowCount }, (_, i) => t.columns.map((c) => c.values[i]));
   };
   const enc = (s: string): Uint8Array => new TextEncoder().encode(s);
 
   it('a table with no Schema: made, counted, filled from a file, put back, and dropped when no longer filled', async () => {
     const m = await modelOf(plain('ID,first name\n1,Ada\n'));
-    const tabs = new TabTables(sink(), engine, planner);
+    const made = tabTables();
+    const tabs = made.tabs;
+    at = made.runner;
     await tabs.load(m);
     assert.deepEqual(await tRows(), [[1, 'Ada']]);
     assert.deepEqual((await tabs.tables(m)).map((t) => [`${t.schema}.${t.table}`, t.source.kind, t.rows]), [['default.T', 'test', 1]]);
@@ -326,9 +402,8 @@ Data demo::plain::PlainData
     assert.deepEqual((await tabs.tables(m)).map((t) => [t.source.kind, t.rows]), [['file', 2]]);
     await tabs.reset(m, 'default', 'T');
     assert.deepEqual(await tRows(), [[1, 'Ada']]);
-    const data = new TestData(sink());
-    await data.use('a', await tablesOf(m));
-    await data.use('b', []);
+    // the model edited so its Data element fills T no longer: its own database, where there is no T
+    await tabs.load(await modelOf(plain('ID,first name\n1,Ada\n').replace(/###Data[\s\S]*$/, '')));
     await assert.rejects(tRows(), /T/);
   });
 });

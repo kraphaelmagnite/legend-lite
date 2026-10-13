@@ -13,7 +13,7 @@ import type { Planner, SnapTarget } from '../src/cube.ts';
 import type { ModelOptions } from '../src/planner.ts';
 import type { DuckDbEngine } from '../../engine-client/src/duckdb.ts';
 import { startDuckDbInTab } from '../../engine-client/src/duckdb-tab.ts';
-import type { SeedSource } from '../../engine-client/src/model-data.ts';
+import type { ProjectDataSource } from '../../engine-client/src/project-data.ts';
 import { mountRemote } from '../src/remote.ts';
 import { isPageFragment } from '../src/share/link.ts';
 import type { TableModels } from '../src/infer.ts';
@@ -188,10 +188,10 @@ export interface Engine {
    */
   readonly tables: TableModels;
   /**
-   * legend-lite's planner in this tab for a project's test data (a saved query opened by name): the server's statements
-   * that make and fill its tables (engine-client's model-data.ts) -- the same module as `tables`.
+   * legend-lite's planner in this tab for a project's own database (a saved query opened by name; C5): the statements
+   * that make, fill and drop it (engine-client's project-data.ts) -- the same module as `tables`.
    */
-  readonly seeds: SeedSource;
+  readonly projects: ProjectDataSource;
   /**
    * A file opened in this tab: the planner repointed at the model written for it from DuckDB's
    * catalog (`tables`, infer.ts). Every planner takes one (planners.ts).

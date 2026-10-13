@@ -33,6 +33,7 @@ import type { AssociationAction, ClassAction, DataSpaceAction, GridSource, Model
 import type { PrintStyle } from '../../engine-client/src/pure-v1.ts';
 import { relationColumns, type Plan, type PlanColumn } from '../../engine-client/src/relation-type.ts';
 import type { SeedTable, TableSeed } from '../../engine-client/src/model-data.ts';
+import type { ProjectDataStatements } from '../../engine-client/src/project-data.ts';
 import { answer as answerOf, type PlannerModule } from '../../engine-client/src/legend/planner-answer.ts';
 import type { PlannerWorker, RequestBody, Response } from '../../engine-client/src/legend/planner-protocol.ts';
 
@@ -603,6 +604,16 @@ export class LitePlanner implements Planner, TableModels, ModelWriter {
   async sessionSetup(databaseType: string): Promise<readonly string[]> {
     const answer = await this.#call({ kind: 'sessionSetup', databaseType });
     return JSON.parse(decode(answer, `a ${databaseType} session's setup`)) as string[];
+  }
+
+  /**
+   * A project's own database on a database of that type (C5, Boundary.projectData; engine-client's project-data.ts):
+   * its name and the statements that make it, point a connection at it, fill it from the model's Data elements, and
+   * drop it. The model is the one given, not this planner's own.
+   */
+  async projectData(model: string, identity: string, databaseType: string): Promise<ProjectDataStatements> {
+    const answer = await this.#call({ kind: 'projectData', model, identity, databaseType });
+    return JSON.parse(decode(answer, `a project's database on ${databaseType}`)) as ProjectDataStatements;
   }
 
   /**

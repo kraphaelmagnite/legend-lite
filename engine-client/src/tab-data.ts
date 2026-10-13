@@ -1,9 +1,11 @@
 // Where each table's rows come from, in this tab (plan A2): every table a model's Databases declare, filled from the
-// model's own test data (its Data elements, model-data.ts) or from a file the person dropped in for it (CSV or
-// Parquet) -- which stays, whatever the model's test data says, until it is reset -- or from nowhere yet.
+// model's own test data (its Data elements, in the model's own database inside the tab's DuckDB: project-data.ts) or
+// from a file the person dropped in for it (CSV or Parquet) -- which stays, whatever the model's test data says, until
+// it is reset -- or from nowhere yet.
 
 import type { QueryEngine } from './engine.ts';
-import { databaseOf, databaseTables, dataTables, loadFileTable, seeded, TestData, type FileSink, type SeededTable, type SeedSource } from './model-data.ts';
+import { databaseOf, databaseTables, dataTables, loadFileTable, seeded, type FileSink, type SeedSource } from './model-data.ts';
+import type { ProjectDatabases, ProjectEngine, ProjectRunner } from './project-data.ts';
 
 type Elements = Parameters<typeof dataTables>[0];
 
@@ -11,21 +13,6 @@ type Elements = Parameters<typeof dataTables>[0];
 export interface Model {
   readonly text: string;
   readonly elements: Elements;
-}
-
-/**
- * The tab's engine, for queries over one version of a project (`key`): each query it runs reads that version's test
- * data, made the tab's rows in the same turn (TestData.with) -- whatever version another query on the page opened
- * since. The engine itself is the tab's, shared: closing this closes it, as closing the engine would.
- */
-export function withTestData(engine: QueryEngine, data: TestData, key: string, tables: readonly SeededTable[]): QueryEngine {
-  return {
-    name: engine.name,
-    execute: (plan, epoch, signal) => data.with(key, tables, () => engine.execute(plan, epoch, signal)),
-    stream: (plan, epoch, onChunk, signal) => data.with(key, tables, () => engine.stream(plan, epoch, onChunk, signal)),
-    run: (sql, epoch, signal) => data.with(key, tables, () => engine.run(sql, epoch, signal)),
-    close: () => engine.close(),
-  };
 }
 
 /** Where a table's rows are from: a Data element of the model, a person's file, or nothing yet. */
@@ -46,33 +33,49 @@ export interface TableState {
 
 const key = (schema: string, table: string): string => `${schema}.${table}`;
 
+/** A person's file for a table: its name and bytes (put in again when the model's database is made afresh). */
+interface PutFile {
+  readonly schema: string;
+  readonly table: string;
+  readonly name: string;
+  readonly bytes: Uint8Array;
+  /** The planner's statement that drops the table it made. */
+  readonly drop: string;
+}
+
+/**
+ * The tables of the model a workspace runs (Studio's), in this tab: the model's own database (project-data.ts, kept by
+ * the model's text: an edit is a database of its own, the one before dropped when idle), its Data rows there, and a
+ * person's file for a table put in over them -- again into each database the workspace's model is made in. The
+ * screens run on `runner`, pointed at the model's database as it loads.
+ */
 export class TabTables {
-  readonly #sink: FileSink;
-  readonly #engine: QueryEngine;
-  readonly #tests: TestData;
-  /** The tables a person's file fills, by `schema.table`: its file's name, and the planner's statement that drops it. */
-  readonly #files = new Map<string, { readonly name: string; readonly drop: string }>();
+  readonly #projects: ProjectDatabases;
+  readonly #runner: ProjectRunner;
+  readonly #host: QueryEngine;
+  readonly #register: FileSink['registerFileBuffer'];
+  readonly #source: SeedSource;
+  /** The tables a person's file fills, by `schema.table`. */
+  readonly #files = new Map<string, PutFile>();
   #uploads = 0;
 
-  readonly #source: SeedSource;
-
-  /** `source`: where the server's statements for the model's test data come from (the planner in this tab). */
-  constructor(sink: FileSink, engine: QueryEngine, source: SeedSource) {
-    this.#sink = sink;
-    this.#engine = engine;
+  /**
+   * `host`: the tab's own connection (a model with no Data rows runs there); `register`: where a file's bytes go (the
+   * tab's database); `source`: the planner's statements for a table a file fills.
+   */
+  constructor(projects: ProjectDatabases, runner: ProjectRunner, host: QueryEngine, register: FileSink['registerFileBuffer'],
+    source: SeedSource) {
+    this.#projects = projects;
+    this.#runner = runner;
+    this.#host = host;
+    this.#register = register;
     this.#source = source;
-    this.#tests = new TestData(sink);
   }
 
-  /**
-   * The model's test data loaded, each table made afresh, and a table the model's test data no longer fills (its Data
-   * element deleted or renamed) dropped -- but a table a person's file fills keeps that file's rows. Loaded each time:
-   * the workspace's model may have changed since.
-   */
+  /** The model's database, made and filled the first time (a person's files put in again), and the screens on it. */
   async load(model: Model): Promise<void> {
-    const keep = new Set(this.#files.keys());
-    const tables = dataTables(model.elements).filter((t) => !keep.has(key(t.schema, t.table)));
-    await this.#tests.use(undefined, await seeded(this.#source, model.text, tables), keep);
+    const project = await this.#open(model);
+    this.#runner.use(project.engine);
   }
 
   /**
@@ -80,22 +83,25 @@ export class TabTables {
    * declares it makes (databaseOf: none, or two, is refused). A refused file leaves the table as it was.
    */
   async put(model: Model, schema: string, table: string, file: { readonly name: string; readonly bytes: Uint8Array }): Promise<void> {
-    const database = databaseOf(model.elements, schema, table, 'a file fills');
-    const target = databaseTables(model.elements).find((t) => t.database === database && t.schema === schema && t.table === table)!;
-    const seed = await loadFileTable(this.#sink, this.#source, model.text, target, file, `upload-${++this.#uploads}`);
-    this.#files.set(key(schema, table), { name: file.name, drop: seed.drop });
+    const project = await this.#open(model);
+    const drop = await this.#putFile(model, project.engine, schema, table, file);
+    this.#files.set(key(schema, table), { schema, table, name: file.name, bytes: file.bytes, drop });
   }
 
-  /** `schema.table` back to the model's own rows (none: no table). */
+  /** `schema.table` back to the model's own rows (none: no table): its database made afresh, the other files kept. */
   async reset(model: Model, schema: string, table: string): Promise<void> {
     const file = this.#files.get(key(schema, table));
     this.#files.delete(key(schema, table));
-    if (file) await this.#sink.run(file.drop);
+    const project = await this.#projects.engineFor(model.text, '', this.#host);
+    // a model with Data rows: its database made again; one with none runs on the tab's own, where the file's table goes
+    if (project.name !== undefined) await this.#projects.drop(project.name);
+    else if (file) await project.engine.run(file.drop, 0);
     await this.load(model);
   }
 
   /** Every table the model declares: where its rows are from, and how many there are (counted by the planner's name). */
   async tables(model: Model): Promise<TableState[]> {
+    const { engine } = await this.#open(model);
     const declared = databaseTables(model.elements);
     const tests = new Map(dataTables(model.elements).map((t) => [key(t.schema, t.table), t.element]));
     const named = await seeded(this.#source, model.text, declared.map((t) => ({
@@ -108,12 +114,30 @@ export class TabTables {
       const source: TableSource = file !== undefined ? { kind: 'file', name: file.name } : element !== undefined ? { kind: 'test', element } : { kind: 'none' };
       let rows: number | undefined;
       try {
-        rows = Number((await this.#engine.run(`SELECT COUNT(*) AS n FROM ${named[i]!.seed.table}`, 0)).columns[0]!.values[0]);
+        rows = Number((await engine.run(`SELECT COUNT(*) AS n FROM ${named[i]!.seed.table}`, 0)).columns[0]!.values[0]);
       } catch {
         rows = undefined;     // not made yet: nothing fills it
       }
       out.push({ ...t, source, rows });
     }
     return out;
+  }
+
+  /** The model's database: made and filled the first time, a person's files put in again over its rows. */
+  async #open(model: Model): Promise<ProjectEngine> {
+    const project = await this.#projects.engineFor(model.text, '', this.#host);
+    if (project.fresh) {
+      for (const file of this.#files.values()) await this.#putFile(model, project.engine, file.schema, file.table, file);
+    }
+    return project;
+  }
+
+  /** A file put into `schema.table` on `engine`; answers the planner's statement that drops the table. */
+  async #putFile(model: Model, engine: QueryEngine, schema: string, table: string,
+    file: { readonly name: string; readonly bytes: Uint8Array }): Promise<string> {
+    const database = databaseOf(model.elements, schema, table, 'a file fills');
+    const target = databaseTables(model.elements).find((t) => t.database === database && t.schema === schema && t.table === table)!;
+    const sink: FileSink = { registerFileBuffer: this.#register, run: (sql) => engine.run(sql, 0) };
+    return (await loadFileTable(sink, this.#source, model.text, target, file, `upload-${++this.#uploads}`)).drop;
   }
 }

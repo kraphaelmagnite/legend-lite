@@ -9,6 +9,7 @@ import type { QueryEngine } from '../../../engine-client/src/engine.ts';
 import { BrowserEngine } from '../../../engine-client/src/legend/browser-engine.ts';
 import { HttpEngine } from '../../../engine-client/src/legend/engine.ts';
 import { TabTables } from '../../../engine-client/src/tab-data.ts';
+import { ProjectDatabases, ProjectRunner } from '../../../engine-client/src/project-data.ts';
 import { WasmGrammar } from '../../../engine-client/src/legend/wasm-grammar.ts';
 import { Compiler, WorkerPort } from '../backend/planner.ts';
 import { queryBuilder, type BuilderSession } from '../backend/query-builder.ts';
@@ -113,7 +114,19 @@ function inTabSession(grammar: WasmGrammar, duckdbVendor: string, user: string):
   let started: Promise<Started> | undefined;
   const start = (): Promise<Started> => (started ??= startDuckDbInTab(duckdbVendor,
     (databaseType) => grammar.sessionSetup(databaseType))
-    .then((tab) => ({ engine: new BrowserEngine(grammar, tab.engine, user), sql: tab.engine, tables: new TabTables(tab.data, tab.engine, grammar) })));
+    .then((tab) => {
+      // the workspace's model in a database of its own inside the tab's DuckDB (C5): every screen runs on `runner`,
+      // pointed there as the model loads
+      const runner = new ProjectRunner(tab.engine);
+      const projects = new ProjectDatabases({
+        databaseType: tab.engine.databaseType, run: (sql) => tab.engine.run(sql, 0), connect: () => tab.connect(),
+      }, grammar);
+      return {
+        engine: new BrowserEngine(grammar, runner, user),
+        sql: runner,
+        tables: new TabTables(projects, runner, tab.engine, (name, bytes) => tab.data.registerFileBuffer(name, bytes), grammar),
+      };
+    }));
   return {
     modelJson: (text) => grammar.modelJson(text),
     lambdaJson: (text) => grammar.lambdaJson(text),

@@ -12,7 +12,6 @@
 
 import { UI_LOCALE } from '../../../engine-client/src/locale.ts';
 import type { QueryEngine } from '../../../engine-client/src/engine.ts';
-import type { TestData } from '../../../engine-client/src/model-data.ts';
 import type { CatalogObject, WarehouseEngine, WarehouseSession } from '../../../engine-client/src/warehouse.ts';
 import type { Query, QueryReader } from '../../../query-store/src/index.ts';
 import { lambda, type ValueSpecification } from '../../../pure-protocol/src/index.ts';
@@ -112,7 +111,7 @@ export type OpenedQuery = {
   readonly planner: Planner;
   /** The cube's source, as Save and Share write it down: the query itself (cube-document.ts). */
   readonly cubeSource: QuerySource;
-  /** A project opened by name: the host's engine with its version's own rows made there for each query (withTestData). */
+  /** A project opened by name: its version's own database in the host's (C5, engine-client's project-data.ts). */
   readonly engine?: QueryEngine;
 };
 
@@ -804,8 +803,6 @@ export function pageSources(d: SourcesOf): PageSources {
   const projectModels = new Map<string, Promise<string>>();
   /** Each configured project's rows (its seed), in the host's database once. */
   const seeded = new Map<string, Promise<void>>();
-  /** Where a project opened by name puts its test data (each query its cubes run makes its version's rows there). */
-  let testData: TestData | undefined;
   const once = <T,>(cache: Map<string, Promise<T>>, key: string, make: () => Promise<T>): Promise<T> => {
     let p = cache.get(key);
     if (!p) {
@@ -826,7 +823,7 @@ export function pageSources(d: SourcesOf): PageSources {
   async function openedRecord(q: SavedQueryRecord): Promise<OpenedQuery> {
     // read by the page's own compiler, its test data made in the page's database: offered only where it has them
     if (!local || !queries) throw new Error(`“${q.name}” is a saved query: this page reads none`);
-    const { planner, engine, seeds } = local;
+    const { planner, engine, projects } = local;
     const { contextOf, enumerationsOf, enumsAsStrings, projectOf, sourceOf } = await savedQueries();
     const project = projectFor(q);
     if (!project && !modelHome) throw new Error(`“${q.name}” belongs to ${projectOf(q)}, which this page has no model for (config.json projects[], or a depot)`);
@@ -844,15 +841,11 @@ export function pageSources(d: SourcesOf): PageSources {
       if (parsed.body[0]) values.set(v.name, parsed.body[0]);
     }
     let source = sourceOf(lambdaOf, values);
-    // a project opened by name brings its own rows: its Data elements' tables, made and filled by the server's
-    // statements (`seeds`; plan A2, model-data.ts), made the host's for each query its cube runs -- another version,
-    // filling the same tables, may be on the page beside it
+    // a project opened by name brings its own rows: its Data elements' tables, in a database of the version's own
+    // inside the host's (C5, engine-client's project-data.ts) -- another version may be on the page beside it, in its own
     let versioned: QueryEngine | undefined;
     if (!project) {
-      const { dataTables, seeded: seedTables, TestData } = await import('../../../engine-client/src/model-data.ts');
-      const { withTestData } = await import('../../../engine-client/src/tab-data.ts');
-      testData ??= new TestData({ run: (sql) => engine.run(sql, 0) });
-      versioned = withTestData(engine, testData, key, await seedTables(seeds, model, dataTables(elements as Parameters<typeof dataTables>[0])));
+      versioned = (await (await projects()).engineFor(model, key, engine)).engine;
     } else {
       await once(seeded, key, async () => {
         for (const url of project.seed) {

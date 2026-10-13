@@ -9,7 +9,7 @@
 // and saved queries stay in this browser (the same records and rules as a server's store).
 
 import { startDuckDbInTab } from '../../engine-client/src/duckdb-tab.ts';
-import { TestData, type DataSink } from '../../engine-client/src/model-data.ts';
+import { ProjectDatabases, ProjectRunner } from '../../engine-client/src/project-data.ts';
 import type { QueryEngine } from '../../engine-client/src/engine.ts';
 import { loadWarehouseBinding, signIn, WarehouseEngine } from '../../engine-client/src/warehouse.ts';
 import { connectModelHome } from '../../depot-client/src/model-home.ts';
@@ -76,13 +76,13 @@ async function boot(): Promise<void> {
   // projects by name (design Phase 3): what this origin's Depot has -- what Studio publishes -- listed, each loaded when opened
   let byName: { load: NonNullable<AppContext["byName"]>; versions: NonNullable<AppContext["versions"]> } | undefined;
   let depotProjects: AppContext["depotProjects"] = [];
-  /** Where a project's test data goes: DuckDB in this tab, once started (set below; none on the warehouse). */
-  let data: DataSink | undefined;
+  /** Where a project's own rows go: its database in this tab's DuckDB, once started (set below; none on the warehouse). */
+  let tabProjects: AppContext['tabProjects'];
   if (config.depot) {
     starting('Listing the projects in Depot');
     const { depot } = await connectModelHome(config.depot);
     byName = {
-      load: (g: string, a: string, v: string) => loadByName(depot, grammar, g, a, v, data && planner),
+      load: (g: string, a: string, v: string) => loadByName(depot, grammar, g, a, v, tabProjects !== undefined),
       versions: (g: string, a: string) => versionsOf(depot, g, a),
     };
     depotProjects = (await depot.projects()).map((p) => ({ groupId: p.groupId, artifactId: p.artifactId }));
@@ -103,8 +103,17 @@ async function boot(): Promise<void> {
     if (exec.kind === 'duckdb-wasm') {
       starting('Starting DuckDB in this tab');
       const tab = await startDuckDbInTab('./vendor/', (databaseType) => planner!.sessionSetup(databaseType));
-      runner = tab.engine;
-      data = tab.data;     // a project opened by name brings its own test data, made here when opened (AppContext.activate)
+      // a project opened by name brings its own rows, in a database of its own here (C5): the screens run on `runner`,
+      // pointed there as it opens (AppContext.activate)
+      const projectRunner = new ProjectRunner(tab.engine);
+      runner = projectRunner;
+      tabProjects = {
+        databases: new ProjectDatabases({
+          databaseType: tab.engine.databaseType, run: (sql) => tab.engine.run(sql, 0), connect: () => tab.connect(),
+        }, planner!),
+        runner: projectRunner,
+        host: tab.engine,
+      };
       user = exec.user;
     } else {
       // the warehouse's API as the one binding speaks it (vendor/warehouse/: docs/ONE_PLATFORM_PROGRAM_2026_10_12.md C3),
@@ -133,7 +142,7 @@ async function boot(): Promise<void> {
   ctx.byName = byName?.load;
   ctx.versions = byName?.versions;
   ctx.depotProjects = depotProjects;
-  ctx.testData = data && new TestData(data);
+  ctx.tabProjects = tabProjects;
   // warm the planner on the first model while the person looks at the landing page
   if (planner && projects[0]) void planner.warm(projects[0].context).catch(() => undefined);
   new App(ctx, root).start();

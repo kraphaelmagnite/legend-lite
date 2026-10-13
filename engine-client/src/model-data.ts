@@ -84,8 +84,6 @@ export function databaseTables(elements: readonly ModelElement[]): DeclaredTable
   return out;
 }
 
-const tableKey = (schema: string, table: string): string => `${schema}.${table}`;
-
 /**
  * The one Database of the model that declares `schema.table` (its JSON's elements). None, or more than one, is refused:
  * which one would be a guess (the server is told, by the test that names its store; the tab has no test to ask).
@@ -182,54 +180,5 @@ export async function loadFileTable(sink: FileSink, source: SeedSource, model: s
 export async function loadDataTables(sink: DataSink, tables: readonly SeededTable[]): Promise<void> {
   for (const t of tables) {
     for (const sql of t.seed.sql) await sink.run(sql);
-  }
-}
-
-/**
- * The tab's test data, one model's at a time. Tables are named as a model's Databases declare them, so two versions of
- * a project fill the same names: `use` makes one model's test data the rows there -- its own tables made afresh, and
- * every table an earlier model's test data made that this one does not fill dropped -- and loads nothing when that
- * model's are there already. `key` names the model (a project version); none means its text may have changed since
- * (Studio's workspace), so it is loaded each time. `keep` are tables something else fills (a person's file): neither
- * made nor dropped here. Calls run one after another, in the order made; `with` runs a query inside its turn, so
- * another model's load cannot land between the rows made and the query that reads them (two of DataCube's cubes,
- * over two versions of one project, on one page).
- */
-export class TestData {
-  readonly #sink: DataSink;
-  #current: string | undefined;
-  /** The tables the last load made: the planner's statement that drops each, by `schema.table`. */
-  #made = new Map<string, string>();
-  #queue: Promise<unknown> = Promise.resolve();
-
-  constructor(sink: DataSink) {
-    this.#sink = sink;
-  }
-
-  use(key: string | undefined, tables: readonly SeededTable[], keep: ReadonlySet<string> = new Set()): Promise<void> {
-    return this.with(key, tables, () => Promise.resolve(), keep);
-  }
-
-  /** `tables` made the rows there (as `use`), then `query` run, before any other call's turn. */
-  with<T>(key: string | undefined, tables: readonly SeededTable[], query: () => Promise<T>, keep: ReadonlySet<string> = new Set()): Promise<T> {
-    const next = this.#queue.then(async () => {
-      await this.#make(key, tables, keep);
-      return query();
-    });
-    this.#queue = next.catch(() => undefined);
-    return next;
-  }
-
-  async #make(key: string | undefined, tables: readonly SeededTable[], keep: ReadonlySet<string>): Promise<void> {
-    if (key !== undefined && key === this.#current) return;
-    this.#current = undefined;
-    const filled = tables.filter((t) => !keep.has(tableKey(t.schema, t.table)));
-    const now = new Set(filled.map((t) => tableKey(t.schema, t.table)));
-    for (const [k, drop] of this.#made) {
-      if (!now.has(k) && !keep.has(k)) await this.#sink.run(drop);
-    }
-    this.#made = new Map(filled.map((t) => [tableKey(t.schema, t.table), t.seed.drop]));
-    await loadDataTables(this.#sink, filled);
-    this.#current = key;
   }
 }
