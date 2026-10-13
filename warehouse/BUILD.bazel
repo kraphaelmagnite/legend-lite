@@ -425,24 +425,14 @@ legend_java_library(
 # THE WAREHOUSE'S API IN THE PAGE (docs/ONE_PLATFORM_PROGRAM_2026_10_12.md C3): the one binding (SqlApiCalls)
 # compiled to WebAssembly, the tab's driver's (engine-client/src/warehouse.ts), served at vendor/warehouse/ by
 # DataCube's and Query's sites. Its own small module, not the planner's: the planner runs in a worker, and a
-# statement's every HTTP step would be a round trip to it. TeaVM's annotations at compile time only (as
-# //wasm:teavm_api).
-legend_java_library(
-    name = "teavm_api",
-    neverlink = True,
-    nullaway = False,  # no sources: only exports
-    exports = [
-        "@maven_teavm//:org_teavm_teavm_core",
-        "@maven_teavm//:org_teavm_teavm_jso",
-    ],
-)
-
+# statement's every HTTP step would be a round trip to it.
 legend_java_library(
     name = "sqlapi_page_entry",
     srcs = ["src/page/java/com/legend/warehouse/sqlapi/page/SqlApiPage.java"],
     deps = [
         ":sqlapi",
-        ":teavm_api",
+        # TeaVM's annotations, at compile time only
+        "//tools/teavm:api",
     ],
 )
 

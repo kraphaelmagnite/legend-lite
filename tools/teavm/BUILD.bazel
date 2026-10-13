@@ -1,4 +1,4 @@
-load("//tools/java:defs.bzl", "legend_java_binary")
+load("//tools/java:defs.bzl", "legend_java_binary", "legend_java_library")
 load("//tools/guards:defs.bzl", "guards_package")
 
 # TeaVM as a build action (defs.bzl, teavm_wasm). The compiler's jars come from
@@ -15,6 +15,28 @@ legend_java_binary(
     deps = [
         "@maven_teavm//:org_teavm_teavm_core",
         "@maven_teavm//:org_teavm_teavm_tooling",
+    ],
+)
+
+# THE TEAVM SURFACE A MODULE'S JAVA NAMES AT COMPILE TIME ONLY: @JSExport (jso) and the ResourceSupplier SPI (core,
+# the compiler's). neverlink: on a JVM the annotation is inert and nothing loads the SPI, so no JVM classpath carries
+# them. One library for every module whose Java names them (2026-10-13: the four copies, one per package, in wasm,
+# sdlc-server, query-store and warehouse made this one; docs/build-inventory/area7_report.md, wiring cleanup 7).
+# Visible to the pool's users that build a module (tools/deps/pools.bzl, maven_teavm): a package that gains one is
+# added there, with its reason, and here.
+legend_java_library(
+    name = "api",
+    neverlink = True,
+    nullaway = False,  # no sources: only exports
+    visibility = [
+        "//query-store:__pkg__",
+        "//sdlc-server:__pkg__",
+        "//warehouse:__pkg__",
+        "//wasm:__pkg__",
+    ],
+    exports = [
+        "@maven_teavm//:org_teavm_teavm_core",
+        "@maven_teavm//:org_teavm_teavm_jso",
     ],
 )
 

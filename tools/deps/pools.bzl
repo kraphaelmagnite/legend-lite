@@ -29,7 +29,8 @@ POOL_USERS = {
     "maven_native": ["native"],
     # TeaVM: the WebAssembly compiler and the class library the planner compiles against; and sdlc-server, whose
     # rules (with depot-server's) compile to the page's SDLC module the same way (2026-10-04, the Studio line,
-    # docs/STUDIO_DESIGN_2026_10_02.md S21: its :teavm_api and :page targets, as //wasm's)
+    # docs/STUDIO_DESIGN_2026_10_02.md S21: its :page target, as //wasm's; the annotations both name come from
+    # //tools/teavm:api since 2026-10-13)
     # warehouse: the SQL API compiled to WebAssembly, //warehouse:sqlapi_wasm (Bazel workplan P3-24)
     # query-store: the saved queries' rules (//core:saved_queries) compiled to WebAssembly for the page,
     # //query-store:page (2026-10-13, docs/ONE_PLATFORM_PROGRAM_2026_10_12.md B5: one implementation for the server,

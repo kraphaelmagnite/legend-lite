@@ -12,24 +12,14 @@ load("//tools/teavm:defs.bzl", "teavm_wasm")
 # THE SAVED QUERIES IN THE PAGE (docs/ONE_PLATFORM_PROGRAM_2026_10_12.md B5): core's rules (//core:saved_queries,
 # the ones legend-lite's server and Python's native library answer with) compiled to WebAssembly, the page's records
 # handed in with each call (java/.../QueriesPage.java), which src/wasm-server.ts writes back to IndexedDB.
-# TeaVM's annotations, at compile time only (as //wasm:teavm_api).
-legend_java_library(
-    name = "teavm_api",
-    neverlink = True,
-    nullaway = False,  # no sources: only exports
-    exports = [
-        "@maven_teavm//:org_teavm_teavm_core",
-        "@maven_teavm//:org_teavm_teavm_jso",
-    ],
-)
-
 legend_java_library(
     name = "page_entry",
     srcs = ["java/com/legend/queries/page/QueriesPage.java"],
     deps = [
-        ":teavm_api",
         "//core:saved_queries",
         "//json",
+        # TeaVM's annotations, at compile time only
+        "//tools/teavm:api",
     ],
 )
 

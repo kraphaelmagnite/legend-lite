@@ -70,17 +70,6 @@ legend_java_binary(
     runtime_deps = [":server_lib"],
 )
 
-# TeaVM's annotations, at compile time only (as //wasm:teavm_api).
-legend_java_library(
-    name = "teavm_api",
-    neverlink = True,
-    nullaway = False,  # no sources: only exports
-    exports = [
-        "@maven_teavm//:org_teavm_teavm_core",
-        "@maven_teavm//:org_teavm_teavm_jso",
-    ],
-)
-
 legend_java_library(
     name = "page_boundary",
     srcs = glob(["src/main/java/com/legend/sdlc/page/*.java"]),
@@ -88,10 +77,11 @@ legend_java_library(
     resources = ["src/main/resources/META-INF/services/org.teavm.classlib.ResourceSupplier"],
     deps = [
         ":rules",
-        ":teavm_api",
         "//depot-server:rules",
         "//json",
         "//sdlc-server/grammar",
+        # TeaVM's annotations, at compile time only
+        "//tools/teavm:api",
     ],
 )
 
