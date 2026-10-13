@@ -183,7 +183,7 @@ legend_java_library(
 legend_java_library(
     name = "setup",
     srcs = glob(["src/main/java/com/legend/setup/*.java"]),
-    deps = ["//base", ":compiler", ":execution_plan", ":model", ":sql", ":sql_dialect"],
+    deps = ["//base", ":cache", ":compiler", ":execution_plan", ":model", ":protocol", ":sql", ":sql_dialect"],
 )
 legend_java_library(
     name = "exec",

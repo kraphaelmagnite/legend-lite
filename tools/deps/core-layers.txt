@@ -28,6 +28,8 @@
 # answers with the server's code; docs/DATACUBE_PYTHON_SHOW_DESIGN_2026_10_08.md); server_lib reaches it.
 # 2026-10-10 (build rebuild Phase 3b item 1b, GATES "Build rebuild Phase 3b"): `platform` reaches `error` -- PlatformPure.adopt
 # refuses a declaration whose parameter names differ from the platform's own version with a ModelException, the model error it is.
+# 2026-10-13 (docs/ONE_PLATFORM_PROGRAM_2026_10_12.md C5): setup reaches `protocol` (ProjectData reads a Data
+# element's CSV tables, Protocol.PRelationalCsvData) and `cache` (a project's database named by its identity's Hash).
 # 2026-10-10 (DataCube's Create a Class…, docs/DATACUBE_MODEL_DESIGN_2026_10_10.md §15.6): `pure_v1` reaches `compiler` --
 # server/PromoteRelationToModel types the relation it writes as a class over the model it compiles (a ModelContext).
 # 2026-10-13 (the one-platform program's B5, docs/ONE_PLATFORM_PROGRAM_2026_10_12.md): `saved_queries` (queries/: the
@@ -55,7 +57,7 @@ validation	base builtin compiler compiler_element_type error model protocol
 lowering	base builtin compiler compiler_element_type error model platform protocol sql values
 plan	base builtin compiler compiler_element_type database error lineage model sql
 resolver	base builtin compiler compiler_element_type error lowering model plan platform sql values
-setup	base compiler execution_plan model sql sql_dialect
+setup	base cache compiler execution_plan model protocol sql sql_dialect
 exec	base cache compiler compiler_element_type database diagnostics error execution_plan lowering model plan platform setup sql sql_dialect values
 probe	base builtin lowering model platform
 testdatagen	base builtin compiler compiler_element_type error exec lineage model plan protocol resolver setup sql_dialect values

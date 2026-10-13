@@ -552,6 +552,11 @@ public final class PureModelContext implements ModelContext {
         return model.findData(fqn);
     }
 
+    @Override
+    public java.util.stream.Stream<com.legend.model.DataDefinition> dataElements() {
+        return model.dataElements();
+    }
+
     /** Overlay view: SHARES the base context wholesale (model, compilers,
      * memo caches) and adds the driver-supplied runtime + connection. */
     private PureModelContext(PureModelContext base,

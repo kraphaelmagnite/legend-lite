@@ -1249,6 +1249,11 @@ public final class ModelBuilder implements com.legend.compiler.StoreLookups {
         return inOrder(databases);
     }
 
+    /** All {@code ###Data} elements in ingest order. */
+    public Stream<com.legend.model.DataDefinition> dataElements() {
+        return inOrder(dataElements);
+    }
+
     /** All canonical {@link MappingDefinition}s in ingest order (Phase F). */
     public Stream<MappingDefinition> mappings() {
         return inOrder(mappings);
