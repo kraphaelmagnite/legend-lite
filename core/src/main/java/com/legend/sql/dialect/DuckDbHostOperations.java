@@ -11,9 +11,9 @@ import java.util.Set;
 /**
  * DuckDB's host operations ({@link HostOperations}).
  *
- * <p>A project's own database (C5) is an in-memory database ATTACHed to the host's -- a catalog of its own, holding the
- * model's schemas as declared -- and a connection points at it with USE, which is that connection's alone (ATTACH is the
- * instance's). DETACH drops it with everything in it. The corpus's workspaces are the same three statements (spec's
+ * <p>A project's own database (C5) is an in-memory database ATTACHed to the host's -- a catalog of its own, holding
+ * the model's schemas as declared -- and a connection points at it with USE, which is that connection's alone (ATTACH
+ * is the instance's). DETACH drops it with everything in it. The corpus's workspaces are the same three statements (spec's
  * {@code DuckWorkspaces}, the session-topology ruling of 2026-08-14), and DuckDB-WASM reads them as DuckDB does
  * (measured 2026-10-13: DuckDB 1.5.5 and DuckDB-WASM's 1.5.4).
  *
@@ -125,7 +125,7 @@ final class DuckDbHostOperations implements HostOperations {
         };
     }
 
-    /** A relation made's columns: the planner's copy select list, every column with conversions in their place, or all. */
+    /** A relation made's columns: the planner's copy select list, every column with conversions in place, or all. */
     private static String columns(HostOperation.MakeRelation m) {
         if (m.selectList() != null) {
             return m.selectList();
@@ -141,7 +141,7 @@ final class DuckDbHostOperations implements HostOperations {
         return switch (source) {
             case HostOperation.Source.Relation r -> name(r.name());
             case HostOperation.Source.File f -> switch (f.format()) {
-                // the sniffer takes delimiter, quoting and types; upstream's DataCube asks for a header, and so does this
+                // the sniffer takes delimiter, quoting and types; upstream's DataCube asks for a header, as this does
                 case CSV -> "read_csv(" + literal(f.at()) + ", AUTO_DETECT=TRUE, HEADER=TRUE)";
                 // a declared table's file: every column as text, each converted to its column's type as it goes in
                 case CSV_TEXT -> "read_csv(" + literal(f.at()) + ", header = true, all_varchar = true)";
@@ -191,7 +191,7 @@ final class DuckDbHostOperations implements HostOperations {
         return database == null ? "database_name = current_database()" : "database_name = " + literal(database);
     }
 
-    /** A relation's name: a model's declared one as its seed spelled it, any other quoted; its database and schema too. */
+    /** A relation's name: a model's declared one as its seed spelled it, any other quoted; its database, schema too. */
     private static String name(HostOperation.Name n) {
         String last = n.declared() ? DIALECT.physicalName(n.name()) : quoted(n.name());
         String schema = n.schema() == null ? null : n.declared() ? DIALECT.physicalName(n.schema()) : quoted(n.schema());

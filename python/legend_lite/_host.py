@@ -2,7 +2,8 @@
 (engine-client/src/host-operations.ts): what Python's host used to spell as SQL itself -- a frame's table or view, a
 copy and its schema, a catalog question, an extension's settings -- named here with its data, and answered by the
 native library (``compiler.host_operations``: the platform's HostOperations in Java, by the database's type) as the
-statements DuckDB runs. Python spells none. Each operation is the JSON the tab's sends (its types: host-operations.ts)."""
+statements DuckDB runs. Python spells none. Each operation is the JSON the tab's sends (its types:
+host-operations.ts)."""
 
 from __future__ import annotations
 

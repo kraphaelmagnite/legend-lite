@@ -18,8 +18,8 @@ import org.junit.jupiter.api.Test;
 /**
  * Snap's preflight count on a real Postgres (docs/ONE_PLATFORM_PROGRAM_2026_10_12.md D5): the one host operation
  * Postgres's host operations write, run on the Postgres 16 the tests start, answers the rows of the planner's query --
- * the count a warehouse whose catalog is Postgres is asked before a copy. Its subquery carries the alias Postgres before
- * 16 requires (16 accepts it without).
+ * the count a warehouse whose catalog is Postgres is asked before a copy. Its subquery carries the alias Postgres
+ * before 16 requires (16 accepts it without).
  */
 class HostOperationsPostgresTest {
 

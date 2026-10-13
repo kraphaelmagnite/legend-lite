@@ -11,11 +11,10 @@
 
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { plannerOptions } from '#test-host';
 
 import type { HostOperation } from '../../engine-client/src/host-operations.ts';
 import type { ResultTable } from '../../engine-client/src/result.ts';
-import { LitePlanner } from '../src/lite-planner.ts';
+import { plannerFor } from './catalog-builder.ts';
 import {
   credentialOperations,
   credentialScope,
@@ -32,7 +31,7 @@ import { FakeEngine } from './fake-engine.ts';
 
 /** legend-lite's planner, which writes each operation's statements (D5): the module in-thread, or Python's library in
  *  the headless lane -- the statements under test are the platform's, as every host runs them. */
-const planner = new LitePlanner({ model: '', runtime: '', ...plannerOptions(), cache: false });
+const planner = plannerFor('', '');
 const statements = async (operations: readonly HostOperation[]): Promise<string[]> =>
   (await planner.hostOperations('DuckDB', operations)).flat();
 const viewStatement = async (source: RemoteSource): Promise<string> => (await statements([viewOperation(source)]))[0]!;

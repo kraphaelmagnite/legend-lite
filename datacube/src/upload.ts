@@ -32,7 +32,6 @@ export interface UploadResult extends InferredModel {
   readonly fileName: string;
 }
 
-/** DuckDB's identifier quoting: the doubled quote, not a backslash. */
 /**
  * Guess by extension; the picker allows only these. JSON covers both a
  * document holding an array of records and newline-delimited records

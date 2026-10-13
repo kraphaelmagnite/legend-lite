@@ -19,10 +19,19 @@ import java.util.regex.Pattern;
 import org.junit.jupiter.api.Test;
 
 /**
- * THE HOST-SQL GUARD, its TypeScript half (host_sql.txt says the rule; docs/ONE_PLATFORM_PROGRAM_2026_10_12.md D5): every
- * product .ts of the tab's apps -- the inventory's files under the rule's folders -- read for its string literals, each
- * held to the rule. A literal is a quoted string, or a template's text before its first {@code ${}}; comments and
- * regular expressions are skipped, so prose about SQL is free. Its Python half is python/tests/test_host_sql.py.
+ * THE HOST-SQL GUARD, its TypeScript half (host_sql.txt says the rule; docs/ONE_PLATFORM_PROGRAM_2026_10_12.md D5):
+ * every product .ts of the tab's apps and the libraries they bundle -- the inventory's files under the rule's folders
+ * -- read for its string literals, each held to the rule. A literal is a quoted string, or a template's text between
+ * its substitutions; comments and regular expressions are skipped, so prose about SQL is free. Its Python half is
+ * python/tests/test_host_sql.py.
+ *
+ * <p>A lexer of its own, not TypeScript's parser (2026-10-13): the repository's TypeScript is 7.0.2, whose JavaScript
+ * API is an unstable bridge to its Go binary, and rules_js refuses another package's raw sources as a node_test's data,
+ * where every package's all_files reaches this package (guards_package).
+ *
+ * <p>What it cannot see, by construction: a statement built from parts none of which begins one ({@code 'DROP' + ' T'},
+ * {@code `${verb} TABLE`}), and a regular expression right after a closing bracket ({@code if (x) /re/}), read as a
+ * division. The guard holds the literals a host writes; the operations' fields that carry SQL carry the planner's.
  */
 class HostSqlTest {
 
@@ -54,13 +63,21 @@ class HostSqlTest {
                     + String.join("|", sections.get("shapes").stream().map(s -> "(?:" + s + ")").toList()) + ")";
             List<Kept> kept = sections.get("kept").stream().map(l -> {
                 String[] parts = l.split(" \\| ", 3);
-                return new Kept(parts[0].strip(), parts[1].strip(), parts[2].strip());
+                return new Kept(parts[0].strip(), quoted(parts[1].strip()), parts[2].strip());
             }).toList();
             return new Rule(sections.get("typescript"), sections.get("python"), Pattern.compile(either), kept);
         }
     }
 
-    /** A site kept: its file, the literal's opening text, and why it is not a statement the host spells. */
+    /** A kept site's text, written in double quotes ({@code \"} and {@code \\} its escapes): the literal exactly. */
+    static String quoted(String written) {
+        if (written.length() < 2 || !written.startsWith("\"") || !written.endsWith("\"")) {
+            throw new IllegalArgumentException("a kept site's text is written in double quotes: " + written);
+        }
+        return written.substring(1, written.length() - 1).replace("\\\"", "\"").replace("\\\\", "\\");
+    }
+
+    /** A site kept: its file, the literal's whole text as written, and why it is not a statement the host spells. */
     record Kept(String file, String text, String reason) {
     }
 
@@ -73,8 +90,8 @@ class HostSqlTest {
             "new", "delete", "void", "throw", "instanceof", "yield", "await");
 
     /**
-     * Each string literal of a TypeScript source: a quoted string, a template with no substitution, a template's head.
-     * A template's later parts are read past, and the code in its substitutions read as code. A {@code /} begins a
+     * Each string literal of a TypeScript source: a quoted string, and each part of a template's text (before, between
+     * and after its substitutions), the code in its substitutions read as code. A {@code /} begins a
      * regular expression where an expression may begin (after an operator, an opening bracket, a keyword above, or at
      * the start), and is a division after a name, a number or a closing bracket.
      */
@@ -119,9 +136,7 @@ class HostSqlTest {
                 while (i < n && src.charAt(i) != '`' && !(src.charAt(i) == '$' && i + 1 < n && src.charAt(i + 1) == '{')) {
                     i += src.charAt(i) == '\\' ? 2 : 1;
                 }
-                if (head) {
-                    out.add(new Literal(line, src.substring(start, Math.min(i, n))));
-                }
+                out.add(new Literal(line, src.substring(start, Math.min(i, n))));
                 line += count(src, start, Math.min(i, n));
                 if (i < n && src.charAt(i) == '$') {
                     substitutions.push(depth);
@@ -220,10 +235,13 @@ class HostSqlTest {
                 "const e = { label: 'Select a column', tag: 'SELECT', state: 'COMMITTED', kind: 'SELECTED' };",
                 "const f = /^select\\s+'/i.test(s) ? a / b / c : 'SET x = 1';",
                 "const g = `text ${'USE \"db\"'} tail SELECT 2`;",
-                "const h = 'USE ' + quoted(name);");
+                "const h = 'USE ' + quoted(name);",
+                "const i = `${''}SELECT 1 FROM t`;",
+                "const j = ['install ' + name, 'load ' + name, 'set threads = 4', 'pragma platform', 'use \"db\"'];",
+                "const k = ['Install the app', 'load more rows', 'set', 'use the filter', 'begin'];");
         List<Integer> found = literals(source).stream().filter(l -> rule.isStatement(l.text()))
                 .map(Literal::line).toList();
-        assertEquals(List.of(4, 5, 5, 6, 7, 9, 10, 11), found);
+        assertEquals(List.of(4, 5, 5, 6, 7, 9, 10, 11, 12, 13, 13, 13, 13, 13), found);
     }
 
     @Test
@@ -245,7 +263,7 @@ class HostSqlTest {
                 if (!rule.isStatement(l.text())) {
                     continue;
                 }
-                Kept kept = rule.kept().stream().filter(k -> k.file().equals(file) && l.text().startsWith(k.text()))
+                Kept kept = rule.kept().stream().filter(k -> k.file().equals(file) && l.text().equals(k.text()))
                         .findFirst().orElse(null);
                 if (kept != null) {
                     used.add(kept);

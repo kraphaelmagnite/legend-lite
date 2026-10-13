@@ -58,14 +58,6 @@ export interface RemoteOptions {
   readonly s3?: S3Credentials;
 }
 
-/**
- * Quote a SQL string literal.
- *
- * SQL doubles the quote; it does NOT use a backslash. Getting this
- * wrong is how a bucket name with an apostrophe becomes a syntax
- * error at best -- and the same class of bug as the Pure escaping
- * this codebase already had to fix once.
- */
 /** Guess the format from the URL, so the common case needs no field. */
 export function inferFormat(url: string): RemoteFormat {
   const path = url.split('?')[0] ?? url;

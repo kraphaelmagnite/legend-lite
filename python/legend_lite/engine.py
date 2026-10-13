@@ -1035,7 +1035,7 @@ class Engine:
                 return _said(422, f'the snap could not be planned: {refused}')
             try:
                 # counted where the rows are, before anything is copied (the tab's preflight), by the catalog's own
-                # database's statement (a Postgres catalog asks for a subquery's alias: D5)
+                # database's statement (a Postgres catalog's, Postgres's: D5)
                 (counting,) = _host.statements({'op': 'count', 'from': {'query': plan.sql}},
                                                database_type=table.database_type)
                 counted = _arrow_of(table.warehouse.arrow_chunks(counting))

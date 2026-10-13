@@ -182,6 +182,8 @@ _EXTRA_ENV = {
     "saved-queries": {
         "SAVED_QUERIES": "$(rlocationpaths //fixtures/saved-queries:records)",
         "TRADING_PROJECT": "$(rlocationpath :projects)",
+        # the trading rows' other two copies, held equal to its Data: the warehouse's fixture and the H2 connection's
+        "TRADING_COPIES": "$(rlocationpath :trading_copies)",
     },
     # the shared cases of a server planning for a page, which Python's twin reads too (//python:upstream_test)
     "upstream-plans": {
@@ -190,7 +192,16 @@ _EXTRA_ENV = {
 }
 
 # DuckDB-WASM's users load it from node_modules by name, so they declare it (DC-N3.6)
-_DUCKDB_USERS = ["duckdb", "group-derived", "model-join", "saved-queries", "sorting", "treeview", "upload"]
+_DUCKDB_USERS = [
+    "duckdb",
+    "group-derived",
+    "model-join",
+    "sample-trades",
+    "saved-queries",
+    "sorting",
+    "treeview",
+    "upload",
+]
 
 # What a test reads from disk beyond src/: the guardrails scan the demo
 # entry points too (they ship), so they are declared, not assumed.
@@ -211,7 +222,7 @@ _EXTRA_DATA = {
         ":demo/widget.js",
     ],
     # the saved queries Query writes, and the project they compile against
-    "saved-queries": ["//fixtures/saved-queries:records", ":projects"],
+    "saved-queries": ["//fixtures/saved-queries:records", ":projects", ":trading_copies"],
     "upstream-plans": ["test/fixtures/upstream-plans.json"],
     # the in-memory source the Ad Hoc Analysis tests query
     "adhoc-session": ["test/adhoc-fixture.ts"],
@@ -265,7 +276,8 @@ _WASM_TESTS = [
     "model-join",
     # the model's routes, asked of the tab's module (docs/DATACUBE_MODEL_DESIGN_2026_10_10.md §15.6a)
     "model-route",
-    # a remote file's operations, and Snap's copy, their statements the planner's (docs/ONE_PLATFORM_PROGRAM_2026_10_12.md D5)
+    # a remote file's operations, and Snap's copy, their statements the planner's
+    # (docs/ONE_PLATFORM_PROGRAM_2026_10_12.md D5)
     "remote",
     "plane",
     "app-dom",
@@ -405,6 +417,9 @@ _HEADLESS_TESTS = [
 # headless_roster_test reads. A file that mixed them is split in two: its screen or Node half `<name>-dom` or
 # `<name>-node`, the rest in the lane under its own name.
 _HEADLESS_LEFT_OUT = {
+    # rows put in by DuckDB-WASM's Arrow reader (insertArrowFromIPCStream), the tab's: a headless host's database has
+    # none
+    "sample-trades": "the tab's Arrow reader",
     # DataCube's HTTP clients against a stubbed fetch: the host has no fetch API (nothing headless speaks HTTP: §3)
     "cancel-http": "the planner client's HTTP",
     "engine-remote-http": "the engine executor's HTTP",
@@ -1388,6 +1403,19 @@ copy_to_directory(
         "//query:demo/models/trading.pure",
     ],
     out = "demo/projects/trading",
+    root_paths = ["query/demo/models"],
+)
+
+# The trading rows' other two copies, for the test that holds them equal to the project's Data (saved-queries): the
+# warehouse's fixture and the H2 connection's setup, copied as :projects is (a test's data is its own package's).
+copy_to_directory(
+    name = "trading_copies",
+    testonly = True,
+    srcs = [
+        "//query:demo/models/runtime-h2.pure",
+        "//query:demo/models/trading-seed.sql",
+    ],
+    out = "test/trading-copies",
     root_paths = ["query/demo/models"],
 )
 

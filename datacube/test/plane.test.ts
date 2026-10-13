@@ -9,8 +9,7 @@
 // Against the real planner the source is `#>{trades::DB.TRADES}#`
 // and both failures are immediate.
 
-import { plannerOptions } from '#test-host';
-import { LitePlanner } from '../src/lite-planner.ts';
+import { plannerFor } from './catalog-builder.ts';
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
@@ -84,7 +83,7 @@ function selectOf(q: Lambda): { readonly source: unknown; readonly columns: read
 }
 
 /** legend-lite's planner, which writes the copy's statements (D5): in-thread, or Python's library in the headless lane. */
-const host = new LitePlanner({ model: '', runtime: '', ...plannerOptions(), cache: false });
+const host = plannerFor('', '');
 
 /**
  * Where these cubes snap: a table the model would declare, and the planner its copy is planned

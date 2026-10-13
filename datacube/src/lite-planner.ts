@@ -612,15 +612,15 @@ export class LitePlanner implements Planner, TableModels, ModelWriter {
    * its name and the statements that make it, point a connection at it, fill it from the model's Data elements, and
    * drop it. The model is the one given, not this planner's own.
    */
+  async projectData(model: string, databaseType: string): Promise<ProjectDataStatements> {
+    const answer = await this.#call({ kind: 'projectData', model, databaseType });
+    return JSON.parse(decode(answer, `a project's database on ${databaseType}`)) as ProjectDataStatements;
+  }
+
   /** A host's named operations on a database of that type (D5, Boundary.hostOperations): each one's statements. */
   async hostOperations(databaseType: string, operations: readonly HostOperation[]): Promise<string[][]> {
     const answer = await this.#call({ kind: 'hostOperations', databaseType, operations: JSON.stringify(operations) });
     return JSON.parse(decode(answer, `a host's operations on ${databaseType}`)) as string[][];
-  }
-
-  async projectData(model: string, databaseType: string): Promise<ProjectDataStatements> {
-    const answer = await this.#call({ kind: 'projectData', model, databaseType });
-    return JSON.parse(decode(answer, `a project's database on ${databaseType}`)) as ProjectDataStatements;
   }
 
   /**

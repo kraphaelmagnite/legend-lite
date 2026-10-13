@@ -268,7 +268,7 @@ function warehouseService(config: TabConfig, location: { readonly href: string }
     },
     live: (session, catalog, databaseType) => {
       if (ready === undefined) throw new Error('the warehouse is read once signed in: sign in first');
-      return new ready.driver.WarehouseEngine(ready.binding, session, catalog, undefined, databaseType);
+      return new ready.driver.WarehouseEngine(ready.binding, session, catalog, databaseType);
     },
   };
 }

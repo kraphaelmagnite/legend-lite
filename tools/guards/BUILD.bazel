@@ -251,10 +251,9 @@ native_test(
     target_compatible_with = _SHELLCHECK_PLATFORMS,
 )
 
-
-# THE HOST-SQL GUARD (docs/ONE_PLATFORM_PROGRAM_2026_10_12.md D5): no product source of the tab's apps spells SQL --
-# each string literal of every .ts under host_sql.txt's folders (the inventory's files), held to the rule there. Its
-# Python half is //python:host_sql_test, the same rule.
+# THE HOST-SQL GUARD (docs/ONE_PLATFORM_PROGRAM_2026_10_12.md D5): no product source of the tab's apps, or of the
+# libraries they bundle, spells SQL -- each string literal of every .ts under host_sql.txt's folders (the inventory's
+# files), held to the rule there. Its Python half is //python:host_sql_test, the same rule.
 junit_test(
     name = "host_sql_test",
     memory_mb = 768,
@@ -263,8 +262,14 @@ junit_test(
     data = [
         ":host_sql.txt",
         "//datacube:all_files",
+        "//depot-client:all_files",
         "//engine-client:all_files",
+        "//legend-art:all_files",
+        "//model-changes:all_files",
+        "//pure-protocol:all_files",
         "//query:all_files",
+        "//query-store:all_files",
+        "//sdlc-client:all_files",
         "//studio:all_files",
         "@repo_inventory//:files.txt",
     ],

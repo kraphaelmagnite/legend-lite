@@ -772,7 +772,7 @@ it:
 - an extension and a secret (`remote.ts`);
 - the extension folder (`duckdb-tab.ts`);
 - a copy's local tables and its count (`snap.ts`, `duckdb.ts`, `tab-data.ts`; the count on a warehouse catalog that
-  may be Postgres is the one wrong answer this fixes);
+  may be Postgres, written in that catalog's own SQL);
 - Python's same operations (`engine.py`, `frames.py`, `_headless.py`), the twins' rule.
 
 Then a guard: the tab's engine runs only statements the planner produced (a type the TypeScript compiler checks), and
@@ -878,8 +878,8 @@ item 3).
     planner wrote; with columns replaced by conversions (Snap's copy);
   - rows put into a declared table from a source, each declared column from the file's column of its name;
   - a relation dropped; a schema made;
-  - rows counted, of a relation or a query (DuckDB as it is; Postgres, a warehouse's catalog, with the alias a
-    subquery needs: the one wrong answer this fixes, Snap's preflight);
+  - rows counted, of a relation or a query (DuckDB as it is; Postgres, a warehouse's catalog, as Postgres reads it,
+    the subquery aliased: Snap's preflight);
   - a secret (S3's keys, scoped to a source's own path); extensions installed and loaded;
   - the tab's extension folder (C12's two settings); Python's: its extension directory, no autoinstall, a page's
     file search path;
@@ -902,6 +902,52 @@ item 3).
 **Proof.** The guard, red on a statement spelled in TypeScript or Python's host. Each operation's DuckDB statements and
 refusals in `HostOperationsTest`; every app's browser tests, Python's engine and headless tests unchanged in what they
 see; Snap's preflight against a Postgres catalog (the warehouse's lane).
+
+**Built 2026-10-13 (branch `datacube/d5-host-operations`, on C5):**
+- **1, the operations:** `sql/dialect/HostOperation.java` (sealed records: a relation made, rows put in, a drop, a
+  schema, a count, a secret, extensions, the extension folder or directory, the file search path, a transaction step,
+  the catalog questions, Iceberg's metadata), `DuckDbHostOperations.statements` (one exhaustive switch, each statement
+  the one the host spelled before), `PostgresHostOperations.java` (the count; every other refused by name).
+- **2, the question:** `Boundary.hostOperations` (`planner/HostOperationsJson.java` reads the operations), the
+  planner-protocol kind `hostOperations`, the native library's `lite_host_operations`; engine-client's
+  `host-operations.ts` (`runHostOperations`). The tab's DuckDB start asks it for the extension folder; DataCube's
+  remote files (`remote.ts`: a view, its secret, its extensions) and uploads (`upload.ts`: the read, the conversion, the
+  count, the drop) go through it.
+- **3, Studio and Snap:** a file put into a declared table (the transaction and the insert, its columns the planner's
+  seed's), the tables' counts, Snap's preflight (counted by the engine's own database type: the warehouse's when its
+  catalog is Postgres), its copy, its landing drop and discard (`snap.ts`, the `prepare` statements of an Arrow load).
+  A warehouse engine takes its catalog's database type, never a default: DataCube's from the catalog it opens, Query's
+  from the warehouse's listing (its own catalog, `main`, empty before the fixture loads, is its DuckDB).
+- **4, Python:** `legend_lite/_host.py` (`statements`, `run`, `ask`, `count`), the twin; a frame's relations and drops,
+  its name checks, Snap's copy on Python, Iceberg's checks and the extension settings through it.
+- **5, the demos' rows:** the trading demo's rows are its Data (`query/demo/models/trading-data.pure`), filled by C5's
+  project database in Query's tab and DataCube's; Query asks the keeper for every project (its `ownData` flag gone),
+  DataCube's seeded-project path and its refusal on Python gone. `trading-seed.sql` stays the warehouse's fixture
+  (`config-warehouse.json`). The rows' three copies -- the Data, the warehouse's fixture, the H2 connection's setup --
+  are held equal by `//datacube:saved_queries_test` (each into a database of its own, every table compared row for row
+  both ways, NULLs and column types included; red on one changed cell).
+- **6, the demo's trades:** DataCube's 200,000 sample trades are made in the tab as Arrow columns
+  (`datacube/src/sample-trades.ts`, over engine-client's `arrow-ipc.ts` `arrowIpcStream`) and put in by DuckDB's Arrow
+  reader, where one `CREATE TABLE ... AS SELECT` over `range()` made them: `//datacube:sample_trades_test` holds every
+  row and column type to that statement; made in about 32 ms in node (measured once); the startup bundle 831 bytes
+  gzipped more (budget 395,000, dated).
+- **7, the guard:** one rule (`tools/guards/host_sql.txt`), two halves: `//tools/guards:host_sql_test` (every `.ts`
+  of DataCube, engine-client, Query and Studio's `src/` and `demo/` and of the libraries they bundle, each string
+  literal and each part of a template's text read by a lexer that skips comments and regular expressions --
+  TypeScript 7's own API is an unstable bridge to its binary, the reason dated in the test) and `//python:host_sql_test`
+  (legend_lite's modules on Python's `ast`, every part of an f-string, docstrings skipped). A literal fails that begins
+  with an upper-case statement keyword and a space, or with a lower-case statement's shape (select ... from, insert
+  into, create and drop of a relation, attach, detach, install, load, set, pragma, use, begin transaction). Three
+  sites kept, each by its literal's exact text and reason: Studio's SQL editor's placeholder, Query's `formatSql` (the
+  plan's SQL shown for reading), the remote test page's stand-in query. Each half red on the code before D5
+  (DataCube's generator; `frames.py`'s drop). What it cannot see, written in the rule: a statement built from parts
+  none of which begins one, and a regular expression right after a closing bracket; the three operation fields that
+  carry SQL (a source query, a select list, a conversion) carry the planner's text, traced at each caller.
+- **Measured:** `HostOperationsTest` (each operation's statements, run on DuckDB as they read; each refusal);
+  `//core:host_operations_postgres_test` (the count, on the embedded Postgres 16); every app's browser tests, the
+  Python engine, headless, notebook and wheel tests as before. The Postgres count is right by construction, not a fix
+  of a wrong answer anyone met: Postgres before 16 requires a subquery's alias, but the warehouse refuses a Postgres
+  older than 16 (`warehouse/.../server/Postgres.java`, `MIN_SERVER_VERSION_NUM`), and 16 accepts the old spelling.
 
 #### C4. The small copies
 

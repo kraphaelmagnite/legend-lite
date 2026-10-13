@@ -39,7 +39,7 @@ afterEach(() => {
 
 describe('a renewed sign-in reaches the open cube (P2-297)', () => {
   it('a sign-in as SOMEONE ELSE never becomes the open cube\'s: it is refused, said', () => {
-    const engine = new WarehouseEngine(uncalled, session('tok1', 'alice'));
+    const engine = new WarehouseEngine(uncalled, session('tok1', 'alice'), 'main', 'DuckDB');
     assert.throws(() => engine.renew(session('tok9', 'bob')), /alice/);
     assert.equal(engine.principal, 'alice');
   });

@@ -45,7 +45,7 @@ import type { Receipt } from './receipt.ts';
  * Arrow into the local store.
  */
 export interface RemoteSource {
-  /** The remote plane's database type (a warehouse catalog's: DuckDB or Postgres), which its statements are written for. */
+  /** The remote plane's database type (a warehouse catalog's: DuckDB or Postgres), what its statements are for. */
   readonly databaseType: string;
   /** Raw SQL on the remote plane: the preflight count, as the planner writes it for that database. */
   run: QueryEngine['run'];
@@ -224,7 +224,7 @@ export class SnapManager implements Snaps {
    */
   async preflight(sourceSql: string, epoch: number): Promise<PreflightEstimate> {
     // counted where the rows are: the remote live plane when there is one, by its own database's statement (a
-    // warehouse catalog that is Postgres asks for a subquery's alias, which DuckDB's spelling left out: D5)
+    // warehouse catalog that is Postgres, Postgres's: D5)
     const engine = this.#remote ?? this.#localStore();
     const [count] = await this.#statements(engine.databaseType, [{ op: 'count', from: { query: sourceSql } }]);
     const r = await engine.run(count!, epoch);

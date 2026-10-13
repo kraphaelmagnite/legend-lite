@@ -1,13 +1,18 @@
 # THE HOST-SQL GUARD'S RULE (docs/ONE_PLATFORM_PROGRAM_2026_10_12.md D5, the dialect program's decision D5): no product
-# source of the tab's apps (DataCube, engine-client, Query, Studio: HostSqlTest.java) or of Python's host
-# (python/legend_lite: python/tests/test_host_sql.py) spells SQL. A host names an operation and its data; legend-lite's
-# planner writes the statements, by the database's type (core's sql/dialect/HostOperations.java). Each half reads its
-# language's string literals -- never comments, never Python's docstrings -- and fails on one that begins a statement:
-# a keyword below, upper case, then a space; or a lower-case statement's shape. A site kept is named with its reason.
+# source of the tab's apps and the libraries they bundle (HostSqlTest.java) or of Python's host (python/legend_lite:
+# python/tests/test_host_sql.py) spells SQL. A host names an operation and its data; legend-lite's planner writes the
+# statements, by the database's type (core's sql/dialect/HostOperations.java). Each half reads its language's string
+# literals -- never comments, never Python's docstrings -- and fails on one that begins a statement: a keyword below,
+# upper case, then a space; or a lower-case statement's shape. A site kept is named with its reason.
+#
+# What it holds is the literals a host writes: a statement built from parts none of which begins one ('DROP' + ' T')
+# is not seen, and the three operation fields that carry SQL (a source query, a select list, a conversion) carry the
+# planner's text, read from its answers.
 #
 # Sections: [typescript] and [python], the folders each half reads (every .ts but .d.ts under one; every .py in one);
 # [keywords]; [shapes], each a regular expression a literal's text may not begin with (Java's and Python's alike);
-# [kept], each `file | the literal's opening text | why it is not a statement the host spells`.
+# [kept], each `file | the literal's whole text, in double quotes (\" and \\ its escapes) | why it is not a statement
+# the host spells`.
 
 [typescript]
 datacube/src
@@ -17,6 +22,12 @@ query/src
 query/demo
 studio/src
 studio/demo
+depot-client/src
+legend-art/src
+model-changes/src
+pure-protocol/src
+query-store/src
+sdlc-client/src
 
 [python]
 python/legend_lite
@@ -33,8 +44,14 @@ create\s+(?:or\s+replace\s+)?(?:temp(?:orary)?\s+)?(?:table|view|schema|secret|m
 drop\s+(?:table|view|schema|secret|macro)\s
 attach\s+'
 detach\s+database\s
+(?:force\s+)?install\s+[a-z_]*$
+load\s+[a-z_]*$
+set\s+[a-z_.]+\s*(?:=|to\s)
+pragma\s+[a-z_]
+use\s+(?:"|[a-z_]+$)
+begin\s+transaction
 
 [kept]
-studio/src/ui/editor.ts | SELECT * FROM "PARTY"."PARTY" | the SQL editor's placeholder: an example of the person's own SQL, shown in the empty box, never run
-datacube/demo/remote-harness.ts | SELECT region, sum(notional) AS m FROM  | a test page's query (verify-remote.mjs), standing in for the planner's over the mount it checks
-query/src/ui/results.ts | SELECT | the plan's SQL shown for reading (formatSql): its first keyword written upper case, never run
+studio/src/ui/editor.ts | "SELECT * FROM \"PARTY\".\"PARTY\"" | the SQL editor's placeholder: an example of the person's own SQL, shown in the empty box, never run
+datacube/demo/remote-harness.ts | "SELECT region, sum(notional) AS m FROM " | a test page's query (verify-remote.mjs), standing in for the planner's over the mount it checks
+query/src/ui/results.ts | "SELECT " | the plan's SQL shown for reading (formatSql): its first keyword written upper case, never run

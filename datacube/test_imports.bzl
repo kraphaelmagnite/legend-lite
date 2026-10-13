@@ -2082,6 +2082,9 @@ TEST_IMPORTS = {
         "src/tree.ts",
         "src/treeview.ts",
     ],
+    "sample-trades": [
+        "src/sample-trades.ts",
+    ],
     "sample": [
         "src/samples.ts",
     ],

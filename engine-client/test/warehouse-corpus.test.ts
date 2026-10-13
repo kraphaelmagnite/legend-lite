@@ -63,7 +63,9 @@ function replay(s: Scenario): { readonly done: () => void } {
 
 async function act(s: Scenario): Promise<Record<string, unknown>> {
   const a = s.action;
-  const engine = (): WarehouseEngine => new WarehouseEngine(binding, session(String(a.token)), String(a.catalog ?? 'main'), still);
+  // the catalog's type reaches no recorded call (it says what a host's own statement is written for: Snap's count)
+  const engine = (): WarehouseEngine =>
+    new WarehouseEngine(binding, session(String(a.token)), String(a.catalog ?? 'main'), 'DuckDB', still);
   try {
     switch (a.kind) {
       case 'signIn': {

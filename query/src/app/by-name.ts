@@ -1,8 +1,8 @@
 // Projects opened by name (design Phase 3, plan A0½): a version of a project a Depot knows -- by default its line's snapshot,
 // Depot's `master-SNAPSHOT`, upstream Query's HEAD: what Studio's reviews have committed, released or not -- its
 // model the version's files and its dependencies' (Depot's nearest-wins closure, the one Studio compiles against),
-// loaded as the demo's files are, the first time it is opened (AppContext.load). Where queries run in this tab, its rows
-// (its relational Data elements') go in the version's own database inside the tab's DuckDB as it is opened
+// loaded as the demo's files are, the first time it is opened (AppContext.load). Where queries run in this tab, its
+// rows (its relational Data elements') go in the version's own database inside the tab's DuckDB as it is opened
 // (AppContext.activate; C5, engine-client's project-data.ts), as the demo's do.
 
 import type { DepotClient } from '../../../depot-client/src/client.ts';

@@ -43,7 +43,7 @@ afterEach(() => {
 
 describe('a renewed sign-in reaches the open cube (P2-297)', () => {
   it('after renew, the engine sends the NEW token', async () => {
-    const engine = new WarehouseEngine(binding, session('tok1'));
+    const engine = new WarehouseEngine(binding, session('tok1'), 'main', 'DuckDB');
     engine.renew(session('tok2'));
     await engine.run('SELECT 1', 1).catch(() => {});
     assert.ok(sent.length > 0, 'a request was sent');

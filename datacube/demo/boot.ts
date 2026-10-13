@@ -13,7 +13,7 @@ import type { Planner, SnapTarget } from '../src/cube.ts';
 import type { ModelOptions } from '../src/planner.ts';
 import type { DuckDbEngine } from '../../engine-client/src/duckdb.ts';
 import { startDuckDbInTab } from '../../engine-client/src/duckdb-tab.ts';
-import { arrowIpcStream } from '../../engine-client/src/arrow-ipc.ts';
+import { SAMPLE_TRADES, sampleTrades } from '../src/sample-trades.ts';
 import type { HostOperationsSource } from '../../engine-client/src/host-operations.ts';
 import type { ProjectDataSource } from '../../engine-client/src/project-data.ts';
 import { mountRemote } from '../src/remote.ts';
@@ -31,8 +31,6 @@ import { accessor, type ValueSpecification } from '../../pure-protocol/src/index
 // the query store's code, fetched the first time it is needed -- a query link in the address -- as charts are: a
 // grid-only page never downloads it (test/bundle-budget.test.ts)
 const queryStores = () => import('../../query-store/src/index.ts');
-
-const ROWS = 200_000;
 
 /**
  * THE THREE PLANES, as data rather than as three copies of a menu.
@@ -249,26 +247,12 @@ export async function loadModel(): Promise<string> {
 
 // -- sample data ----------------------------------------------------
 
-const REGIONS = ['EMEA', 'AMER', 'APAC'];
-const DESKS = ['Rates', 'Credit', 'FX', 'Equity', 'Commodities'];
-
 /**
- * The demo's trades, generated in this tab as the table the model reads: the rows made here and put in by DuckDB's
- * Arrow reader as data (the page spells no SQL: docs/ONE_PLATFORM_PROGRAM_2026_10_12.md D5), a table of that name
- * dropped first (the planner's operation). Row i's values are what DuckDB's own `range()` made of it before, value for
- * value (double arithmetic; BIGINT counts).
+ * The demo's trades, generated in this tab as the table the model reads (src/sample-trades.ts: Arrow data, put in by
+ * DuckDB's Arrow reader -- the page spells no SQL), a table of that name dropped first (the planner's operation).
  */
 export async function generateTrades(engine: DuckDbEngine, host: HostOperationsSource): Promise<void> {
-  const stream = arrowIpcStream(ROWS, {
-    region: { text: REGIONS, pick: (i) => i % 3 },
-    desk: { text: DESKS, pick: (i) => Math.floor(i / 3) % 5 },
-    year: { integers: (i) => 2021 + (Math.floor(i / 15) % 5) },
-    qtr: { text: ['Q1', 'Q2', 'Q3', 'Q4'], pick: (i) => Math.floor(i / 75) % 4 },
-    book: { text: ['Book 1', 'Book 2', 'Book 3', 'Book 4'], pick: (i) => Math.floor(i / 300) % 4 },
-    notional: { doubles: (i) => ((i * 7919) % 1000000) / 100.0 },
-    pnl: { doubles: (i) => ((i * 104729) % 200000) / 100.0 - 1000.0 },
-    qty: { integers: (i) => ((i * 31) % 97) + 1 },
-  });
+  const stream = sampleTrades();
   const [drop] = await host.hostOperations(engine.databaseType, [{ op: 'drop', kind: 'table', target: { name: 'trades' } }]);
   await engine.loadArrow({ table: 'trades' }, (async function* () { yield stream; })(), drop);
 }
@@ -362,9 +346,9 @@ async function startPage(makePlanner: MakePlanner, settled: { show: (reason: str
     status.textContent = `reading ${remote}`;
   } else if (start.kind === 'sample') {
 
-  status.textContent = `generating ${ROWS.toLocaleString(UI_LOCALE)} rows…`;
+  status.textContent = `generating ${SAMPLE_TRADES.toLocaleString(UI_LOCALE)} rows…`;
   await generateTrades(duck.engine, planned);
-  generated = { label: 'trades (generated in this tab)', takenAt: new Date(), rowCount: ROWS };
+  generated = { label: 'trades (generated in this tab)', takenAt: new Date(), rowCount: SAMPLE_TRADES };
   }
 
   // -- the cube ------------------------------------------------------

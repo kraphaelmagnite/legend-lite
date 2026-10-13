@@ -129,7 +129,8 @@ node_test(
     wasm = True,
 )
 
-# rows a page makes, as Arrow (arrow-ipc.ts arrowIpcStream: DataCube's demo trades), read back by DuckDB-WASM's own reader
+# rows a page makes, as Arrow (arrow-ipc.ts arrowIpcStream: DataCube's demo trades), read back by DuckDB-WASM's own
+# reader
 node_test(
     name = "arrow_ipc_test",
     size = "small",

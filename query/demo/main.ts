@@ -11,7 +11,9 @@
 import { startDuckDbInTab } from '../../engine-client/src/duckdb-tab.ts';
 import { ProjectDatabases, ProjectRunner } from '../../engine-client/src/project-data.ts';
 import type { QueryEngine } from '../../engine-client/src/engine.ts';
-import { loadWarehouseBinding, signIn, WarehouseEngine } from '../../engine-client/src/warehouse.ts';
+import {
+  listObjects, loadWarehouseBinding, signIn, WarehouseEngine, type WarehouseBinding, type WarehouseSession,
+} from '../../engine-client/src/warehouse.ts';
 import { connectModelHome } from '../../depot-client/src/model-home.ts';
 import { loadByName, versionsOf } from '../src/app/by-name.ts';
 import { AppContext, gavOf, type AppConfig, type CubeRows, type LoadedProject } from '../src/app/context.ts';
@@ -40,6 +42,17 @@ async function seed(engine: QueryEngine, files: readonly string[]): Promise<void
       if (stmt && !stmt.startsWith('--')) await engine.run(stmt, 0);
     }
   }
+}
+
+/**
+ * A warehouse catalog's database type, what a statement run on it is written for (Snap's count): as the warehouse
+ * lists it -- or, for its own catalog (`main`) with nothing in it yet (the fixture loads after sign-in), its DuckDB.
+ */
+async function catalogType(binding: WarehouseBinding, session: WarehouseSession, catalog: string): Promise<string> {
+  const listed = (await listObjects(binding, session)).find((o) => o.catalog === catalog)?.databaseType;
+  if (listed) return listed;
+  if (catalog === 'main') return 'DuckDB';
+  throw new Error(`the warehouse lists nothing this user may read in its catalog ${catalog}: its database type is not known`);
 }
 
 /** Ask for the warehouse user and password (nothing is stored). */
@@ -125,7 +138,8 @@ async function boot(): Promise<void> {
       starting('Signing in');
       const binding = await loading;
       const session = await signIn(binding, exec.url, creds.user, creds.password);
-      runner = new WarehouseEngine(binding, session, exec.catalog ?? 'main');
+      const catalog = exec.catalog ?? 'main';
+      runner = new WarehouseEngine(binding, session, catalog, await catalogType(binding, session, catalog));
       user = session.principal;
       if (exec.seed?.length) {
         starting('Loading the demo data');

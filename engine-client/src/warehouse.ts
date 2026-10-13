@@ -251,8 +251,9 @@ export class WarehouseEngine implements QueryEngine {
   #refreshTimer: unknown;
   readonly #clock: Clock;
 
-  constructor(binding: WarehouseBinding, session: WarehouseSession, catalog = 'main', clock: Clock = SYSTEM_CLOCK,
-    databaseType = 'DuckDB') {
+  /** `databaseType`: the catalog's, as the warehouse lists it (CatalogObject.databaseType) -- never assumed. */
+  constructor(binding: WarehouseBinding, session: WarehouseSession, catalog: string, databaseType: string,
+    clock: Clock = SYSTEM_CLOCK) {
     this.databaseType = databaseType;
     this.#binding = binding;
     this.#session = session;

@@ -1,8 +1,7 @@
 // app.test.ts's screen tests, in jsdom: the app, the bar says what you are looking at, and nothing else. The others are in app.test.ts, which
 // runs in the headless lane too (docs/DATACUBE_HEADLESS_PYTHON_DESIGN_2026_10_11.md §6).
 
-import { LitePlanner } from '../src/lite-planner.ts';
-import { plannerOptions } from '#test-host';
+import { plannerFor } from './catalog-builder.ts';
 import assert from 'node:assert/strict';
 import { before, beforeEach, describe, it } from 'node:test';
 
@@ -148,7 +147,7 @@ class PivotEngine extends FakeEngine {
 }
 
 /** legend-lite's planner, which writes a snap's statements (D5): in-thread, or Python's library in the headless lane. */
-const copies = new LitePlanner({ model: '', runtime: '', ...plannerOptions(), cache: false });
+const copies = plannerFor('', '');
 // its module loaded before any test clicks Snap: a click is followed by a few ticks, not a module's load
 before(async () => {
   await copies.hostOperations('DuckDB', []);
