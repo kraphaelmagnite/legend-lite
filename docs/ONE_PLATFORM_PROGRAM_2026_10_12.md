@@ -730,23 +730,86 @@ with macOS):**
 - `:planner_worker`, a copy of engine-client's worker since C2, left DataCube's `:bundles` (`//:web`), as Studio's
   did (`//tools/guards:compile_only_test`).
 
-#### C5. A project's data where its queries run (PARK-35, PARK-33)
+#### C5. A project's data where its queries run (PARK-35, PARK-33), with D5 (no SQL text in TypeScript)
 
-Added 2026-10-13 (the user: "make sure park35 and park33 are on the list to do").
+Added 2026-10-13 (the user: "make sure park35 and park33 are on the list to do"). Designed with the user the same day;
+D5 claimed from the dialect program (`docs/DIALECT_LEAK_CENSUS_AND_PLAN_2026_10_12.md` Phase 7, decision D5) through
+`docs/IN_FLIGHT.md` (its section, items 2 and 3).
 
 **Goal.** A project's queries run on the project's own data on every host, not only in a browser tab.
 - Query and Studio on Python, and on legend-lite's server, then run a project's query. Today Python refuses, and the
   server runs on an empty in-memory DuckDB: PARK-35.
 - A saved query opens as a grid on Python's page: PARK-33.
 
-**The design question, the user's first** (one architecture for both server hosts, before either is coded):
-- Where a project's database lives: one per project and version, filled from its `###Data` elements by the planner's
-  statements (Pure, never the page's SQL: R4).
-- When it is made, and when it closes.
+**The design (the user's, 2026-10-13).**
+- **A project's own database, in the host's database.** Each project version's `###Data` rows go in a database of
+  their own inside the host's database: the tab's DuckDB, Python's DuckDB, or the server's. Its schemas and tables are
+  made exactly as the model declares them, so the compiler's SQL runs unchanged. On DuckDB that is an attached
+  in-memory database (`ATTACH ':memory:'`), with a connection of its own pointed at it (`USE`). That is the corpus's
+  `DuckWorkspaces` shape (session-topology ruling 2026-08-14: about 10% faster than a database per session).
+- **Kept while in use, dropped when idle.** It is rebuilt from the model the next time, so dropping early is never
+  wrong. Its name comes from the project version, or from the model's text when the host has no version for it
+  (Studio's workspace), so two versions never share one.
+- **Never beside a person's own tables.** Python's dataframes and the tab's files stay in the host's own database.
+  No name can clash, and dropping a project's database is one statement.
+- **Not tied to DuckDB.** "A project's own database" is the platform's concept, in Java. How a database makes one is
+  that database's: its dialect's statements, in `sql/dialect/HostOperations.java`. DuckDB has them; every other
+  database refuses by name until it is built (Postgres would `CREATE DATABASE`). A database that cannot hold a
+  model's own schemas without renaming them (ClickHouse, SQLite) refuses. A query mixing a project's rows with a
+  person's own tables is a DuckDB capability, not part of the promise, and not built here.
+- **Asked for by the host's database type**, as `sessionSetup(databaseType)` is today. The tab and Python run what
+  Java answers and spell no SQL themselves (D5).
 
-**Proof.** PARK-35's acceptance: a query built in Query on Python over a published demo project answers the rows the
-tab answers, and the same on legend-lite's server. PARK-33's: a query saved in the tab opens from Saved queries on
-Python's page, its rows as the tab shows them.
+**D5, built with it (claimed from the dialect program).** Every statement the tab, and Python's host, still spells
+becomes a named operation answered in Java for the host's database type, refused by name by every database without
+it:
+- a project's database (above);
+- reading a file (`upload.ts`, `model-data.ts`);
+- an extension and a secret (`remote.ts`);
+- the extension folder (`duckdb-tab.ts`);
+- a copy's local tables and its count (`snap.ts`, `duckdb.ts`, `tab-data.ts`; the count on a warehouse catalog that
+  may be Postgres is the one wrong answer this fixes);
+- Python's same operations (`engine.py`, `frames.py`, `_headless.py`), the twins' rule.
+
+Then a guard: the tab's engine runs only statements the planner produced (a type the TypeScript compiler checks), and
+a test finds no SQL text left in TypeScript or in Python's host. The operations live in new files in `sql/dialect/`,
+not in `DuckDb.java`, which the dialect program is restructuring; it folds them in when it consolidates. It keeps
+D4 (the warehouse) and D6 (the dead code).
+
+**The steps** (one branch, `datacube/c5-project-data`, a commit each, pushed once):
+1. **The Java.** `sql/dialect/HostOperations.java` (the operations, DuckDB's, the refusal) and `setup/ProjectData.java`
+   (for a compiled model and a database type: its database's name, the statements that make it, point a connection
+   at it, fill it from every relational Data element through that type's dialect, and drop it). The compiled model
+   lists its Data elements (`ModelContext.dataElements()`). Unit tests: DuckDB's statements, each refusal, a
+   project's rows read back in a DuckDB.
+2. **The planner's question.** `Boundary.projectData(model, key, databaseType)`, and the native library's twin.
+   `Boundary.testDataSql` takes its dialect from the type instead of always DuckDB's.
+3. **The tab.** engine-client opens a project's database on a connection of its own (the extension folder and the
+   session set up on it too), and `TestData`'s swapping goes. Query, Studio and DataCube use it; two grids on two
+   versions of one project stop swapping. Studio's files for a table go into the workspace's database.
+4. **D5's other operations**, the Python twins, and the guard.
+5. **Python.** `PureV1Api.hosted` admits a project's model; Python makes its database on its DuckDB, runs the query on
+   a cursor of its own pointed at it, and drops it when idle.
+6. **The server.** The in-memory database it already keeps per project connection is filled from the model's Data
+   when made. Moving the server onto per-project databases is the dialect program's Phase 5 (connectors), not this.
+7. **PARK-33:** a saved query opened on Python's page goes through Python's project database.
+
+**Proof.**
+- PARK-35's acceptance: a query built in Query on Python over a published demo project answers the rows the tab
+  answers (`query/demo/verify.mjs`'s run, against Python), and the same on legend-lite's server.
+- PARK-33's: a query saved in the tab opens from Saved queries on Python's page, its rows as the tab shows them.
+- D5's guard, red on a statement spelled in TypeScript or Python's host.
+- Measured: a demo project's fill, the first and the repeated query on Python and in the tab, and the server with
+  several projects open. (The attach itself: 0.3 ms on Python's DuckDB 1.5.5, 0.4 ms on DuckDB-WASM 1.5.4; a query in
+  an attached database as fast as in the main one. A quick loop, 2026-10-13, not a benchmark.)
+
+**Not in C5:** the corpus onto the same operation (the dialect program's Phase 6, `DuckDbBackend.openWorkspace()`,
+judged by interleaved before-and-after corpus runs); Postgres's and the other databases' versions; a query mixing a
+project's rows with a person's own tables.
+
+**Reviews:** the Compiler Rewrite line (core, BUILD files), Plan Gen (the planner's new question), the Studio line
+(Query, Studio, engine-client), the dialect program through IN_FLIGHT (the new `sql/dialect/` files, announced before
+they land), an audit.
 
 #### C4. The small copies
 
@@ -1072,7 +1135,7 @@ PyPI; the npm packages' third-party notices; the FINOS name; the copyright-holde
 | 4 | One engine path | C1 + C2 + C4 | The tab answers legend-engine's execute API with Python's Java; Query's SQL button with no server; one planner protocol |
 | 5 | Warehouse on Python | C3 | Warehouse tables on Python's pages, Live on the warehouse, Snap into Python's DuckDB |
 | 6 | Studio and Query from Python | G11 + E | `ll.studio()` and `ll.query()` on Python's own SDLC, saved queries and engine |
-| 7 | A project's data where its queries run | C5 (PARK-35 + PARK-33) | Query and Studio on Python, and on legend-lite's server, run a project's queries on its own data; a saved query opens as a grid on Python's page |
+| 7 | A project's data where its queries run, and no SQL text in TypeScript | C5 (PARK-35 + PARK-33) + D5 | Query and Studio on Python, and on legend-lite's server, run a project's queries on its own data; a saved query opens as a grid on Python's page; the tab and Python's host spell no SQL |
 | 8+ | The model plan | F1 to F5 (B7 with F4) | Dashboards on classes, joins in prep, the model view, promote and publish, measures |
 
 - Rows 1 to 3 are independent of each other, so each lands as soon as it is green.
