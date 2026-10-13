@@ -5,7 +5,8 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import type { PlannerPort } from '../../engine-client/src/legend/wasm-grammar.ts';
 import { WasmGrammar } from '../../engine-client/src/legend/wasm-grammar.ts';
-import { answer, type PlannerModule, type PlannerRequest } from '../../engine-client/src/legend/planner-answer.ts';
+import { answer, type PlannerModule } from '../../engine-client/src/legend/planner-answer.ts';
+import type { RequestBody } from '../../engine-client/src/legend/planner-protocol.ts';
 import { ModelGraph } from '../src/model/graph.ts';
 import type { PureModelContextText } from '../src/backend/wire.ts';
 import { runfileDirUrl, runfileNamed } from '../../tools/js/runfiles.mts';
@@ -30,7 +31,7 @@ function load(): Promise<PlannerModule> {
 }
 
 class DirectPort implements PlannerPort {
-  async ask(r: PlannerRequest): Promise<string> {
+  async ask(r: RequestBody): Promise<string> {
     return answer(await load(), r);
   }
 }

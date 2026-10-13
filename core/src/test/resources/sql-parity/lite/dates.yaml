@@ -50,3 +50,52 @@ tests:
     sql: "SELECT DATE '2024-01-01' + INTERVAL '1 mon 1 month' AS a FROM departments WHERE id = 1"
   - id: interval_week_and_days
     sql: "SELECT DATE '2024-01-01' + INTERVAL '1 week 2 days' AS a, DATE '2024-01-01' + INTERVAL '-3' DAY AS b FROM departments WHERE id = 1"
+  # date and timestamp constants in Postgres's other spellings (DateStyle ISO, MDY): datetime.c's reading, field by
+  # field
+  - id: date_spellings_with_month_names
+    sql: "SELECT DATE 'January 8, 1999' AS a, DATE 'Jan 8, 1999' AS b, DATE '8 January 1999' AS c, DATE '1999-Jan-08' AS e, DATE '08-Jan-1999' AS g, DATE 'Jan-08-1999' AS h, DATE 'Wed Dec 17 1997' AS i FROM departments WHERE id = 1"
+  - id: date_spellings_with_numbers
+    sql: "SELECT DATE '1/8/1999' AS a, DATE '1999/1/8' AS b, DATE '1-8-1999' AS c, DATE '19990108' AS e, DATE '990108' AS g, DATE '1999.008' AS h, DATE 'J2451187' AS i, DATE '9999-1-1' AS j FROM departments WHERE id = 1"
+  - id: date_spellings_of_two_digit_years
+    sql: "SELECT DATE '1/8/99' AS a, DATE '1/8/69' AS b, DATE '1/8/70' AS c, DATE '08-Jan-05' AS e, DATE 'Jan 8, 00' AS g, DATE '000108' AS h FROM departments WHERE id = 1"
+  - id: timestamp_spellings
+    sql: "SELECT TIMESTAMP 'January 8, 1999 04:05:06' AS a, TIMESTAMP '1/8/1999 04:05:06' AS b, TIMESTAMP '1999-01-08 4:05:06 PM' AS c, TIMESTAMP '1999-01-08 12:05 AM' AS e, TIMESTAMP '1999-01-08 04:05' AS g, TIMESTAMP '99991201 00:00:00.0' AS h, TIMESTAMP 'epoch' AS i, TIMESTAMP '1999-01-08T040506' AS j FROM departments WHERE id = 1"
+  - id: timestamp_spellings_of_fractions_and_ends
+    sql: "SELECT TIMESTAMP '1999-01-08 04:05:06.1234565' AS a, TIMESTAMP '1999-01-08 23:59:60' AS b, TIMESTAMP '1999-01-08 24:00' AS c, TIMESTAMP '1999-01-08 04:05.5' AS e, TIMESTAMP '1999-01-08 04:' AS g, TIMESTAMP '1999-01-08 040506.25' AS h FROM departments WHERE id = 1"
+  - id: a_date_drops_its_time_and_zone
+    sql: "SELECT DATE '1999-01-08 23:59:59' AS a, DATE 'Jan 8 1999 04:05 PM' AS b, TIMESTAMP '1999-01-08 04:05:06+02' AS c, TIMESTAMP '1999-01-08 04:05:06 -05:30' AS e FROM departments WHERE id = 1"
+  - id: date_spellings_compared_with_columns
+    sql: "SELECT id, name FROM persons WHERE hire_date >= 'January 1, 2020' AND hire_date < '12/31/2021' ORDER BY id"
+  - id: date_spellings_cast_from_text
+    sql: "SELECT '08-Jan-1999'::date AS a, CAST('Jan 8 1999 4:00 pm' AS timestamp) AS b FROM departments WHERE id = 1"
+  - id: timestamp_spelling_of_an_hour_run_into_pm_is_an_error
+    sql: "SELECT CAST('Jan 8 1999 4pm' AS timestamp) AS a FROM departments WHERE id = 1"
+  - id: date_spelling_of_february_30_is_an_error
+    sql: "SELECT DATE 'Feb 30, 2023' AS a FROM departments WHERE id = 1"
+  - id: date_spelling_of_month_13_is_an_error
+    sql: "SELECT DATE '13/8/1999' AS a FROM departments WHERE id = 1"
+  - id: date_spelling_of_a_day_name_alone_is_an_error
+    sql: "SELECT DATE 'Wednesday' AS a FROM departments WHERE id = 1"
+  - id: date_spelling_of_two_months_is_an_error
+    sql: "SELECT DATE 'Jan Feb 8 1999' AS a FROM departments WHERE id = 1"
+  - id: timestamp_spelling_of_13_pm_is_an_error
+    sql: "SELECT TIMESTAMP '1999-01-08 13:00 PM' AS a FROM departments WHERE id = 1"
+  - id: date_spelling_before_christ_is_refused
+    sql: "SELECT DATE 'January 8, 99 BC' AS a FROM departments WHERE id = 1"
+  - id: date_spelling_of_now_is_refused
+    sql: "SELECT DATE 'today' AS a FROM departments WHERE id = 1"
+  - id: timestamp_spelling_with_a_zone_name_is_refused
+    sql: "SELECT TIMESTAMP '1999-01-08 04:05:06 PST' AS a FROM departments WHERE id = 1"
+  # extract's other fields; isfinite
+  - id: extract_dow_week_decade_century_millennium
+    sql: "SELECT id, extract(dow FROM d) AS a, extract(week FROM d) AS b, extract(decade FROM d) AS c, extract(century FROM ts) AS e, extract(millennium FROM d) AS g, date_part('dow', ts) AS h, date_part('weeks', d) AS i FROM dates ORDER BY id"
+  - id: extract_epoch_of_a_date
+    sql: "SELECT id, extract(epoch FROM d) AS a, date_part('epoch', d) AS b FROM dates ORDER BY id"
+  - id: extract_epoch_of_a_timestamp_is_refused
+    sql: "SELECT extract(epoch FROM ts) AS a FROM dates WHERE id = 1"
+  - id: dow_in_a_group
+    sql: "SELECT extract(dow FROM hire_date) AS dow, count(*) AS n FROM persons GROUP BY 1 ORDER BY 1"
+  - id: isfinite_of_dates_and_timestamps
+    sql: "SELECT id, isfinite(d) AS a, isfinite(ts) AS b FROM dates ORDER BY id"
+  - id: a_date_before_the_year_1000_is_refused
+    sql: "SELECT DATE '0050-03-04' AS a FROM departments WHERE id = 1"

@@ -250,9 +250,11 @@ export class SdlcClient {
     return this.#json('GET', `${base(where)}/entities/${enc(path)}`);
   }
 
-  /** `POST …/entityChanges`: a save from an upstream client; the new revision. */
-  performChanges(project: string, workspace: string, command: PerformChangesCommand): Promise<Revision> {
-    return this.#json('POST', `${base({ project, workspace })}/entityChanges`, command);
+  /** `POST …/entityChanges`: a save from an upstream client; the new revision, or undefined when it changed nothing
+   *  (upstream's 204: every change the bytes already there). */
+  async performChanges(project: string, workspace: string, command: PerformChangesCommand): Promise<Revision | undefined> {
+    const res = await this.#call('POST', `${base({ project, workspace })}/entityChanges`, command);
+    return res.status === 204 ? undefined : res.json() as Promise<Revision>;
   }
 
   // ---- lite's text routes (S15) ----
@@ -267,9 +269,12 @@ export class SdlcClient {
     return this.#json('GET', `${base(where)}/pure/${enc(path)}`);
   }
 
-  /** `POST …/pureChanges`: a save of text; the new revision. */
-  performPureChanges(project: string, workspace: string, command: PerformPureChangesCommand): Promise<Revision> {
-    return this.#json('POST', `${base({ project, workspace })}/pureChanges`, command);
+  /** `POST …/pureChanges`: a save of text; the new revision, or undefined when it changed nothing (204: every change
+   *  the bytes already there, as upstream answers an entity save). */
+  async performPureChanges(project: string, workspace: string, command: PerformPureChangesCommand):
+    Promise<Revision | undefined> {
+    const res = await this.#call('POST', `${base({ project, workspace })}/pureChanges`, command);
+    return res.status === 204 ? undefined : res.json() as Promise<Revision>;
   }
 
   async #call(method: string, path: string, body?: unknown): Promise<Response> {

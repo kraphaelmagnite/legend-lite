@@ -23,6 +23,7 @@
 // cannot work -- the same rule the menu follows elsewhere.
 
 import type { QueryEngine } from '../../engine-client/src/engine.ts';
+import type { HostOperation, HostOperationsSource } from '../../engine-client/src/host-operations.ts';
 
 export type RemoteFormat = 'parquet' | 'csv' | 'iceberg';
 
@@ -57,18 +58,6 @@ export interface RemoteOptions {
   readonly s3?: S3Credentials;
 }
 
-/**
- * Quote a SQL string literal.
- *
- * SQL doubles the quote; it does NOT use a backslash. Getting this
- * wrong is how a bucket name with an apostrophe becomes a syntax
- * error at best -- and the same class of bug as the Pure escaping
- * this codebase already had to fix once.
- */
-export function sqlLiteral(s: string): string {
-  return `'${s.replace(/'/g, "''")}'`;
-}
-
 /** Guess the format from the URL, so the common case needs no field. */
 export function inferFormat(url: string): RemoteFormat {
   const path = url.split('?')[0] ?? url;
@@ -79,30 +68,17 @@ export function inferFormat(url: string): RemoteFormat {
   return 'parquet';
 }
 
-/** The scan expression for one source. */
-export function scanExpression(source: RemoteSource): string {
-  const url = sqlLiteral(source.url.replace(/#iceberg$/i, ''));
-  switch (source.format ?? inferFormat(source.url)) {
-    case 'csv':
-      return `read_csv_auto(${url})`;
-    case 'iceberg':
-      return `iceberg_scan(${url})`;
-    case 'parquet':
-      return `read_parquet(${url})`;
-  }
+/** The URL a source's data is read from: as given, but an Iceberg table's without the mark that names it one. */
+export function scanUrl(url: string): string {
+  return url.replace(/#iceberg$/i, '');
 }
 
-/** An identifier for a view name, quoted so any name survives. */
-function ident(name: string): string {
-  return `"${name.replace(/"/g, '""')}"`;
-}
-
-export function viewStatement(source: RemoteSource): string {
-  // OR REPLACE so remounting a cube against a new URL is not an
-  // error -- pointing at yesterday's snapshot and back is a normal
-  // thing to do.
-  return `CREATE OR REPLACE VIEW ${ident(source.name)} AS`
-    + ` SELECT * FROM ${scanExpression(source)}`;
+/** The view a source is read through: its name the model's table, its rows the remote file's, read by its format. */
+export function viewOperation(source: RemoteSource): HostOperation {
+  return {
+    op: 'relation', kind: 'view', target: { name: source.name }, replace: true,
+    from: { remote: { url: scanUrl(source.url), format: source.format ?? inferFormat(source.url) } },
+  };
 }
 
 /**
@@ -111,44 +87,34 @@ export function viewStatement(source: RemoteSource): string {
  * beside it).
  */
 export function credentialScope(url: string): string {
-  let scope = url.replace(/#iceberg$/i, '');
+  let scope = scanUrl(url);
   const glob = scope.search(/[*?[]/);
   if (glob >= 0) scope = scope.slice(0, glob);
   return scope.replace(/\/metadata\/?$/i, '');
 }
 
 /**
- * The statements that configure one source's credentials.
+ * The secret one source's credentials are read with.
  *
- * `CREATE SECRET` rather than the `SET s3_*` globals: a secret is
- * scoped and replaceable, where the globals are process-wide and
- * leak between sources when a cube reads two buckets. One secret per
- * source, named by it and scoped to its own path: where one database
- * serves several pages (Python's), one page's keys never replace
- * another's, nor reach another's files.
+ * A scoped, replaceable secret rather than process-wide settings, which leak between sources when a cube reads two
+ * buckets. One secret per source, named by it and scoped to its own path: where one database serves several pages
+ * (Python's), one page's keys never replace another's, nor reach another's files. None without credentials.
  */
-export function credentialStatements(
+export function credentialOperations(
   creds: S3Credentials | undefined,
   source: { readonly name: string; readonly url: string },
-): string[] {
+): HostOperation[] {
   if (!creds) return [];
-  const parts: string[] = ['TYPE S3'];
-  if (creds.accessKeyId) parts.push(`KEY_ID ${sqlLiteral(creds.accessKeyId)}`);
-  if (creds.secretAccessKey) {
-    parts.push(`SECRET ${sqlLiteral(creds.secretAccessKey)}`);
-  }
-  if (creds.sessionToken) {
-    parts.push(`SESSION_TOKEN ${sqlLiteral(creds.sessionToken)}`);
-  }
-  if (creds.region) parts.push(`REGION ${sqlLiteral(creds.region)}`);
-  if (creds.endpoint) parts.push(`ENDPOINT ${sqlLiteral(creds.endpoint)}`);
-  if (creds.urlStyle) parts.push(`URL_STYLE ${sqlLiteral(creds.urlStyle)}`);
-  if (creds.useSsl !== undefined) {
-    parts.push(`USE_SSL ${creds.useSsl ? 'true' : 'false'}`);
-  }
-  if (parts.length === 1) return [];
-  parts.push(`SCOPE ${sqlLiteral(credentialScope(source.url))}`);
-  return [`CREATE OR REPLACE SECRET ${ident(`datacube_s3_${source.name}`)} (${parts.join(', ')})`];
+  const credentials: Record<string, string> = {};
+  if (creds.accessKeyId) credentials.KEY_ID = creds.accessKeyId;
+  if (creds.secretAccessKey) credentials.SECRET = creds.secretAccessKey;
+  if (creds.sessionToken) credentials.SESSION_TOKEN = creds.sessionToken;
+  if (creds.region) credentials.REGION = creds.region;
+  if (creds.endpoint) credentials.ENDPOINT = creds.endpoint;
+  if (creds.urlStyle) credentials.URL_STYLE = creds.urlStyle;
+  if (creds.useSsl !== undefined) credentials.USE_SSL = creds.useSsl ? 'true' : 'false';
+  if (Object.keys(credentials).length === 0) return [];
+  return [{ op: 'secret', name: `datacube_s3_${source.name}`, scope: credentialScope(source.url), credentials }];
 }
 
 /**
@@ -178,31 +144,28 @@ export function redactSecrets(
   return out;
 }
 
-/** Extensions a format needs, loaded before anything references it. */
-export function extensionStatements(
-  sources: readonly RemoteSource[],
-): string[] {
-  const out = ['INSTALL httpfs', 'LOAD httpfs'];
-  const formats = new Set(
-    sources.map((s) => s.format ?? inferFormat(s.url)),
-  );
-  if (formats.has('iceberg')) {
-    out.push('INSTALL iceberg', 'LOAD iceberg');
-  }
-  return out;
-}
-
-/** Every statement, in the order it has to run. */
-export function mountStatements(options: RemoteOptions): string[] {
-  return [
-    ...extensionStatements(options.sources),
-    ...options.sources.flatMap((source) => credentialStatements(options.s3, source)),
-    ...options.sources.map(viewStatement),
-  ];
+/** Extensions a format needs, loaded before anything references it: httpfs, and iceberg for an Iceberg table. */
+export function extensionOperation(sources: readonly RemoteSource[]): HostOperation {
+  const formats = new Set(sources.map((s) => s.format ?? inferFormat(s.url)));
+  return { op: 'extensions', names: ['httpfs', ...(formats.has('iceberg') ? ['iceberg'] : [])] };
 }
 
 /**
- * Point the engine's connection at remote data.
+ * The extensions and credentials the sources are read with, before any view of them: what a host that checks what a
+ * source names runs first (Python's, for an Iceberg table, whose metadata names its files by path: R4).
+ */
+export function accessOperations(options: RemoteOptions): HostOperation[] {
+  return [extensionOperation(options.sources), ...options.sources.flatMap((source) => credentialOperations(options.s3, source))];
+}
+
+/** Every operation, in the order it has to run. */
+export function mountOperations(options: RemoteOptions): HostOperation[] {
+  return [...accessOperations(options), ...options.sources.map(viewOperation)];
+}
+
+/**
+ * Point the engine's connection at remote data: the operations' statements as the planner writes them for the
+ * engine's database (`host`), run in order.
  *
  * Runs before the first query. Failures are rethrown with the
  * credentials stripped, and name the source rather than the
@@ -210,18 +173,34 @@ export function mountStatements(options: RemoteOptions): string[] {
  * redacted CREATE SECRET is not.
  */
 export async function mountRemote(
-  engine: QueryEngine,
+  engine: QueryEngine & { readonly databaseType: string },
+  host: HostOperationsSource,
   options: RemoteOptions,
 ): Promise<void> {
-  for (const statement of mountStatements(options)) {
+  await runRedacted(engine, host, mountOperations(options), options.s3);
+}
+
+/** The engine's connection given the sources' extensions and credentials, no view yet (`accessOperations`). */
+export async function accessRemote(engine: QueryEngine & { readonly databaseType: string }, host: HostOperationsSource,
+  options: RemoteOptions): Promise<void> {
+  await runRedacted(engine, host, accessOperations(options), options.s3);
+}
+
+async function runRedacted(engine: QueryEngine & { readonly databaseType: string }, host: HostOperationsSource,
+  operations: readonly HostOperation[], s3: S3Credentials | undefined): Promise<void> {
+  const redacted = (cause: unknown): Error =>
+    new Error(`could not mount remote data: ${redactSecrets(cause instanceof Error ? cause.message : String(cause), s3)}`);
+  let statements: string[][];
+  try {
+    statements = await host.hostOperations(engine.databaseType, operations);
+  } catch (cause) {
+    throw redacted(cause);
+  }
+  for (const statement of statements.flat()) {
     try {
       await engine.run(statement, 0);
     } catch (cause) {
-      const message = redactSecrets(
-        cause instanceof Error ? cause.message : String(cause),
-        options.s3,
-      );
-      throw new Error(`could not mount remote data: ${message}`);
+      throw redacted(cause);
     }
   }
 }

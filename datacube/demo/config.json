@@ -12,10 +12,8 @@
       "title": "Trading demo",
       "models": [
         "./projects/trading/trading.pure",
-        "./projects/trading/runtime-duckdb.pure"
-      ],
-      "seed": [
-        "./projects/trading/trading-seed.sql"
+        "./projects/trading/runtime-duckdb.pure",
+        "./projects/trading/trading-data.pure"
       ]
     }
   ],

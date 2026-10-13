@@ -24,6 +24,18 @@ public final class TabExports {
         return Folded.http(() -> Boundary.pureV1(path, rawQuery, body));
     }
 
+    /** {@link Boundary#executeJsonPlan}: execute's plan half -- the SQL the tab runs, and the answer but its rows (C1). */
+    @JSExport
+    public static String executeJsonPlanOrError(String body, String modelsJson) {
+        return Folded.http(() -> Boundary.executeJsonPlan(body, modelsJson));
+    }
+
+    /** {@link Boundary#executeJsonAnswer}: the answer, the rows the tab's database wrote arranged as the server's (C1). */
+    @JSExport
+    public static String executeJsonAnswerOrError(String plan, String wire) {
+        return Folded.http(() -> Boundary.executeJsonAnswer(plan, wire));
+    }
+
     // ---- planning and typing
 
     /** {@link Boundary#planSql}: the SQL alone, unfolded (a refusal is thrown). */
@@ -56,11 +68,16 @@ public final class TabExports {
         return Folded.of(() -> Integer.toString(Boundary.holdModel(model)));
     }
 
-    /** {@link Boundary#releaseModel}: 1, so the call cannot be optimised away. */
+    /**
+     * {@link Boundary#releaseModel}, folded: {@code OK\n}, or the failure as the planner protocol's other kinds answer
+     * one -- as the native library's {@code lite_release_model} answers it (docs/ONE_PLATFORM_PROGRAM_2026_10_12.md C2).
+     */
     @JSExport
-    public static int releaseModel(int handle) {
-        Boundary.releaseModel(handle);
-        return 1;
+    public static String releaseModelOrError(int handle) {
+        return Folded.of(() -> {
+            Boundary.releaseModel(handle);
+            return "";
+        });
     }
 
     /** {@link Boundary#planHeld}. */
@@ -113,12 +130,33 @@ public final class TabExports {
         return Folded.of(() -> Boundary.sessionSetup(databaseType));
     }
 
+    /** {@link Boundary#hostOperations}. */
+    @JSExport
+    public static String hostOperationsOrError(String databaseType, String operationsJson) {
+        return Folded.of(() -> Boundary.hostOperations(databaseType, operationsJson));
+    }
+
+    /** {@link Boundary#projectData}. */
+    @JSExport
+    public static String projectDataOrError(String model, String databaseType) {
+        return Folded.of(() -> Boundary.projectData(model, databaseType));
+    }
+
     // ---- warming and probes
 
     /** {@link Boundary#warmModel}. */
     @JSExport
     public static int warmModel(String model) {
         return Boundary.warmModel(model);
+    }
+
+    /** {@link Boundary#warmModel}, folded, as the native library's {@code lite_warm_model} answers it (C2). */
+    @JSExport
+    public static String warmModelOrError(String model) {
+        return Folded.of(() -> {
+            Boundary.warmModel(model);
+            return "";
+        });
     }
 
     /** {@link Boundary#touchPrelude}. */

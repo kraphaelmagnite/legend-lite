@@ -9,6 +9,7 @@
 // drifts from the lock fails at launch ("Executable doesn't exist") instead of running another
 // browser.
 import { existsSync, realpathSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { dirname, join, resolve } from 'node:path';
 
 const pinned = process.env.PINNED_CHROMIUM;
@@ -47,4 +48,38 @@ if (pinned) {
   console.error(`pinned chromium: ${exe} (browsers path ${browsers})`);
 } else if (process.env.TEST_SRCDIR) {
   throw new Error('a browser test without PINNED_CHROMIUM: use browser_test (//tools/browser:defs.bzl)');
+}
+
+// NO EXTENSION FROM DUCKDB'S SITE: every page's DuckDB-WASM loads its extensions from the site's own vendor/
+// (engine-client's ownExtensions; MODULE.bazel pins them), so a test whose page still fetched one from
+// extensions.duckdb.org would pass only while that site is up (the Compiler Rewrite line's finding, 2026-10-13).
+// Every launch of the test's Playwright makes that host unresolvable, so such a fetch fails here as it would behind
+// a firewall. A Chromium flag, not Bazel's block-network tag: that tag works only under a sandbox, so Windows would
+// run unguarded, and the flag holds on all three platforms. The Playwright guarded is the one the entry script
+// resolves beside itself -- the instance it imports (Playwright's ESM entry re-exports its CJS one) -- and a harness
+// that loads Playwright from elsewhere calls `hermetic` on the one it uses (site/verify.mjs).
+// //datacube:browser_guard_test fails when a launch stops being guarded (a Playwright upgrade, or this file changed).
+export const HERMETIC_ARGS = ['--host-resolver-rules=MAP extensions.duckdb.org ~NOTFOUND'];
+
+/** Guards every launch of `chromium` (Playwright's BrowserType) with HERMETIC_ARGS; answers it. */
+export function hermetic(chromium) {
+  if (chromium.__hermetic) return chromium;
+  const launch = chromium.launch.bind(chromium);
+  chromium.launch = (options = {}) => launch({ ...options, args: [...(options.args ?? []), ...HERMETIC_ARGS] });
+  const persistent = chromium.launchPersistentContext.bind(chromium);
+  chromium.launchPersistentContext = (dir, options = {}) =>
+    persistent(dir, { ...options, args: [...(options.args ?? []), ...HERMETIC_ARGS] });
+  chromium.__hermetic = true;
+  return chromium;
+}
+
+if (process.env.TEST_SRCDIR && process.argv[1]) {
+  let playwright;
+  try {
+    playwright = createRequire(process.argv[1])('playwright');
+  } catch (e) {
+    // none beside the entry script: the harness guards the Playwright it loads itself (`hermetic`)
+    if (e?.code !== 'MODULE_NOT_FOUND') throw e;
+  }
+  if (playwright) hermetic(playwright.chromium);
 }

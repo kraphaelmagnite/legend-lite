@@ -174,7 +174,8 @@ Measured 2026-10-11 in a Claude Code cloud container (4 cores, 15 GB, network ac
   - `@legend_pure_src` and `@legend_engine_src`: `git clone --depth 1 --branch legend-pure-5.99.0` (and
     `legend-engine-4.145.0`), with `third_party/legend_*_src.BUILD` copied in as `BUILD.bazel` and an empty
     `REPO.bazel`, then `--override_repository=legend_pure_src=<dir>` (and `legend_engine_src`).
-- The Postgres lane cannot run there: the container runs as root and `initdb` refuses root. The DuckDB lane passes
+- The Postgres lane: the container runs as root and `initdb` refuses root, so run it as an unprivileged user, with
+  `tools/postgres/as_unprivileged.sh` (`docs/GATES.md`, since 2026-10-11). The DuckDB lane passes
   (`//pct:pct_duckdb_essential`, 45 s).
 - Maven Central rate-limits the shared address now and then (HTTP 429): retry.
 - The cloud lanes' test JVMs need the container's egress proxy and its CA: Bazel's test environment drops
@@ -859,6 +860,56 @@ Nullable text (Relation went 389 / 62 / 7 to 445 / 7 / 0).
 The lanes were measured with `bazel test //pct:pct_clickhouse --local_test_jobs=1`, as Trino's. Measured on Linux
 x86_64, the one platform with a pinned build. The lanes are `manual`, in `//gates:heavy`.
 
+### 19.1 Its own pins burned down (2026-10-12, later the same day)
+
+The user asked for each of ClickHouse's 31 own pins to be worked: why it fails, a workaround probed on the server, then
+the fix (`docs/PCT_PIN_WORKAROUNDS_2026_10_12.md` has the probes). **65 pins become 42; ClickHouse's own 31 become
+8** (then 38 and 4, below), and the other 34 are the platform's (pinned on DuckDB too). Channel B: 333 / 3 / 1, 136 / 0 / 0, 459 / 7 / 0,
+202 / 0 / 0, 93 / 0 / 0. Every fix is in `ClickHouse.java` except two connection settings, and changes no other
+dialect's SQL.
+
+| Pins | What was refused | The dialect's answer, measured on 25.8 |
+|---:|---|---|
+| 2 | an as-of join with no equality | an equality that holds wherever the inequality can: each side's first inequality operand hashed, times zero (`cityHash64(a) * 0 = cityHash64(b) * 0`; a constant key is folded away and refused again) |
+| 1 | a join condition on one side alone | for an outer join, the condition becomes a key: `if(cond, 0, 1) = coalesce(cityHash64(<a column of the other side>), 0) * 0` |
+| 1 | a correlated subquery as IN's argument | SQL's three-valued IN by correlated EXISTS: true where `EXISTS (.. WHERE w AND c = v)`, else NULL where a row's `c` is NULL or `v` is NULL and a row is there, else false |
+| 4 | LATERAL | a lateral subquery that only filters is decorrelated: its correlated conjuncts move into an INNER or LEFT join's ON, its columns read through the subquery's outputs; any other lateral is still refused by name |
+| 4 | a RANGE frame with a Float offset | the frame computed over the partition's values: `arrayReduce(agg, arrayMap(.., arrayFilter(<key within the offsets>, groupArray(tuple(arg, key)) OVER (PARTITION BY ..))))`, for one sort key and a one-argument aggregate |
+| 1 | a quantile whose level is a column | the partition's values sorted, interpolated at `(n - 1) * level` (a literal level is still `quantileExactInclusive`) |
+| 1 | a statement over `max_query_size` | the limit and the AST limits raised on the connection (`clickhouse_setting_max_query_size`, `..._max_ast_elements`, `..._max_expanded_ast_elements`): a statement's own SETTINGS are read only after the limit has refused it |
+| 1 | the system database (§14): no session | the system connection opens an HTTP session of its own (`clickhouse_setting_session_id`, a new id per connection, an hour idle at most), and the dialect's session table is a TEMPORARY table in it. Another session does not see it; over a connection with no session the table is gone with its request, and the read after it is refused as an unknown table |
+| 4 | an empty list of no type, zipped or exploded | the empty list of the slot's type (`CAST([] AS Array(Tuple(..)))`), unnested or ARRAY-JOINed, where the result's or the exploded column's type is known |
+| 4 | a struct field of no type (an unset property) | the field's declared type; an unset list is the empty list; two instances compare as one-element arrays (`[a] = [b]`: a Tuple's `=` answers NULL where a field is NULL on either side, an array's compares NULL-safe) |
+
+One of these leans on `allow_experimental_correlated_subqueries = 1`: the IN rewrite's correlated EXISTS is
+experimental on 25.8, and it answers **false for an outer row whose correlated column is NULL, whatever the filter**
+(measured: a filter `o.v IS NULL` is false for a NULL `o.v`, and `i.k = o.k OR i.c = o.v` false where `o.v` is NULL).
+So the setting is written only into a statement that holds the rewrite, and the rewrite is made only where the filter
+is null-rejecting: each outer column a bare operand of a comparison, `v` too. Elsewhere a correlated subquery is
+still refused by the server. The LATERAL fix decorrelates into a join, so it needs no setting; it takes a subquery
+that projects its own columns only (an aggregate or a window would see the source before the filter). The two connection settings are the test harness's (the product has
+no ClickHouse connector yet): the connector the dialect-leak plan's P5 builds carries both.
+
+**Then 4 more, the same day, at the user's ask:**
+
+- an absent instance (2, `testMapInstance`, `testAssignNewInstance`): a struct field that is itself a struct is its
+  `Variant(Tuple(...))`, which holds NULL, read through `variantElement` (a NULL instance's fields read NULL). Measured
+  first: a list may mix present and absent instances, array equality, `JSONExtract` and `toJSONString` all take it;
+- a JSON null read as a list (2, `testVariantColumn_slice`, `..._distinct_removeDuplicates`): the list is NULL exactly
+  where its JSON value is null, so where it is written back as JSON through NULL-strict list functions, it is NULL
+  (a raising branch kept). `Variant(Array(T))` itself would not do: every list function refuses a Variant (measured).
+
+Channel B then: 333 / 3 / 1, 137 / 0 / 0, 461 / 7 / 0, 202 / 0 / 0, 93 / 0 / 0.
+
+**What stays pinned (4):**
+
+- dates outside 1900 to 2299 (3): `Date32` and `DateTime64` clamp, silently;
+- an outer join whose ON reads both sides outside an equality (1): refused under `join_use_nulls`, which the missing
+  side's NULLs need for the whole statement.
+
+`testEqualNonPrimitive` now fails as it does on DuckDB ("Assert failed"): it was already counted among the platform's
+pins, and only its pinned message changed.
+
 ## 20. The coverage map, and the corpus on every database (2026-10-12)
 
 **The map** (`docs/PRIMITIVE_COVERAGE_2026_10_12.md`, measured; the recipe `tools/census/README.md` section 3): the
@@ -899,6 +950,36 @@ What it does not do yet, and what a cloud's 50-300 ms round trip makes decisive 
 5. **No transactional DDL to lean on**: a writing test's isolation on a cloud is its own copy (or a fresh copy after
    it fails), not a rollback.
 
+**Where each of those lives** (the survey of 2026-10-12, at 7afb645; line numbers drift):
+
+- **One compile of the world:** `MinimalCorpus.java:204-310`. It types each test twice, and that CPU is the dominant
+  cost.
+- **Workspaces:**
+  - `PureTestRunner.java:169-190, 409-413`: a workspace per package session.
+  - `DuckWorkspaces.java:250-311`: `ATTACH ':memory:'`, `duplicate()` and `USE`; the proxy's close DETACHes.
+  - `DuckWorkspaces.java:198-248`: fixture asides, as attached catalogs plus `search_path`.
+  - `PureTestRunner.java:433-458`: inline-CSV tests take a private workspace that re-runs every setup.
+- **The fixture re-seed:** `BLOCK_COMPILER_HOMEWORK_2026_09_21.md:119-127` measures it. The clone design (seed once,
+  `COPY FROM DATABASE`) is at `:119-121` of that file (`:611` mentions it) and in GATES; it was never built.
+- **One script per effect segment:** `BodyCompiler.java:53-150` (DuckDB brackets each in `BEGIN..COMMIT`).
+- **The fused verdict:** `VerdictBatch.java:227-331`.
+- **Effectful tests:** autocommit is off; commit on pass; on fail, roll back and truncate the ledger
+  (`MinimalCorpus.java:615-635`).
+- **The setup re-run on every execution:** `Execution.java:184-199` (`dialectOf`), including the product's name and
+  version.
+- **Single-threaded by static state:** `ReplayOracle.MIRROR`, `H2Verify.CURRENT_TEST` and `DuckWorkspaces`' statics.
+- **DuckDB-only pieces a backend-generic harness replaces:**
+  - `DuckWorkspaces`;
+  - `ReplayOracle.java:492-498` (`duplicate()`);
+  - `CsvSeed.adaptRaw:252-255`;
+  - the overlay's hard-coded DuckDB and H2 (`databaseType()`, `MinimalCorpus.java:498-503`).
+
+  The census of `docs/dialect-leak-census-2026-10-12/` (slice C1) designs that harness's interface.
+- **Numbers:**
+  - 2,613 tests, about 4.3 executor round trips a test, 11.2k in a pass;
+  - about 32-39 s a pass and about 76 s a lane;
+  - the warehouse (HTTP) lane at about 52 s a pass.
+
 Postgres first (local, a template database is native, and its PCT lane is green), then the 77 on every lane, then
 the whole corpus on Snowflake, Databricks and BigQuery.
 
@@ -921,3 +1002,41 @@ slices burn down. Two things it took first:
     table with quoted mixed-case names, and DataCube's `infer.test.ts`.
   - *Where it stands.* Postgres spells a store's names as before, and the 77 are to be re-measured. Which case a bare
     store name has on Postgres is an open decision. It is listed in docs/DIALECT_LEAK_CENSUS_AND_PLAN_2026_10_12.md.
+
+## 21. Postgres: its own pins burned down (2026-10-12)
+
+The same drill as ClickHouse's (§19.1), on the lane that predates this document (Postgres 16.15, embedded; run as an
+unprivileged user in a root container, `docs/GATES.md`). **109 pins become 61; Postgres's own 75 become 27**, the other
+34 the platform's. Channel B: 315 / 2 / 0, 132 / 3 / 0, 464 / 3 / 1, 203 / 1 / 0, 87 / 0 / 0. Every fix is in
+`Postgres.java`; `docs/PCT_PIN_WORKAROUNDS_2026_10_12.md` has the table, cause by cause:
+
+- printf unrolled, as Snowflake's (13), with DuckDB's `%g` date part as `to_char`'s `MS`;
+- the empty collection spelled as DuckDB answers over a NULL list (21): Postgres types every array, so an untyped NULL
+  cannot be unnested or reduced;
+- a Boolean list's extremes as `bool_or`/`bool_and` (2), splitPart over `string_to_array` (4), hashCode from MD5 (1);
+- a struct decoded from the driver's jsonb object (7), after which seven instance tests fail as they do on DuckDB.
+
+Then, at the user's ask, the jsonb collections (12): a map is its entries in order, a `jsonb[]` of `{"key", "value"}`
+(BigQuery's shape, which the executor decodes to a map; the census delivers a map as an ARRAY of entries for every
+dialect now, by its declared type, not by a database's name); a fold or a reduction into a list of scalars walks a
+native array; the LIST aggregate is `array_agg`. On the way, the raise: a STABLE cast, which the planner pre-evaluates
+where it estimates (an argument of `unnest`), so an untaken raise fired at plan time; it carries an empty volatile
+term now. **109 pins become 49; the own 15**: extension functions (5, a decision), an IR typing gap (3), jsonb's key
+order (3, kept: Variants stay jsonb, the user's call, since `json` has no equality and the switch would touch every
+Variant path), Postgres's limits (2), two not yet examined. Channel B: 326 / 2 / 0,
+132 / 3 / 0, 465 / 2 / 0, 204 / 1 / 0, 87 / 0 / 0. The census ceiling for
+Postgres rose by the by-design class (a struct as jsonb), Essential 13 -> 14 and Grammar 5 -> 6, as tests that stopped
+at their first struct now run their later statements (`PctCensusGate`, dated).
+
+Then, at the user's ask, 6 more: **109 pins become 43; the own 9**. Levenshtein and Jaro-Winkler are recursive walks in
+plain SQL, not extension functions (fuzzystrmatch's Levenshtein stops at 255 characters, and no extension has a
+Jaro-Winkler); both equal DuckDB's on 1,585 ASCII pairs, by characters where DuckDB counts bytes. A quoted literal is
+cast before `to_jsonb`. (A Variant cell delivered as its text in `normalize` passed one more, then broke main's Postgres
+parity harness at the merge, so it waits for a Postgres `DriverCells`, the plan's P5.) One typing gap was
+the shared lowering's (AGENTS.md invariant 1), so every lane was re-measured: the ordered list aggregate (a mixed sort's)
+is typed as the LIST reducer types it, a list of its value's type, where it had been VARCHAR whatever it aggregated, and
+Postgres spells it `array_agg`. The other, a comparator dedup's CASE typed Unknown, stays pinned: the shared carrier pass
+strips the LITERAL label from the list branch and not from the reduction's stamps, and the workaround tried (an identity
+transform) is a new list emission in the lowering, which the carrier-purity ratchet bans; the fix is a semantic dedup
+node. Kept as well: SHA-1 (no release has a core `sha1`, 18.6 and devel checked; `pgcrypto` has it), jsonb's key order
+(3) and Postgres's limits (2). Channel B: 329 / 1 / 0, 132 / 3 / 0, 465 / 2 / 0, 204 / 1 / 0, 91 / 0 / 0.

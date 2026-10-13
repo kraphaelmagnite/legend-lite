@@ -98,6 +98,8 @@ export interface PickerSections<T> {
     readonly url?: string;
     /** Already signed in: its tables are listed straight away. */
     readonly session?: DatabaseSession;
+    /** Where Snap copies the rows, when not into this tab: its host's database (`Python`). */
+    readonly copiesInto?: string;
     signIn(url: string, user: string, password: string): Promise<DatabaseSession>;
     open(object: DatabaseObject): Promise<T>;
     /**
@@ -495,7 +497,8 @@ export function pickSource<T>(doc: Document, options: PickSourceOptions<T>): Pro
         const paintSession = (): void => {
           host.replaceChildren();
           if (!session) {
-            heading(host, 'Connect to a database', 'Sign in to a warehouse: Live runs there as you, and Snap copies your rows into this tab.');
+            heading(host, 'Connect to a database', 'Sign in to a warehouse: Live runs there as you, and Snap copies your rows into '
+              + `${db.copiesInto === undefined ? 'this tab' : `${db.copiesInto}'s database`}.`);
             const form = el(doc, 'form', 'dc-picker-form', host);
             const url = field(form, 'Address', 'url', db.url ?? '');
             url.placeholder = 'https://warehouse.example.com';

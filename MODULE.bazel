@@ -491,6 +491,70 @@ http_file = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_
     "windows_amd64": "sha256-u0qfJyHENDkAbm53Y2SnSNJGn5Lf5eXr42XtEOK+Dng=",
 }.items()]
 
+# DuckDB's extensions for the TAB's DuckDB (DuckDB-WASM, @duckdb/duckdb-wasm 1.33.1-dev57.0 = DuckDB v1.5.4, which asks
+# for exactly this version), one per browser build, pinned by content and served from each site's vendor/
+# (//engine-client:duckdb_extensions). Unpinned, DuckDB-WASM fetched each from extensions.duckdb.org as a page first
+# needed it: ICU for the session's time zone (engine-client's setUpSession: SET TimeZone='UTC'), JSON for a JSON file,
+# Parquet for a Parquet file, httpfs for a remote one (the Compiler Rewrite line's finding, 2026-10-13: a desk's gate
+# and the apps needed that site up). Pinned 2026-10-13, as the user's rule for Python's extensions (hermetic in the
+# build, nothing downloaded where legend-lite runs); every browser test makes that site unresolvable
+# (tools/browser/pinned-chromium.mjs), so a page needing another fails. On a DuckDB-WASM bump, three places move
+# together: engine-client/package.json, _DUCKDB_VERSION in engine-client/BUILD.bazel (the layout), and these URLs
+# (a .bzl file cannot be loaded here).
+[http_file(
+    name = "duckdb_wasm_" + extension + "_extension_" + build,
+    downloaded_file_path = extension + ".duckdb_extension.wasm",
+    integrity = sha,
+    urls = ["https://extensions.duckdb.org/v1.5.4/" + build + "/" + extension + ".duckdb_extension.wasm"],
+) for extension, shas in {
+    # the session's time zone
+    "icu": {
+        "wasm_eh": "sha256-7Nu7KTMfchA7jrIn21eS8YaxkaT3o1nbjdqZGbCnNt4=",
+        "wasm_mvp": "sha256-4SZS8pU/vwGDxTVEQ8jnVH7GIJWLqprTA9sj9Gvdbqw=",
+    },
+    # a JSON file read in the tab (upload.ts read_json), and JSON's functions
+    "json": {
+        "wasm_eh": "sha256-mTsZ95KcwwWyUpxUjyhC6OelsRLRyI8xyEeYtRkByhY=",
+        "wasm_mvp": "sha256-FaidP9D6NEnA2JgebLHKa+jfS8rw391mYMF7zDvfCvg=",
+    },
+    # a Parquet file read in the tab, remote or picked
+    "parquet": {
+        "wasm_eh": "sha256-SEVwW71p/JrVKHjZalBcc8rkpsUJgiB5zCQT5etDf5U=",
+        "wasm_mvp": "sha256-tkwlWn99BswjRTWy8OyrNF/akb//9VCdMXkAS8E6oZo=",
+    },
+    # a remote file read in the tab (remote.ts: http(s) and S3 URLs)
+    "httpfs": {
+        "wasm_eh": "sha256-V2chdW3QG4bN/c8TA+zcyXdpKf0hw+O4b91DoiWa7Fs=",
+        "wasm_mvp": "sha256-73Vuwo2wL+r9AqsDaqAfT8EawZe9KVvw8g5OI9SMVMM=",
+    },
+}.items() for build, sha in shas.items()]
+
+# DuckDB's iceberg extension for Python's DuckDB, and the avro extension it reads an Iceberg table's manifests with, as
+# httpfs above (1.5.5, matching exactly; one per platform, pinned by content; the wheel carries them, nothing is
+# downloaded where it runs). Pinned 2026-10-13 on the user's ruling of 2026-10-12, "ship the iceberg extension"
+# (docs/ONE_PLATFORM_PROGRAM_2026_10_12.md G5): a page on Python reads an Iceberg table only when every file its
+# snapshot names is remote (engine.py), as a remote file is.
+[http_file(
+    name = "duckdb_" + extension + "_extension_" + platform,
+    integrity = sha,
+    urls = ["https://extensions.duckdb.org/v1.5.5/" + platform + "/" + extension + ".duckdb_extension.gz"],
+) for extension, shas in {
+    "iceberg": {
+        "osx_arm64": "sha256-ub3asCJoQ03N70nxa719eNOjW+rnTLecTs27FD4QbIo=",
+        "osx_amd64": "sha256-PGfkenjIfRCAYnw3vHkplga9ed1K2pqTE0XK3Tf9w6o=",
+        "linux_amd64": "sha256-JYjLAEbbDvFfDxjHhDQXkGLDckgyqwDctDVnvigw7dQ=",
+        "linux_arm64": "sha256-l0XQGON2T9nurkwGKXX7X17VhAhdhfKX1Utdc4xa3ks=",
+        "windows_amd64": "sha256-XxSrB2XOqirZAyV/GxpYNYLkRGgz2dPl677ux1MHh/E=",
+    },
+    "avro": {
+        "osx_arm64": "sha256-VTHiQY1VOwab9Mw25t3vrf/QHxeZFbEAfOXXeLu64iA=",
+        "osx_amd64": "sha256-O4zm/TMb/9ZkIEieHc1TK3S6Sl0V09u6hQD0ixvC1Qc=",
+        "linux_amd64": "sha256-tnx7j1Q+G4JBZ/dI5XpistYZoDx0x2gXrnM0DrwukGg=",
+        "linux_arm64": "sha256-72CG6pbmogs5bgrs6I4R/WoKMt7Qp1E02zDM2mtAmD8=",
+        "windows_amd64": "sha256-SYdNsYedcdkvdvaByHZaF/bxl5jYYfA15fLUoU7udTs=",
+    },
+}.items() for platform, sha in shas.items()]
+
 # THE BROWSER the harnesses drive (Bazel workplan P1-14, spike S4): Playwright 1.63.0's
 # chromium-headless-shell, revision 1243 = Chrome for Testing 153.0.8010.12 (the locked playwright-core's
 # browsers.json; //tools/browser:revision_test holds them equal). One archive per platform, fetched by

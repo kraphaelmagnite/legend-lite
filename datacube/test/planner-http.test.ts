@@ -16,7 +16,7 @@ const PLAN = {
   _type: 'simple',
   rootExecutionNode: {
     _type: 'relationalTdsInstantiation',
-    executionNodes: [{ _type: 'sql', sqlQuery: 'SELECT 1', executionNodes: [] }],
+    executionNodes: [{ _type: 'sql', sqlQuery: 'SELECT 1', connection: { type: 'DuckDB' }, executionNodes: [] }],
     resultType: {
       _type: 'tds',
       tdsColumns: [

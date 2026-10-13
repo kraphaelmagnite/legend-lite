@@ -17,10 +17,10 @@ node_test(
     name = "server_test",
     size = "medium",
     data = [
+        ":conformance",
         ":sdlc_client",
         ":sdlc_server",
         ":server_helper",
-        "test/conformance.ts",
         "test/server.test.ts",
         "//sdlc-server:server",
     ],
@@ -34,8 +34,8 @@ node_test(
     # medium: it loads the page's SDLC module (WebAssembly, 1.4 MB), which outlasted small's 60 s under a full gate
     size = "medium",
     data = [
+        ":conformance",
         ":sdlc_client",
-        "test/conformance.ts",
         "test/wasm.test.ts",
         "//sdlc-server:page_dir",
     ],
@@ -53,6 +53,16 @@ executable_of(
         "//depot-client:__pkg__",
         "//studio:__pkg__",
     ],
+)
+
+# The one suite, one target: the server, the page's module and Python's model home (the native library's SDLC, from
+# DataCube's test: docs/ONE_PLATFORM_PROGRAM_2026_10_12.md B3) are each held to it the same way
+js_library(
+    name = "conformance",
+    testonly = True,
+    srcs = ["test/conformance.ts"],
+    visibility = ["//datacube:__pkg__"],
+    deps = [":sdlc_client"],
 )
 
 # Starting and stopping that server in a test: here, depot-client's server_test and studio's verify_test

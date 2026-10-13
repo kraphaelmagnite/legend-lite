@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
 import { accessor, from } from '../../pure-protocol/src/index.ts';
-import { projectText } from '../src/page-model.ts';
+import { projectText } from '../../model-changes/src/project.ts';
 import type { ClassAction, ModelAnswer } from '../src/model-writer.ts';
 import { plannerFor } from './catalog-builder.ts';
 

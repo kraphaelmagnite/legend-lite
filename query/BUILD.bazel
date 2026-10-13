@@ -17,7 +17,7 @@ npm_link_all_packages(name = "node_modules")
 
 exports_files(["pnpm-lock.yaml", "package.json"])
 
-# The trading project's model and seed: DataCube serves them too, to open a saved query over them.
+# The trading project's model and its Data rows: DataCube serves them too, to open a saved query over them.
 exports_files(
     glob(["demo/models/*"]),
     visibility = [
@@ -83,19 +83,35 @@ copy_to_directory(
     name = "vendor",
     srcs = [
         "//engine-client:node_modules/@duckdb/duckdb-wasm",
+        # its extensions, pinned (MODULE.bazel): ICU for the session's time zone; JSON, Parquet and httpfs when a
+        # page reads such a file
+        "//engine-client:duckdb_extensions",
         # upstream Legend Query's type (legend-art _fonts.scss): Roboto, Roboto Mono, Raleway 900
         # for the type letters -- from legend-art (the pinned @fontsource), served with the site, no font CDN (OFL-1.1)
         "//legend-art:fonts",
         "//legend-art:styles",
+        "//query-store:page",
         "//sdlc-server:page",
+        "//warehouse:sqlapi_page",
         "//wasm:planner",
     ],
     out = "demo/vendor",
+    # no root of this package's own: every file here is another package's. The default root (`query`) would strip the
+    # saved queries' module out (measured 2026-10-13): bazel_lib 3.7.2's tool matches a root by characters of the
+    # directory, not path segments, against its own doc (tools/copy_to_directory/main.go, longestGlobMatch)
+    root_paths = [],
     include_srcs_patterns = [
         "wasm/planner/classes.wasm",
         "wasm/planner/wasm-gc-module-runtime.js",
         "sdlc-server/page/classes.wasm",
         "sdlc-server/page/wasm-gc-module-runtime.js",
+        # the saved queries' rules, compiled to WebAssembly (the program's B5)
+        "query-store/page/classes.wasm",
+        "query-store/page/wasm-gc-module-runtime.js",
+        # the warehouse's API as the one binding speaks it (the program's C3)
+        "warehouse/sqlapi_page/classes.wasm",
+        "warehouse/sqlapi_page/wasm-gc-module-runtime.js",
+        "engine-client/duckdb-extensions/**",
         "**/dist/duckdb-mvp.wasm",
         "**/dist/duckdb-eh.wasm",
         "**/dist/duckdb-browser-mvp.worker.js",
@@ -112,8 +128,11 @@ copy_to_directory(
         "legend-art/src/*.css",
     ],
     replace_prefixes = {
+        "engine-client/duckdb-extensions/": "duckdb-extensions/",
         "wasm/planner/": "",
         "sdlc-server/page/": "sdlc/",
+        "query-store/page/": "queries/",
+        "warehouse/sqlapi_page/": "warehouse/",
         "**/dist/": "",
         "legend-art/fonts/": "fonts/",
         "legend-art/src/": "legend-art/",
@@ -140,8 +159,12 @@ filegroup(
 # Everything a browser fetches.
 filegroup(
     name = "site",
-    # served beside the other app from one origin (//site): they share the browser's query store
-    visibility = ["//site:__pkg__"],
+    # served beside the other app from one origin (//site): they share the browser's query store; and by Python's
+    # engine, from the wheel (//python:wheel_query_site; docs/ONE_PLATFORM_PROGRAM_2026_10_12.md E)
+    visibility = [
+        "//python:__pkg__",
+        "//site:__pkg__",
+    ],
     srcs = glob([
         "demo/*.html",
         "demo/*.json",

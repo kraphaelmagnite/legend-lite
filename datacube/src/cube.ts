@@ -8,6 +8,7 @@
 // throws the refusal. What it keeps is the query side's own: the runners,
 // the guard, and the plane (engine-client's snap.ts).
 
+import type { HostOperationsSource } from '../../engine-client/src/host-operations.ts';
 import { UI_LOCALE } from '../../engine-client/src/locale.ts';
 import { from, type Lambda } from '../../pure-protocol/src/index.ts';
 import type { QueryEngine } from '../../engine-client/src/engine.ts';
@@ -34,7 +35,15 @@ import {
 } from './query.ts';
 import { planPivot, typeColumns, type PivotPlan, type SchemaChange } from './plan.ts';
 import type { ResultTable } from '../../engine-client/src/result.ts';
-import { SnapManager, type PlaneState, type RemoteSource, type SnapTable } from '../../engine-client/src/snap.ts';
+import {
+  HostSnaps,
+  SnapManager,
+  type HostSnapTarget,
+  type PlaneState,
+  type RemoteSource,
+  type SnapTable,
+  type Snaps,
+} from '../../engine-client/src/snap.ts';
 import type { Receipt } from '../../engine-client/src/receipt.ts';
 import {
   PlanThenRun,
@@ -84,6 +93,8 @@ export interface CompileOutcome {
  */
 export interface SnapTarget extends SnapTable {
   readonly planner: Planner;
+  /** What writes the copy's statements on the host's database: the tab's planner module (D5). */
+  readonly host: HostOperationsSource;
 }
 
 export interface Planner {
@@ -195,6 +206,12 @@ export interface CubeControllerOptions {
    */
   readonly snapTarget?: SnapTarget;
   /**
+   * A snap its HOST makes (Python's: docs/ONE_PLATFORM_PROGRAM_2026_10_12.md C3), for a cube read through a runner: the
+   * pull sent as Pure, the copy in the host's database, and `runner` the host's over the copy's runtime. Beside a
+   * runner only; a cube over the page's own pair snaps into the page (`snapTarget`).
+   */
+  readonly hostSnap?: HostSnap;
+  /**
    * A LIVE engine on another machine (the warehouse), beside the local pair.
    *
    * Live queries run there; snapping copies the rows the user may read into
@@ -227,7 +244,8 @@ function recording(runner: QueryRunner, into: Receipt[], plane: PlaneState): Que
     const r = out.rows.receipt;
     if (r) {
       into.push(plane.mode === 'snapped'
-        ? { ...r, copy: { takenAt: plane.snap.takenAt, ...(plane.snap.pulledBy ? { from: plane.snap.pulledBy } : {}) } }
+        ? { ...r, copy: { takenAt: plane.snap.takenAt, ...(plane.snap.pulledBy ? { from: plane.snap.pulledBy } : {}),
+          ...(plane.snap.store !== undefined ? { store: plane.snap.store } : {}) } }
         : r);
     }
     return out;
@@ -241,6 +259,11 @@ function recording(runner: QueryRunner, into: Receipt[], plane: PlaneState): Que
     parse: (text, signal) => runner.parse(text, signal),
     print: (query, style, signal) => runner.print(query, style, signal),
   };
+}
+
+/** A snap its host makes, and the runner its copy's queries go to (`CubeControllerOptions.hostSnap`). */
+export interface HostSnap extends HostSnapTarget {
+  readonly runner: QueryRunner;
 }
 
 export class CubeController {
@@ -266,9 +289,9 @@ export class CubeController {
    * What answers queries while snapped: the snap target's planner (the same model against the tab
    * engine's runtime) and the tab's engine, which holds the copy. Null when nothing can be snapped.
    */
-  readonly #copy: PlanThenRun | null;
+  readonly #copy: QueryRunner | null;
   readonly #guard = new EpochGuard();
-  readonly #snaps: SnapManager;
+  readonly #snaps: SnapManager | HostSnaps;
   readonly #options: CubeControllerOptions;
 
   /**
@@ -311,11 +334,16 @@ export class CubeController {
     this.#liveRunner = asRunner
       ?? (options.live ? new PlanThenRun(second as Planner, options.live) : (local as PlanThenRun));
     this.#options = options;
-    this.#copy = local && options.snapTarget ? new PlanThenRun(options.snapTarget.planner, local.engine) : null;
-    this.#snaps = new SnapManager(local ? local.engine : null, options.live ?? null);
+    // a host's snap beside a runner (Python's page), else the page's own into its store
+    const host = asRunner ? options.hostSnap : undefined;
+    this.#copy = host ? host.runner
+      : local && options.snapTarget ? new PlanThenRun(options.snapTarget.planner, local.engine) : null;
+    this.#snaps = host ? new HostSnaps(host)
+      : new SnapManager(local ? local.engine as QueryEngine & { readonly databaseType: string } : null, options.live ?? null,
+        options.snapTarget?.host);
   }
 
-  get snaps(): SnapManager {
+  get snaps(): Snaps {
     return this.#snaps;
   }
 
@@ -613,6 +641,12 @@ export class CubeController {
     // fresh cube references none, which made this `select(~[])` and the
     // planner refuse it. The query is a tree, so a column called
     // `trade date` is a name, not grammar.
+    const query = from(snapshot.source.query).select(snapshot.columns.map((c) => c.name)).lambda();
+    if (this.#snaps instanceof HostSnaps) {
+      // the host plans the pull where the rows are, and keeps the copy: the page sends Pure (R4)
+      await this.#snaps.snap(query, label);
+      return;
+    }
     if (!this.#local || !this.#livePlanner) {
       // The SnapManager says the same thing; saying it here too
       // keeps the reason next to the attempt.
@@ -625,7 +659,6 @@ export class CubeController {
     if (!target) {
       throw new CubeRefusal('this cube names no table to freeze a snapshot into.');
     }
-    const query = from(snapshot.source.query).select(snapshot.columns.map((c) => c.name)).lambda();
     // the PULL is the live plan: it runs where the rows are, in that database's SQL
     const sourceSql = (await this.#livePlanner.plan(query)).sql;
 
@@ -633,6 +666,11 @@ export class CubeController {
       ...(label !== undefined ? { label } : {}),
       target,
     });
+  }
+
+  /** The cube is gone: a copy its host keeps let go (one being made too, once it is); the tab's goes with the tab. */
+  async close(): Promise<void> {
+    if (this.#snaps instanceof HostSnaps) await this.#snaps.close();
   }
 
   /** Back to live; the owner re-runs the state, as after a snap. */

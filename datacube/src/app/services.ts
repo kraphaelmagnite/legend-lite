@@ -9,9 +9,10 @@
 
 import type { ModelHome } from '../../../depot-client/src/model-home.ts';
 import type { QueryEngine } from '../../../engine-client/src/engine.ts';
-import type { SeedSource } from '../../../engine-client/src/model-data.ts';
+import type { ProjectDatabases } from '../../../engine-client/src/project-data.ts';
 import type { CatalogObject, WarehouseEngine, WarehouseSession } from '../../../engine-client/src/warehouse.ts';
-import type { ValueSpecification } from '../../../pure-protocol/src/index.ts';
+import type { Lambda, ValueSpecification } from '../../../pure-protocol/src/index.ts';
+import type { Receipt } from '../../../engine-client/src/receipt.ts';
 import type { QueryReader } from '../../../query-store/src/index.ts';
 import type { HeldCopy } from '../app.ts';
 import type { CubeConfiguration } from '../config.ts';
@@ -22,7 +23,8 @@ import type { InferredModel, TableModels } from '../infer.ts';
 import type { PageDocument } from '../page-document.ts';
 import type { ModelOptions } from '../planner.ts';
 import type { S3Credentials } from '../remote.ts';
-import type { QueryRunner } from '../runner.ts';
+import type { ModelWriter } from '../model-writer.ts';
+import type { PlanAndRun } from '../runner.ts';
 import type { CubeSnapshot } from '../snapshot.ts';
 import type { UploadResult } from '../upload.ts';
 
@@ -77,17 +79,45 @@ export interface PlaneService {
  */
 export type GridRows =
   | { readonly planner: Planner; readonly engine: QueryEngine; readonly runner?: undefined }
-  | { readonly runner: QueryRunner; readonly planner?: undefined; readonly engine?: undefined };
+  | { readonly runner: PlanAndRun; readonly planner?: undefined; readonly engine?: undefined };
+
+/**
+ * WHAT THE MODEL ACTIONS NEED OF A HOST (Create a Class…, Create an Association…, Create a Data Space…;
+ * docs/ONE_PLATFORM_PROGRAM_2026_10_12.md B1): legend-lite's model writer and the host's database -- never the page's own
+ * planner or engine, so every host that gives this (and a model home) gets them. A grid's own rows come from where its
+ * rows always do (its PlanAndRun); a project's from `rows`.
+ */
+export interface ModelWriting {
+  /** The name a class's model gives the host's database (its store, connection and runtime): `Browser`, `Python`. */
+  readonly place: string;
+  /** legend-lite's model writer: the tab's module (beside whichever planner the page chose), Python's native library. */
+  readonly writer: ModelWriter;
+  /** A project's queries planned by the writer over its files and run on the host's database: a class's facts. */
+  rows(model: string, runtime: string): PlanAndRun;
+}
+
+/**
+ * WHAT A SAVED QUERY IS READ BY on any host (C5): its text, and its project's model's elements (its data spaces,
+ * enumerations), as the compiler reads them -- the tab's own planner, Python's native library.
+ */
+export interface QueryReading {
+  parse(text: string): Promise<Lambda>;
+  elements(text: string): Promise<unknown[]>;
+}
 
 /** Where queries are planned and run, and where data comes in. */
 export interface EngineService {
   readonly plane: PlaneService;
   /** What the status bar says of the planner, in one word. */
   readonly label: string;
+  /** What a saved query's text and its project's model are read by. */
+  readonly reading: QueryReading;
   /** A grid's rows over a source's model (§4.5): its own (a page's grids share no model), in the host's shape. */
   rows(model: string, runtime: string, how?: ModelOptions): GridRows;
   /** Where data comes in. */
   readonly database: DatabaseService;
+  /** What the model actions need (`ModelWriting`); absent, they are not offered (§3.4). */
+  readonly modelWriting?: ModelWriting;
   /**
    * THE PAGE'S OWN PLANNER AND DATABASE, where the page plans and runs SQL itself (the tab): what only that shape has
    * (§4.5) -- the sample's planner and the one a saved query's text is read by, the model writer of a warehouse table,
@@ -106,8 +136,8 @@ export interface LocalEngine {
   elements(text: string): Promise<unknown[]>;
   /** legend-lite's model writer for a table of the host's database, whichever planner plans it (infer.ts). */
   readonly tables: TableModels;
-  /** legend-lite's planner for a project's test data: the statements that make and fill its tables (model-data.ts). */
-  readonly seeds: SeedSource;
+  /** A project's own databases in the host's (C5, engine-client's project-data.ts): a saved query's rows by name. */
+  projects(): Promise<ProjectDatabases>;
   /** Where a grid over one of the database's tables runs, its database type the model's connection names. */
   readonly engine: QueryEngine & { readonly databaseType: string; run(sql: string, epoch: number): Promise<unknown> };
 }
@@ -184,7 +214,7 @@ export interface LivePage {
 
 /**
  * A project a saved query can belong to, as the host's configuration names it: what it compiles against (`models`,
- * Pure text joined in order) and the SQL that puts its rows in the host's database (`seed`, one statement per line).
+ * Pure text joined in order). Its rows are its Data elements', in a database of its own where the host runs it (C5).
  */
 export interface ConfiguredProject {
   readonly groupId: string;
@@ -192,7 +222,6 @@ export interface ConfiguredProject {
   readonly versionId: string;
   readonly title: string;
   readonly models: readonly string[];
-  readonly seed: readonly string[];
 }
 
 /** Where saved queries are (upstream's query store API), and the projects the host configured for them. */
@@ -213,8 +242,9 @@ export interface QueryService {
 export interface ModelHomeService {
   /** The SDLC and its Depot, connected the first time they are asked for. */
   connect(): Promise<ModelHome>;
-  /** Studio, opened on a project's workspace, where the host serves it. */
-  studio(project: string, workspace: string): string;
+  /** Studio, opened on a project's workspace, where the host serves it; absent where none is (Python's, until it serves
+   *  Studio: docs/ONE_PLATFORM_PROGRAM_2026_10_12.md E). */
+  studio?(project: string, workspace: string): string;
 }
 
 // ------------------------------------------------------------------------------------------------------ the warehouse
@@ -228,8 +258,22 @@ export interface WarehouseService {
   connect(url: string, user: string, password: string): Promise<{ session: WarehouseSession; objects: CatalogObject[] }>;
   /** The single-user app's launch key: signed in with it, at the warehouse that served the page. */
   signInWithKey(key: string): Promise<{ session: WarehouseSession; objects: CatalogObject[] }>;
-  /** A table's rows read Live there, as the signed-in user. */
-  live(session: WarehouseSession, catalog: string): WarehouseEngine;
+  /** A table's rows read Live there, as the signed-in user, by the page itself (the tab's). */
+  live?(session: WarehouseSession, catalog: string, databaseType: string): WarehouseEngine;
+  /**
+   * A table's model written and held by the host, which then plans and runs its queries itself (Python's: C3, R4) --
+   * the tab's own writer's answer, read-only, with the runtime a copy is planned against.
+   */
+  table?(session: WarehouseSession, object: CatalogObject): Promise<InferredModel & { readonly snapRuntime: string }>;
+  /** Whose database a host's table's copy is in, as a person reads it (`Python`): the host that reads its tables. */
+  readonly place?: string;
+  /**
+   * A table the host read (`table`) snapped there: `pull` (Pure: its every column) planned and run where the rows are,
+   * the copy in the host's database, read through the model's snap runtime. Its count, and the pull's receipt.
+   */
+  snap?(model: string, pull: Lambda): Promise<{ readonly rowCount: number; readonly pulledBy?: Receipt }>;
+  /** That copy dropped. */
+  release?(model: string): Promise<void>;
 }
 
 // -------------------------------------------------------------------------------------------------------- the browser

@@ -413,8 +413,20 @@ describe('nothing is built and left unreachable', () => {
   // noticed, because every one of them had good unit tests.
   //
   // So: a module that exists to be used by the product must be
-  // imported by the product, and called. app.ts is the product.
+  // imported by the product, and called. app.ts is the product -- and
+  // the export's core it calls (export-render.ts, 2026-10-13: one core
+  // for the screen's Export menu and Python's grid.export()), which
+  // reaches every export format and the heatmap's scale.
   const APP = SOURCES.read('src/app.ts');
+  const EXPORT = SOURCES.read('src/export-render.ts');
+  // what the export's core reaches and calls, checked THERE, with the app importing that core; everything else, and the
+  // core's own entry points (renderExport, columnFormats, measureHeatmaps, heatmapColour), checked in app.ts itself
+  const IN_EXPORT = new Set(['./export-rich.ts', './style.ts', 'heatColour(', 'columnRange(', 'exportTable(', 'toXlsx(',
+    'toHtml(', 'toPlainText(', 'toPdf(', 'exportCsv(']);
+  const CORE = './export-render.ts';
+  const product = (part: string): boolean => (IN_EXPORT.has(part.replace(/^from '|'$/g, ''))
+    ? EXPORT.includes(part) && APP.includes(`from '${CORE}'`)
+    : APP.includes(part));
 
   const REACHABLE: readonly [string, string][] = [
     ['the context menu', './ui/menu.ts'],
@@ -436,7 +448,7 @@ describe('nothing is built and left unreachable', () => {
   for (const [what, module] of REACHABLE) {
     it(`reaches ${what}`, () => {
       assert.ok(
-        APP.includes(`from '${module}'`),
+        product(`from '${module}'`),
         `src/app.ts does not import ${module}; ${what} is unreachable`,
       );
     });
@@ -467,8 +479,13 @@ describe('nothing is built and left unreachable', () => {
       'new FilterEditor(',
       'new PivotPanel(',
       'new MenuView(',
+      // the export's core itself, which the screen calls: its Export menu, its formats, its heatmaps
+      'renderExport(',
+      'columnFormats(',
+      'measureHeatmaps(',
+      'heatmapColour(',
     ]) {
-      assert.ok(APP.includes(call), `src/app.ts never calls ${call}`);
+      assert.ok(product(call), `src/app.ts (or the export's core it calls, export-render.ts) never calls ${call}`);
     }
   });
 

@@ -182,7 +182,12 @@ class ParkedWorkLedgerTest {
             // the name alone resolves, where the engine resolves by the full id
             Map.entry("PARK-28 a ~func descriptor's signature is not matched against the function's",
                     new Anchor("sig < 0 \\? funcRef : funcRef\\.substring\\(0, sig\\)",
-                            List.of("MappingFromProtocol.java")))));
+                            List.of("MappingFromProtocol.java"))),
+            // PARK-34 (2026-10-13, C1's audit): a column type whose TDS relational spelling legend-engine was never
+            // asked for (a Variant's) refuses execute's answer -- the server's since E8, the tab's since C1
+            Map.entry("PARK-34 an execute over a column whose relational spelling is unprobed is refused",
+                    new Anchor("is unprobed -- probe legend-engine, do not guess",
+                            List.of("UpstreamRelationType.java")))));
 
     private record Anchor(String pattern, List<String> files) {
     }

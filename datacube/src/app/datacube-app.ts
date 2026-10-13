@@ -17,7 +17,7 @@ import { CubeApp, type CubeAppQuerySource } from '../app.ts';
 import type { CubeConfiguration } from '../config.ts';
 import type { CubeDocument } from '../cube-document.ts';
 import { Latest, TabWork, mayLeave } from '../host.ts';
-import { writesModels } from '../model-writer.ts';
+import { PlanThenRun, type PlanAndRun } from '../runner.ts';
 import { PageApp, type GridMaker } from '../page/page-app.ts';
 import {
   pageContent,
@@ -96,6 +96,17 @@ export async function openDataCube(o: OpenDataCube): Promise<DataCubeApp> {
   const { label } = services.engine;
   /** The page's own planner and database, where it has them (the tab); on a Python host every grid's rows are Python's. */
   const local = services.engine.local;
+  /**
+   * A GRID'S ROWS WHERE THEY ARE PLANNED AND RUN, on whichever host: its PlanAndRun -- the host's (Python's), or the
+   * tab's over the grid's planner and the database its rows run on. What a model action reads of a grid (its sample,
+   * its keys' facts) is read here, as its rows are: never the page's own engine, which a Python host has not.
+   */
+  const rowsOf = (place: GridPlace): PlanAndRun | undefined => {
+    if (place.runner) return place.runner;
+    const planner = place.planner ?? local?.planner;
+    const engine = place.engine ?? local?.engine;
+    return planner && engine ? new PlanThenRun(planner, engine) : undefined;
+  };
   const windows = appWindows(o.windows);
   // the status line is the app's, in its look: whatever element the host handed it (app.css)
   status.classList.add('dc-app-status');
@@ -186,6 +197,8 @@ export async function openDataCube(o: OpenDataCube): Promise<DataCubeApp> {
         configuration: start?.configuration ?? config,
         // Snap only where the place says what to copy: no other source's target stands in for it
         ...(place.snapTarget ? { snapTarget: place.snapTarget } : {}),
+        ...(place.hostSnap ? { hostSnap: place.hostSnap } : {}),
+        ...(place.signInAgain ? { signInAgain: place.signInAgain } : {}),
         ...(place.cubeSource ? { cubeSource: place.cubeSource } : {}),
         // the groups a saved cube had open: its own grid's, not a copy's (a copy starts collapsed, as a new grid)
         ...(place.tree && !start ? { tree: place.tree } : {}),
@@ -195,10 +208,10 @@ export async function openDataCube(o: OpenDataCube): Promise<DataCubeApp> {
         // a copy is a grid added beside others
         foldPanel: start !== undefined || place.foldPanel === true,
         // WHERE THE PLANNER RUNS, changed where it is read: the status bar's readout offers the planes; and, where the
-        // page has a model home and the grid's planner writes classes, Create a Class… of the grid's rows
+        // page has a model home and the host writes models, Create a Class… of the grid's rows
         hostMenu: () => [
           ...planeMenu(),
-          ...(createClass && (place.planner ?? local?.planner)?.source ? [CREATE_CLASS, CREATE_ASSOCIATION] : []),
+          ...(createClass && rowsOf(place)?.host.planner.source ? [CREATE_CLASS, CREATE_ASSOCIATION] : []),
         ],
         onHostMenu: (item) => {
           if (item.id === CREATE_CLASS.id) createClass?.(created, place, spawned.id);
@@ -944,10 +957,12 @@ export async function openDataCube(o: OpenDataCube): Promise<DataCubeApp> {
 
     /** CREATE A CLASS… of a grid (src/create-class.ts, fetched the first time it is asked for). */
     const makeClass = async (grid: CubeApp, place: GridPlace, cube: string | undefined): Promise<void> => {
-      const grid0 = place.planner ?? local?.planner;
-      const source = grid0?.source?.();
-      // the model's writer: the tab's module, on every plane (the one beside a server's planner writes table models too)
-      if (!modelHome || !local || !grid0 || !source || !writesModels(local.tables)) return;
+      // the host's writer and database (the tab's module and DuckDB, Python's native library and DuckDB), and the grid's
+      // rows where they are read: what the action needs, on every host that gives it
+      const writing = services.engine.modelWriting;
+      const rows = rowsOf(place);
+      const source = rows?.host.planner.source?.();
+      if (!modelHome || !writing || !rows || !source) return;
       const sourceName = place.label ?? 'this source';
       const snapshot = grid.snapshot;
       // refused before the window opens, in words: a source read from no table of its own, a pivot, a lone total
@@ -968,17 +983,18 @@ export async function openDataCube(o: OpenDataCube): Promise<DataCubeApp> {
         query,
         table,
         sample: sampleLambda(snapshot.source.query),
-        planner: grid0,
+        rows,
         source,
-        writer: local.tables,
-        engine: place.engine ?? local.engine,
+        writer: writing.writer,
+        place: writing.place,
         sourceName,
         cube,
         // the page's name, or -- never saved -- its grid's source, without its file's extension (`trades.csv` trades)
         pageName: current.name ?? ((page.suggestedName || sourceName).replace(/\.[A-Za-z0-9]+$/, '') || 'page'),
         model: current.model,
         client: home.client,
-        studio: (project, workspace) => modelHome.studio(project, workspace),
+        where: home.where,
+        ...(modelHome.studio ? { studio: (project: string, workspace: string) => modelHome.studio!(project, workspace) } : {}),
         persist,
       });
       if (!model) return;
@@ -992,25 +1008,28 @@ export async function openDataCube(o: OpenDataCube): Promise<DataCubeApp> {
      * page as they read it -- its class when it is one, else its rows as a class's, or why they cannot be one.
      */
     const modelActions = async (): Promise<{ actions: typeof import('../model-actions.ts'); of: import('../model-actions.ts').ModelActionsOf } | undefined> => {
-      if (!modelHome || !local || !writesModels(local.tables)) return undefined;
+      const writing = services.engine.modelWriting;
+      if (!modelHome || !writing) return undefined;
       const [actions, home] = await Promise.all([import('../model-actions.ts'), modelHome.connect()]);
       const grids = actions.pageGrids(page.grids, (id) => {
         const place = sources.place(id);
         const grid = page.grid(id);
-        return place && grid && !place.runner ? { snapshot: grid.snapshot, label: place.label ?? id, planner: place.planner ?? local.planner,
-          engine: place.engine ?? local.engine } : undefined;
+        const rows = place ? rowsOf(place) : undefined;
+        return place && grid && rows ? { snapshot: grid.snapshot, label: place.label ?? id, rows } : undefined;
       }, (id) => current.model?.classes?.[id], { classLambda, storeTableOf, sampleLambda });
       const sourceName = grids[0]?.label ?? 'page';
       return {
         actions,
         of: {
-          writer: local.tables,
-          engine: local.engine,
+          writer: writing.writer,
+          place: writing.place,
+          rows: (model, runtime) => writing.rows(model, runtime),
           pageName: current.name ?? ((page.suggestedName || sourceName).replace(/\.[A-Za-z0-9]+$/, '') || 'page'),
           model: current.model,
           client: home.client,
+          where: home.where,
           grids,
-          studio: (project, workspace) => modelHome.studio(project, workspace),
+          ...(modelHome.studio ? { studio: (project: string, workspace: string) => modelHome.studio!(project, workspace) } : {}),
           persist,
           duplicate: duplicateLambda,
           call: (path) => fn(path),

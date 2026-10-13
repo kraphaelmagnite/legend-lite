@@ -22,12 +22,45 @@ const upstream = readFileSync(runfileFromEnv('UPSTREAM_ARROW_ANSWER'));
 // this user's legend-lite folder, the test's own (the pages Save writes go there, never into a real home)
 const home = mkdtempSync(join(process.env.TEST_TMPDIR, 'legend-lite-home-'));
 
+// A WAREHOUSE (docs/ONE_PLATFORM_PROGRAM_2026_10_12.md C3): the Bazel-built native one, its owner alice and a reader,
+// rita, seeded here as its owner (a table rita may read, one she may not); the page reads it through Python, signed in
+// there as rita
+const warehouse = spawn(runfileFromEnv('WAREHOUSE_BINARY'), ['--port', '0',
+  '--data', mkdtempSync(join(process.env.TEST_TMPDIR, 'warehouse-')), '--user', 'alice:alice-pw', '--user', 'rita:rita-pw',
+  '--owner', 'alice', '--duckdb-library', runfileFromEnv('WAREHOUSE_DUCKDB_LIBRARY')], { stdio: ['ignore', 'ignore', 'pipe'] });
+let warehouseSaid = '';
+const warehousePort = await new Promise((done, fail) => {
+  warehouse.stderr.on('data', (b) => {
+    warehouseSaid += String(b);
+    for (const line of String(b).split('\n')) if (line) process.stderr.write(`[warehouse] ${line}\n`);
+    const m = /listening on 127\.0\.0\.1:(\d+)/.exec(warehouseSaid);
+    if (m) done(Number(m[1]));
+  });
+  warehouse.on('exit', (code) => fail(new Error(`the warehouse exited (${code}): ${warehouseSaid}`)));
+});
+const warehouseStopped = new Promise((done) => warehouse.once('exit', done));
+const warehouseUrl = `http://127.0.0.1:${warehousePort}`;
+const owner = (await (await fetch(`${warehouseUrl}/sql/v1/login`, { method: 'POST',
+  headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user: 'alice', password: 'alice-pw' }) })).json()).token;
+for (const sql of [
+  'CREATE TABLE POSITIONS (desk VARCHAR, qty INTEGER, px DECIMAL(10,2))',
+  "INSERT INTO POSITIONS VALUES ('FX', 10, 1.50), ('EQ', 5, 2.25), ('FX', 3, 4.00)",
+  'CREATE TABLE secret (s VARCHAR)',
+  'GRANT SELECT ON TABLE POSITIONS TO rita',
+]) {
+  const said = await (await fetch(`${warehouseUrl}/sql/v1/statements`, { method: 'POST',
+    headers: { Authorization: `Bearer ${owner}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sql, catalog: 'main', waitMs: 30_000 }) })).json();
+  if (said.state !== 'succeeded') throw new Error(`the warehouse's setup: ${sql}: ${JSON.stringify(said)}`);
+}
+
 // the library by its runfiles path, as //python's tests are given it: a program a test starts gets no BUILD env
 const engine = spawn(fixture, ['--site', site], {
   stdio: ['pipe', 'pipe', 'pipe'],
   env: { ...process.env, LEGEND_LITE_LIBRARY: runfileFromEnv('LEGEND_LITE_LIBRARY'),
     LEGEND_LITE_DATACUBE: runfileFromEnv('LEGEND_LITE_DATACUBE'),
     LEGEND_LITE_DUCKDB_EXTENSIONS: runfileFromEnv('LEGEND_LITE_DUCKDB_EXTENSIONS'), LEGEND_LITE_HOME: home, PYTHONUTF8: '1',
+    LEGEND_LITE_QUERY_SITE: runfileFromEnv('QUERY_SITE'), LEGEND_LITE_STUDIO_SITE: runfileFromEnv('STUDIO_SITE'),
     PYTHONDONTWRITEBYTECODE: '1' },
 });
 // the engine's own account, in this test's log: a server-side reason is then never invisible
@@ -74,7 +107,7 @@ try {
   page.on('requestfailed', (r) => console.log(`request failed: ${r.url()} -- ${r.failure()?.errorText ?? ''}`));
   // what the page is handed: the token, and the frame the engine serves (the address is the page's own origin)
   const { url: _origin, link: _link, ...given } = served;
-  await page.addInitScript((g) => { window.__pythonEngineServed = g; }, given);
+  await page.addInitScript((g) => { window.__pythonEngineServed = g; }, { ...given, warehouse: warehouseUrl });
   // the test page, its bundle and upstream's recorded answer; everything else (the site, the API) is the engine's
   await page.route(`${origin}/python-engine.html`, (r) => r.fulfill({
     contentType: 'text/html',
@@ -96,8 +129,8 @@ try {
     console.log(`FAIL the setup: ${verdict.setupError}`);
     failed = true;
   }
-  if (verdict.outcomes.length !== 7) {
-    console.log(`FAIL ${verdict.outcomes.length} checks ran, not 7`);
+  if (verdict.outcomes.length !== 9) {
+    console.log(`FAIL ${verdict.outcomes.length} checks ran, not 9`);
     failed = true;
   }
 
@@ -107,9 +140,13 @@ try {
   cube.on('pageerror', (e) => { console.log(`engine page error: ${e.message}`); failed = true; });
   cube.on('requestfailed', (r) => console.log(`engine page request failed: ${r.url()} ${r.postData() ?? ''} -- ${r.failure()?.errorText ?? ''}`));
   cube.on('console', (m) => console.log(`engine page console ${m.type()}: ${m.text()}`));
-  // every file and call the page asks for is answered: a refusal (a missing file, a refused call) fails the test
+  // every file and call the page asks for is answered: a refusal (a missing file, a refused call) fails the test -- but
+  // for the SDLC's own "not there yet": the page asks for its workspace before it makes one, and the SDLC answers a
+  // workspace not yet made 404, as legend-sdlc does (the in-page SDLC answers the same, inside the tab)
   cube.on('response', (r) => {
-    if (r.status() >= 400) {
+    const notYet = r.status() === 404 && r.request().method() === 'GET'
+      && /^\/sdlc\/api\/projects\/[^/]+\/workspaces\/[^/]+$/.test(new URL(r.url()).pathname);
+    if (r.status() >= 400 && !notYet) {
       failed = true;
       // with the engine's reason, as the page was told it
       void r.text().then((t) => t, () => '').then((t) => console.log(`FAIL engine page answer ${r.status()}: ${r.url()} ${t.slice(0, 600)}`));
@@ -177,6 +214,136 @@ try {
     console.log(`  the page showed: ${(await cube.evaluate(() => `${document.body.innerText.slice(0, 300)} | sql: ${document.getElementById('sql')?.textContent?.slice(0, 200)}`))}`);
     failed = true;
   }
+  // CREATE A CLASS… ON PYTHON'S PAGE (docs/ONE_PLATFORM_PROGRAM_2026_10_12.md B1, B3): the app's own action over Python's
+  // services -- the class's sample read where the grid's rows are (PlanAndRun on Python), written by Python's native
+  // library, its project made in Python's model home (the same SDLC rules, a git repository in this test's own folder)
+  const menuItem = (label) => cube.locator('.dc-menu .dc-menu-item', { has: cube.locator(`:scope > .dc-menu-label:text-is(${JSON.stringify(label)})`) }).first();
+  await cube.locator('.dc-tile-menu').last().click();
+  await menuItem('Create a Class…').click();
+  const classShown = await cube.waitForFunction(() => document.querySelectorAll('.dc-class-file').length > 0
+    || document.querySelector('.dc-class .dc-picker-status.dc-failed') !== null, undefined, { timeout: 60_000 }).then(() => true, () => false);
+  if (classShown) {
+    await cube.locator('.dc-class .dc-primary').click();
+    await cube.waitForFunction(() => document.querySelector('.dc-class .dc-picker-status.dc-ok, .dc-class .dc-picker-status.dc-failed') !== null,
+      undefined, { timeout: 60_000 }).catch(() => undefined);
+  }
+  const classSaid = classShown ? (await cube.locator('.dc-class .dc-picker-status').textContent()) ?? '' : '(no window)';
+  const repository = readdirSync(join(home, 'projects', 'refs', 'heads'), { recursive: true });
+  const madeClass = /^Created \S+::domain::Book in the project \S+ \(workspace \S+\), in this user's folder/.test(classSaid)
+    && repository.length > 0;
+  console.log(`${madeClass ? 'ok  ' : 'FAIL'} Create a Class… on Python's page makes its class in Python's model home, a git repository`);
+  if (!madeClass) {
+    console.log(`  the window said: ${classSaid}; the repository's branches: ${JSON.stringify(repository)}`);
+    failed = true;
+  }
+  // AND OPENS IN STUDIO, served by the same Python (E): the window's link, its token traded for Studio's cookie on the
+  // first load, onto the project's workspace with the class in it
+  const studioHref = classShown && (await cube.locator('.dc-class-studio').count()) > 0
+    ? await cube.locator('.dc-class-studio').getAttribute('href') : null;
+  let inStudio = false;
+  if (studioHref !== null && /\/studio\/demo\/index\.html\?token=[^#]+#\/edit\/[^/]+\/[^/]+$/.test(studioHref)) {
+    const studio = await browser.newPage();
+    studio.on('pageerror', (e) => { console.log(`studio error: ${e.message}`); failed = true; });
+    await studio.goto(studioHref);
+    inStudio = await studio.waitForFunction(() => /\bBook\b/.test(document.body.innerText) && !location.search.includes('token='),
+      undefined, { timeout: 60_000 }).then(() => true, () => false);
+    if (!inStudio) console.log(`  Studio showed: ${(await studio.evaluate(() => document.body.innerText.slice(0, 300)))}`);
+    await studio.close();
+  }
+  console.log(`${inStudio ? 'ok  ' : 'FAIL'} the class opens in Studio, served by the same Python, from the window's link`);
+  if (!inStudio) {
+    console.log(`  the link: ${studioHref}`);
+    failed = true;
+  }
+
+  // A PROJECT'S QUERY ON PYTHON (docs/ONE_PLATFORM_PROGRAM_2026_10_12.md C5): Studio's demo projects loaded
+  // into Python's repository (Studio served by Python), then Query served by Python opens the party project by name
+  // and runs a query over it -- its rows the project's own Data rows, in the project's database inside Python's
+  // DuckDB, as a tab's Query answers them (site/verify.mjs: 5 parties, Banque Lumière among them)
+  const token = served.authorization.replace(/^Bearer /, '');
+  const demo = await browser.newPage();
+  demo.on('pageerror', (e) => { console.log(`studio error: ${e.message}`); failed = true; });
+  await demo.goto(`${origin}/studio/demo/index.html?token=${token}#/`);
+  await demo.getByRole('button', { name: 'Load demo projects' }).click({ timeout: 60_000 });
+  const published = await demo.waitForFunction(() => /Demo projects published/.test(
+    document.querySelector('[data-testid=demo-status]')?.textContent ?? ''), undefined, { timeout: 180_000 }).then(() => true, () => false);
+  await demo.close();
+  let partyRows = '';
+  if (published) {
+    const enc = encodeURIComponent;
+    const q = await browser.newPage();
+    q.on('pageerror', (e) => { console.log(`query error: ${e.message}`); failed = true; });
+    await q.goto(`${origin}/query/demo/index.html?token=${token}#/create/manual/${enc('org.finos.lite.demo:party:master-SNAPSHOT')}`
+      + `/${enc('demo::party::PartyMapping')}/${enc('demo::party::Runtime')}?class=${enc('demo::party::Party')}`);
+    await q.waitForSelector('.q-node', { timeout: 120_000 });
+    for (const property of ['Name', 'Country']) await q.dblclick(`.q-node:has-text('${property}')`);
+    await q.click('button.q-run');
+    await q.waitForFunction(() => document.querySelector('.q-error-box')
+      || /\d+ rows? in \d+ ms/.test(document.querySelector('.q-results-bar')?.textContent ?? ''), undefined, { timeout: 120_000 });
+    const refused = await q.$('.q-error-box');
+    partyRows = refused ? `refused: ${await refused.textContent()}`
+      : `${await q.locator('.q-results-bar').textContent()} | ${(await q.$$eval('.q-grid tbody tr', (trs) => trs.map((tr) => tr.textContent ?? ''))).join(' | ')}`;
+    if (!refused) {
+      // saved into Python's saved queries (ll.home()/queries), for Python's own page below (C5)
+      await q.click('button[title="Save (Ctrl+S)"]');
+      await q.fill('.q-dialog input.q-input', 'Parties');
+      await q.click('.q-dialog button.primary');
+      await q.waitForFunction(() => location.hash.startsWith('#/edit/'), undefined, { timeout: 60_000 }).catch(() => undefined);
+    }
+    await q.close();
+  }
+  const ranOnPython = /(^|\D)5 rows? in/.test(partyRows) && partyRows.includes('Banque Lumière');
+  console.log(`${ranOnPython ? 'ok  ' : 'FAIL'} a project loaded in Studio on Python runs in Query on Python, on its own rows (5 parties)`);
+  if (!ranOnPython) {
+    console.log(`  published: ${published}; Query showed: ${partyRows.slice(0, 400)}`);
+    failed = true;
+  }
+
+  // A SAVED QUERY OPENED ON PYTHON'S PAGE (C5): the query Query on Python saved, listed in Saved queries on a
+  // DataCube page Python serves, read by Python's compiler and opened as a grid -- planned over its project's mapping
+  // and run by Python in the project's own database: the 5 parties Query showed
+  let openedSaved = '';
+  if (ranOnPython) {
+    const dc = await browser.newPage();
+    dc.on('pageerror', (e) => { console.log(`page error: ${e.message}`); failed = true; });
+    await dc.goto(served.link);
+    await dc.locator('.dc-row').first().waitFor({ timeout: 60_000 });
+    const tiles = await dc.locator('[data-tile^="grid-"]').count();
+    await dc.click('.dc-titlebar-menu');
+    await dc.locator('.dc-menu .dc-menu-item', { has: dc.locator(':scope > .dc-menu-label:text-is("New")') }).hover();
+    await dc.locator('.dc-menu .dc-menu-item', { has: dc.locator(':scope > .dc-menu-label:text-is("Data Source\u2026")') }).click();
+    await dc.locator('.dc-picker').waitFor({ timeout: 5000 });
+    await dc.locator('.dc-picker-tab[data-section="saved"]').click();
+    const row = dc.locator('.dc-picker-row[data-query]', { hasText: 'Parties' });
+    if (await row.waitFor({ timeout: 30_000 }).then(() => true, () => false)) {
+      await row.click();
+      const opened = await dc.locator('.dc-picker').waitFor({ state: 'detached', timeout: 60_000 }).then(() => true, async () => {
+        openedSaved = `the picker said: ${(await dc.textContent('.dc-picker-status').catch(() => '')) ?? ''}`;
+        return false;
+      });
+      if (opened) {
+        const tile = dc.locator('[data-tile^="grid-"]').nth(tiles);
+        await tile.locator('.dc-row').first().waitFor({ timeout: 60_000 }).catch(() => undefined);
+        const cells = await tile.locator('.dc-row').evaluateAll((rs) => rs.map((r) => r.textContent ?? ''));
+        openedSaved = `${(await tile.locator('.dc-tile-cube').textContent()) ?? ''}: ${cells.length} rows | ${cells.join(' | ')}`;
+      }
+    } else {
+      openedSaved = `Saved queries listed: ${(await dc.$$eval('.dc-picker-row[data-query]', (els) => els.map((e) => e.textContent ?? ''))).join(', ')}`;
+    }
+    await dc.close();
+  }
+  const savedOnPython = /Parties/.test(openedSaved) && /: 5 rows/.test(openedSaved) && openedSaved.includes('Banque Lumière');
+  console.log(`${savedOnPython ? 'ok  ' : 'FAIL'} a query saved in Query on Python opens from Saved queries on Python's page, its rows the project's (5 parties)`);
+  if (!savedOnPython) {
+    console.log(`  ${openedSaved.slice(0, 500)}`);
+    failed = true;
+  }
+  if (classShown) {
+    await cube.locator('.dc-class .dc-primary').click();
+    await cube.locator('.dc-class').waitFor({ state: 'detached', timeout: 10_000 }).catch(() => undefined);
+  }
+  // the page changed (its model made): the next page asks first whether to leave it, as the tab's does -- answered yes
+  cube.once('dialog', (d) => { console.log(`     (asked: ${d.message().slice(0, 160)})`); void d.accept(); });
   // AN EXAMPLE goes the same way: generated in the page, read into Python's DuckDB as a file is (and the file before it
   // let go of: its grid gone, its table dropped in Python -- forget.json, every answer here a success)
   await cube.click('.dc-titlebar-menu');
@@ -266,6 +433,79 @@ try {
   console.log(`${reopened ? 'ok  ' : 'FAIL'} a page saved on Python opens again from Open…, over its source`);
   if (!reopened) {
     console.log(`  listed: ${listed}; the page showed: ${(await cube.evaluate(() => document.body.innerText.slice(0, 300)))}`);
+    failed = true;
+  }
+
+  // AN ICEBERG TABLE (G5), read by Python's DuckDB through the iceberg extension the wheel carries, every file it names
+  // served by the server on this machine: the app's own Remote section, as for a remote file
+  await cube.click('.dc-titlebar-menu');
+  await cube.locator('.dc-menu .dc-menu-item', { has: cube.locator(':scope > .dc-menu-label:text-is("New")') }).hover();
+  await cube.locator('.dc-menu .dc-menu-item', { has: cube.locator(':scope > .dc-menu-label:text-is("Blank Page")') }).click();
+  await cube.locator('.dc-blank .dc-primary').click();
+  await cube.locator('.dc-picker-tab[data-section="remote"]').click();
+  await cube.fill('.dc-picker-url', served.iceberg);
+  await cube.click('.dc-picker-form .dc-primary');
+  const icebergRead = await cube.waitForFunction(() => document.querySelector('.dc-picker') === null
+    && /\b3 rows\b/.test(document.body.innerText) && document.body.innerText.includes('Cygnus'),
+  undefined, { timeout: 60_000 }).then(() => true, () => false);
+  console.log(`${icebergRead ? 'ok  ' : 'FAIL'} an Iceberg table opened on Python's page is read by Python's DuckDB, through the iceberg it carries`);
+  if (!icebergRead) {
+    console.log(`  the page showed: ${(await cube.evaluate(() => document.body.innerText.slice(0, 300)))}`);
+    failed = true;
+  }
+
+  // A WAREHOUSE TABLE ON PYTHON'S PAGE (docs/ONE_PLATFORM_PROGRAM_2026_10_12.md C3), by the app's own Database section:
+  // Python signs in as rita, the table opens Live (its rows the warehouse's, its receipt saying so), the grid's plane
+  // button snaps it into Python's DuckDB (the button and the receipt saying where the copy is), and goes live again
+  await cube.click('.dc-titlebar-menu');
+  await cube.locator('.dc-menu .dc-menu-item', { has: cube.locator(':scope > .dc-menu-label:text-is("New")') }).hover();
+  await cube.locator('.dc-menu .dc-menu-item', { has: cube.locator(':scope > .dc-menu-label:text-is("Blank Page")') }).click();
+  await cube.locator('.dc-blank .dc-primary').click();
+  await cube.locator('.dc-picker-tab[data-section="database"]').click();
+  await cube.getByLabel('Address').fill(warehouseUrl);
+  await cube.getByLabel('User').fill('rita');
+  await cube.getByLabel('Password').fill('rita-pw');
+  await cube.click('.dc-picker-form .dc-primary');
+  await cube.click('.dc-picker-row[data-object="main.POSITIONS"]', { timeout: 60_000 });
+  // the plane button and the receipt of the grid on screen (an earlier page's are in the document too, hidden)
+  const plane = () => cube.evaluate(() => {
+    const shown = (e) => e !== null && e.offsetParent !== null;
+    const toggle = [...document.querySelectorAll('.dc-titlebar-toggle')].find(shown);
+    const receipt = [...document.querySelectorAll('.dc-status-receipt')].find(shown);
+    return { text: toggle?.textContent?.trim() ?? '', title: toggle?.getAttribute('title') ?? '', receipt: receipt?.textContent ?? '',
+      rows: /\b3 rows\b/.test(document.body.innerText), picker: document.querySelector('.dc-picker') !== null };
+  });
+  const until = async (want) => {
+    const t0 = Date.now();
+    for (;;) {
+      const p = await plane();
+      if (want(p) || Date.now() - t0 > 60_000) return p;
+      await cube.waitForTimeout(200);
+    }
+  };
+  const live = await until((p) => !p.picker && p.rows && p.text === 'Live' && /the warehouse/.test(p.receipt));
+  const liveOk = !live.picker && live.rows && live.text === 'Live' && /the warehouse/.test(live.receipt) && /rita/.test(live.receipt)
+    && /snap a copy of your rows into Python's database/.test(live.title);
+  console.log(`${liveOk ? 'ok  ' : 'FAIL'} a warehouse table opened on Python's page reads Live on the warehouse, as rita, its Snap offered into Python's database`);
+  if (!liveOk) {
+    console.log(`  the grid said: ${JSON.stringify(live)}`);
+    failed = true;
+  }
+  await cube.locator('.dc-titlebar-toggle:visible').click();
+  const snapped = await until((p) => p.text === 'Snapped' && /Python's copy/.test(p.receipt));
+  const snappedOk = snapped.text === 'Snapped' && /Python's copy/.test(snapped.receipt) && /a copy in Python's database/.test(snapped.title)
+    && /3 rows/.test(snapped.title) && snapped.rows;
+  console.log(`${snappedOk ? 'ok  ' : 'FAIL'} its plane button snaps it into Python's DuckDB, the button and the receipt saying where the copy is`);
+  if (!snappedOk) {
+    console.log(`  the grid said: ${JSON.stringify(snapped)}`);
+    failed = true;
+  }
+  await cube.locator('.dc-titlebar-toggle:visible').click();
+  const back = await until((p) => p.text === 'Live' && /the warehouse/.test(p.receipt));
+  const backOk = back.text === 'Live' && /the warehouse/.test(back.receipt) && back.rows;
+  console.log(`${backOk ? 'ok  ' : 'FAIL'} clicked again, it reads Live on the warehouse once more, the copy let go`);
+  if (!backOk) {
+    console.log(`  the grid said: ${JSON.stringify(back)}`);
     failed = true;
   }
 
@@ -363,6 +603,27 @@ try {
   })();
   console.log(`${read ? 'ok  ' : 'FAIL'} a sheet renamed in DataCube is in page.read() in Python${read ? ` (${read.join(', ')})` : ''}`);
   if (!read) failed = true;
+
+  // SAVED FROM PYTHON (D, B6): page.save() keeps the page in this user's saved pages by the rules the tab's own Save
+  // keeps it by; DataCube's Open… lists it, and it opens -- its sheets as Python saved them, its grid over its frame
+  engine.stdin.write('py-page-save\n');
+  const savedLine = await nextLine();
+  if (!savedLine.startsWith('done py-page-save ')) throw new Error(`the engine did not save the page: ${savedLine}`);
+  // opened in the first tab, which shows another page (the one saved there, "Books from Python")
+  await cube.click('.dc-titlebar-menu');
+  await cube.locator('.dc-menu-item:has(> .dc-menu-label:text-is("Open\u2026"))').first().click();
+  const pyRow = cube.locator('#cubelib .dc-lib-row', { hasText: 'Built in Python' });
+  const pyListed = await pyRow.waitFor({ timeout: 10_000 }).then(() => true, () => false);
+  if (pyListed) await pyRow.locator('.dc-lib-button', { hasText: 'Open' }).click();
+  const pyOpened = pyListed && await cube.waitForFunction(`(${String(sheetNames)})() === 'pytrades|Renamed in DataCube|Added in Python'
+    && document.querySelector('.dc-page-name')?.textContent?.includes('Built in Python')`, undefined, { timeout: 60_000 })
+    .then(() => true, () => false);
+  console.log(`${pyOpened ? 'ok  ' : 'FAIL'} a page saved from Python (page.save()) is in Open… and opens, its sheets as Python saved them`);
+  if (!pyOpened) {
+    console.log(`  listed: ${pyListed}; sheets: ${await cube.evaluate(`(${String(sheetNames)})()`)}; the page showed: ${
+      (await cube.evaluate(() => document.body.innerText.slice(0, 400)))}`);
+    failed = true;
+  }
 
   // EVERY PAGE PYTHON WRITES IS ONE DATACUBE READS: pages built with each kind of edit Python makes, one with a frozen
   // chart kept without its grid, and DataCube's own page loaded and changed in Python, read by DataCube's reader
@@ -540,5 +801,7 @@ try {
   // stopped and WAITED for: the engine serves until its input closes, and is gone before the test reports
   engine.stdin.end();
   await stopped;
+  warehouse.kill();
+  await warehouseStopped;
 }
 process.exit(failed ? 1 : 0);

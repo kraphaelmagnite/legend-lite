@@ -4,6 +4,7 @@
 // values kept as Pure text.
 
 import { findAll, isFunction, lambda as makeLambda, type Lambda } from '../../../pure-protocol/src/index.ts';
+import { contextOf as readContext, type QueryContext } from '../../../query-store/src/context.ts';
 import { buildLambda, valueSpec } from '../builder/build.ts';
 import { loadLambda, parametersOf, valueOf } from '../builder/load.ts';
 import { emptyQuery, type ClassSource, type Value } from '../builder/state.ts';
@@ -58,19 +59,10 @@ export async function toQuery(app: AppContext, session: Session, identity: { id:
   };
 }
 
-/** The source a saved query's execution context names, with its class read from the query itself. */
-export function contextOf(project: LoadedProject, q: Query): { mapping: string; runtime: string; dataSpace?: ClassSource['dataSpace'] } {
-  const ctx = q.executionContext;
-  if (ctx?._type === 'explicitExecutionContext') return { mapping: ctx.mapping, runtime: ctx.runtime };
-  if (ctx?._type === 'dataSpaceExecutionContext') {
-    const ds = project.graph.dataSpaces.get(ctx.dataSpacePath);
-    if (!ds) throw new Error(`the query's data space ${ctx.dataSpacePath} is not in ${project.gav}`);
-    const key = ctx.executionKey ?? ds.defaultExecutionContext;
-    const ec = ds.executionContexts.find((c) => c.name === key);
-    if (!ec?.mapping || !ec.defaultRuntime) throw new Error(`the data space has no execution context '${key}' with a mapping and runtime`);
-    return { mapping: ec.mapping.path, runtime: ec.defaultRuntime.path, dataSpace: { path: ctx.dataSpacePath, context: key } };
-  }
-  throw new Error('the query has no execution context legend-lite serves (explicit or data space)');
+/** The mapping and runtime a saved query runs on: query-store's one reader (context.ts, DataCube's too), over this
+ *  project's data spaces. */
+export function contextOf(project: LoadedProject, q: Query): QueryContext {
+  return readContext(q, (path) => project.graph.dataSpaces.get(path));
 }
 
 /** A saved query opened: in the form when it can be, else as text; parameter values restored. */

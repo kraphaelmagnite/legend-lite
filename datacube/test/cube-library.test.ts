@@ -5,10 +5,27 @@ import assert from 'node:assert/strict';
 import { beforeEach, describe, it } from 'node:test';
 import { JSDOM } from 'jsdom';
 
-import { MemoryRecords, RuleStore } from '../src/cube-store.ts';
+import type { CubeStore, DataCubeQuery } from '../src/cube-store.ts';
 import { CubeLibrary, type CubeLibraryHost } from '../src/ui/cube-library.ts';
 
 const tick = () => new Promise((r) => setTimeout(r, 0));
+
+/** A store of two pages, as the window lists them (the store's rules are core's SavedCubes, held to
+ *  test/saved-pages/conformance.ts; this window only lists, opens and deletes). */
+function twoPages(): CubeStore {
+  const pages = new Map<string, DataCubeQuery>([
+    ['a', { id: 'a', name: 'Alpha', content: { kind: 'datacube.cube' }, owner: 'me' }],
+    ['b', { id: 'b', name: 'Beta', content: { kind: 'datacube.cube' }, owner: 'me' }],
+  ]);
+  return {
+    currentUser: async () => 'me',
+    search: async () => [...pages.values()].map(({ content: _content, ...light }) => light),
+    get: async (id) => pages.get(id) ?? Promise.reject(new Error(`no page ${id}`)),
+    create: async (q) => { pages.set(q.id, q); return q; },
+    update: async (_id, q) => { pages.set(q.id, q); return q; },
+    delete: async (id) => { pages.delete(id); },
+  };
+}
 
 describe('the Cubes window', () => {
   let root: HTMLElement;
@@ -21,9 +38,7 @@ describe('the Cubes window', () => {
     root = dom.window.document.getElementById('r') as HTMLElement;
     calls = [];
     state = { dirty: false, id: 'a' };
-    const store = new RuleStore(new MemoryRecords(), 'me');
-    await store.create({ id: 'a', name: 'Alpha', content: { kind: 'datacube.cube' } });
-    await store.create({ id: 'b', name: 'Beta', content: { kind: 'datacube.cube' } });
+    const store = twoPages();
     const host: CubeLibraryHost = {
       currentId: () => state.id,
       open: async (id) => { calls.push(`open ${id}`); },

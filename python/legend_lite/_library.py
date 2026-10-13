@@ -27,7 +27,19 @@ _ARITY = {
     'lite_plan_json': 3, 'lite_plan_text': 3, 'lite_hold_model': 1, 'lite_release_model': 1, 'lite_plan_json_held': 3,
     'lite_relation_type_held': 2, 'lite_plan_text_held': 3, 'lite_relation_type_text_held': 2, 'lite_test_data_sql': 3,
     'lite_database_from_catalog': 1, 'lite_table_model': 1, 'lite_catalog_columns_sql': 2, 'lite_session_setup': 1,
+    # a project's own database (C5)
+    'lite_project_data': 2,
+    # a host's named operations (D5)
+    'lite_host_operations': 2,
     'lite_pure_v1': 3, 'lite_execute_plan': 2, 'lite_pure_v1_refusal': 1,
+    # the planner protocol's execute halves for a host's own database, and its warm (C2)
+    'lite_execute_json_plan': 2, 'lite_execute_json_answer': 2, 'lite_warm_model': 1,
+    # the site's media types, the one table every host serving a site answers with (C4)
+    'lite_site_types': 0,
+    # the warehouse's SQL API, as the one binding speaks it (C3)
+    'lite_warehouse_call': 2, 'lite_warehouse_read': 3,
+    # Python's model home (native/.../ModelHome.java): a repository's folder, then a request's method, target and body
+    'lite_sdlc_handle': 4, 'lite_depot_handle': 4, 'lite_saved_queries': 6, 'lite_saved_cubes': 6,
 }
 
 

@@ -6,7 +6,7 @@
 // A test (//site:verify_test) on the Chromium Bazel fetched; `bazel run //site:verify` runs the same by hand.
 
 // first: points Playwright at the Chromium Bazel fetched (as a browser_test; a no-op under bazel run)
-import '../tools/browser/pinned-chromium.mjs';
+import { hermetic } from '../tools/browser/pinned-chromium.mjs';
 import { createServer } from 'node:http';
 import { mkdtemp, readFile, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -14,8 +14,10 @@ import { extname, join, resolve, sep } from 'node:path';
 import { createRequire } from 'node:module';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-// Playwright as DataCube's harnesses have it (this package links no npm packages of its own)
+// Playwright as DataCube's harnesses have it (this package links no npm packages of its own), guarded by hand: the
+// guard finds no Playwright beside this script (pinned-chromium.mjs)
 const { chromium } = createRequire(fileURLToPath(new URL('../datacube/node_modules/', import.meta.url)))('playwright');
+hermetic(chromium);
 
 const ROOT = resolve(fileURLToPath(new URL('.', import.meta.url)), 'dist');
 const TYPES = {

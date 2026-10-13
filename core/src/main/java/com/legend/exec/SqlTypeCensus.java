@@ -292,7 +292,8 @@ public final class SqlTypeCensus {
                 } else if (delivers(outs.get(i).type(), meta) || snowflakeOwn(dialect, outs.get(i).type(), meta)
                         || bigQueryOwn(dialect, outs.get(i).type(), meta) || sqliteOwn(dialect, outs.get(i).type(), meta)
                         || mariaDbOwn(dialect, outs.get(i).type(), meta) || trinoOwn(dialect, outs.get(i).type(), meta)
-                        || clickHouseOwn(dialect, outs.get(i).type(), meta)) {
+                        || clickHouseOwn(dialect, outs.get(i).type(), meta)
+                        || mapAsEntries(dialect, outs.get(i).type(), meta)) {
                     // THE DELIVERY RELATION (adjudicated 2026-08-23):
                     // value-subset narrowing (every INTEGER fits the
                     // BIGINT contract; DECIMAL(p,s) fits DECIMAL(P>=p,s))
@@ -668,20 +669,25 @@ public final class SqlTypeCensus {
 
     /** BigQuery's exact decimal carrier (2026-10-11): every decimal is a BIGNUMERIC (a parameterized type cannot be
      *  cast to; its 38 digits each side hold every DECIMAL(p,s) and HUGEINT value), and a Float-declared column may
-     *  arrive as it (the numeric charter's Rule 2, as a DECIMAL does). Its map carrier (2026-10-11): a map is its
-     *  entries, an ARRAY of (key, value) structs -- BigQuery has no MAP type (the dialect's mapTypeName). */
+     *  arrive as it (the numeric charter's Rule 2, as a DECIMAL does). Its map carrier: {@link #mapAsEntries}. */
     private static boolean bigQueryOwn(String dialect, SqlType label, String meta) {
         if (!"BigQuery".equals(dialect)) {
             return false;
-        }
-        if (meta.equals("ARRAY")) {
-            return label instanceof SqlType.Map;
         }
         if (!meta.equals("BIGNUMERIC")) {
             return false;
         }
         return label == SqlType.Scalar.HUGEINT || label == SqlType.Scalar.DOUBLE
                 || label instanceof SqlType.Decimal d && d.scale() <= 38 && d.precision() - d.scale() <= 38;
+    }
+
+    /** A map carried as its entries, a list of (key, value) structs, is an ARRAY at the wire on a database with no
+     *  map type (the dialect's mapTypeName): BigQuery's ARRAY<STRUCT<key, value>> (2026-10-11) and Postgres's jsonb[]
+     *  of {"key", "value"} (2026-10-12). A database with a map type reports MAP, so an ARRAY there stays a divergence
+     *  (scoped by name since 2026-10-13, PR #34's independent review: it had been widened to every database). */
+    private static boolean mapAsEntries(String dialect, SqlType label, String meta) {
+        return label instanceof SqlType.Map && meta.equals("ARRAY")
+                && ("BigQuery".equals(dialect) || "Postgres".equals(dialect));
     }
 
     private static boolean delivers(SqlType label, String meta) {

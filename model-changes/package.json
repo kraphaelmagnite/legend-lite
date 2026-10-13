@@ -1,0 +1,7 @@
+{
+  "name": "@legend-lite/model-changes",
+  "license": "Apache-2.0",
+  "private": true,
+  "type": "module",
+  "description": "A class, an association or a data space made in any project: legend-lite's model writer asked, its files saved as one revision of an SDLC's workspace. Python's twin is legend_lite.model."
+}

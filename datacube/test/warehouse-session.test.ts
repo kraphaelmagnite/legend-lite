@@ -6,10 +6,16 @@
 import assert from 'node:assert/strict';
 import { afterEach, beforeEach, describe, it } from 'node:test';
 
-import { WarehouseEngine, type WarehouseSession } from '../../engine-client/src/warehouse.ts';
+import { WarehouseBinding, WarehouseEngine, type WarehouseSession } from '../../engine-client/src/warehouse.ts';
 
 const session = (token: string, principal = 'alice'): WarehouseSession =>
   ({ baseUrl: 'https://wh.example', token, principal, expiresAt: '2099-01-01T00:00:00Z' });
+// a binding never called: these tests make no call (this file runs headless too, where no WebAssembly loads; the
+// calls themselves are warehouse-session-http.test.ts's, over the binding's own module)
+const uncalled = new WarehouseBinding({ exports: {
+  call: () => { throw new Error('no call here'); },
+  read: () => { throw new Error('no call here'); },
+} });
 
 let sent: { url: string; auth: string | null }[];
 let reply: (url: string) => Response;
@@ -33,7 +39,7 @@ afterEach(() => {
 
 describe('a renewed sign-in reaches the open cube (P2-297)', () => {
   it('a sign-in as SOMEONE ELSE never becomes the open cube\'s: it is refused, said', () => {
-    const engine = new WarehouseEngine(session('tok1', 'alice'));
+    const engine = new WarehouseEngine(uncalled, session('tok1', 'alice'), 'main', 'DuckDB');
     assert.throws(() => engine.renew(session('tok9', 'bob')), /alice/);
     assert.equal(engine.principal, 'alice');
   });

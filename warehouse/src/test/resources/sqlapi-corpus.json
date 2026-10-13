@@ -1,0 +1,914 @@
+{
+ "about": "THE WAREHOUSE'S API AS EVERY DRIVER SPEAKS IT (docs/ONE_PLATFORM_PROGRAM_2026_10_12.md C3): recorded exchanges, each the call the binding names (SqlApiCalls.call), the server's answer, and what the binding reads of it (SqlApiCalls.read). SqlApiCallsTest holds the binding to them; the tab's driver (engine-client/test/warehouse-corpus.test.ts) and Python's (python/tests/test_warehouse.py) replay each scenario's action against the answers and must make exactly its calls, ending in its outcome.",
+ "scenarios": [
+  {
+   "name": "sign in by password",
+   "action": {
+    "kind": "signIn",
+    "user": "rita",
+    "password": "rita-pw"
+   },
+   "outcome": {
+    "principal": "rita",
+    "token": "tok1"
+   },
+   "exchanges": [
+    {
+     "op": "login",
+     "args": {
+      "user": "rita",
+      "password": "rita-pw"
+     },
+     "call": {
+      "method": "POST",
+      "path": "/sql/v1/login",
+      "headers": {
+       "Content-Type": "application/json"
+      },
+      "body": "{\"user\":\"rita\",\"password\":\"rita-pw\"}"
+     },
+     "answer": {
+      "status": 200,
+      "body": "{\"token\":\"tok1\",\"expiresAt\":\"2026-10-13T12:00:00Z\",\"principal\":\"rita\"}"
+     },
+     "read": {
+      "token": "tok1",
+      "expiresAt": "2026-10-13T12:00:00Z",
+      "principal": "rita"
+     }
+    }
+   ]
+  },
+  {
+   "name": "sign in by launch key",
+   "action": {
+    "kind": "signInWithKey",
+    "key": "k-123"
+   },
+   "outcome": {
+    "principal": "app",
+    "token": "tok2"
+   },
+   "exchanges": [
+    {
+     "op": "loginKey",
+     "args": {
+      "key": "k-123"
+     },
+     "call": {
+      "method": "POST",
+      "path": "/sql/v1/login",
+      "headers": {
+       "Content-Type": "application/json"
+      },
+      "body": "{\"key\":\"k-123\"}"
+     },
+     "answer": {
+      "status": 200,
+      "body": "{\"token\":\"tok2\",\"expiresAt\":\"2026-10-13T12:00:00Z\",\"principal\":\"app\"}"
+     },
+     "read": {
+      "token": "tok2",
+      "expiresAt": "2026-10-13T12:00:00Z",
+      "principal": "app"
+     }
+    }
+   ]
+  },
+  {
+   "name": "a sign-in refused",
+   "action": {
+    "kind": "signIn",
+    "user": "rita",
+    "password": "wrong"
+   },
+   "outcome": {
+    "failed": "AUTH_INVALID: wrong user or password"
+   },
+   "exchanges": [
+    {
+     "op": "login",
+     "args": {
+      "user": "rita",
+      "password": "wrong"
+     },
+     "call": {
+      "method": "POST",
+      "path": "/sql/v1/login",
+      "headers": {
+       "Content-Type": "application/json"
+      },
+      "body": "{\"user\":\"rita\",\"password\":\"wrong\"}"
+     },
+     "answer": {
+      "status": 401,
+      "body": "{\"error\":{\"code\":\"AUTH_INVALID\",\"message\":\"wrong user or password\"}}"
+     },
+     "read": {
+      "error": {
+       "code": "AUTH_INVALID",
+       "message": "wrong user or password"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "the objects, every column structured",
+   "action": {
+    "kind": "objects",
+    "token": "tok1"
+   },
+   "outcome": {
+    "objects": [
+     {
+      "catalog": "main",
+      "databaseType": "DuckDB",
+      "schema": "trading",
+      "name": "trades",
+      "kind": "table",
+      "columns": [
+       {
+        "name": "desk",
+        "type": "VARCHAR",
+        "logicalType": "VARCHAR",
+        "precision": null,
+        "scale": null,
+        "notNull": true
+       },
+       {
+        "name": "notional",
+        "type": "DECIMAL(18,2)",
+        "logicalType": "DECIMAL",
+        "precision": 18,
+        "scale": 2,
+        "notNull": false
+       }
+      ]
+     }
+    ]
+   },
+   "exchanges": [
+    {
+     "op": "objects",
+     "args": {
+      "token": "tok1"
+     },
+     "call": {
+      "method": "GET",
+      "path": "/sql/v1/objects",
+      "headers": {
+       "Authorization": "Bearer tok1",
+       "Content-Type": "application/json"
+      },
+      "body": null
+     },
+     "answer": {
+      "status": 200,
+      "body": "[{\"catalog\":\"main\",\"databaseType\":\"DuckDB\",\"schema\":\"trading\",\"name\":\"trades\",\"kind\":\"table\",\"columns\":[{\"name\":\"desk\",\"type\":\"VARCHAR\",\"logicalType\":\"VARCHAR\",\"precision\":null,\"scale\":null,\"notNull\":true},{\"name\":\"notional\",\"type\":\"DECIMAL(18,2)\",\"logicalType\":\"DECIMAL\",\"precision\":18,\"scale\":2,\"notNull\":false}]}]"
+     },
+     "read": [
+      {
+       "catalog": "main",
+       "databaseType": "DuckDB",
+       "schema": "trading",
+       "name": "trades",
+       "kind": "table",
+       "columns": [
+        {
+         "name": "desk",
+         "type": "VARCHAR",
+         "logicalType": "VARCHAR",
+         "precision": null,
+         "scale": null,
+         "notNull": true
+        },
+        {
+         "name": "notional",
+         "type": "DECIMAL(18,2)",
+         "logicalType": "DECIMAL",
+         "precision": 18,
+         "scale": 2,
+         "notNull": false
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "a statement polled, its two Arrow chunks read, then closed",
+   "action": {
+    "kind": "run",
+    "token": "tok1",
+    "sql": "SELECT desk FROM trading.trades",
+    "catalog": "main"
+   },
+   "outcome": {
+    "chunks": [
+     "/////3AAAAAQAAAAAAAKAAwABgAFAAgACgAAAAABBAAMAAAACAAIAAAABAAIAAAABAAAAAEAAAAUAAAAEAAUAAgABgAHAAwAAAAQABAAAAAAAAEFEAAAABwAAAAEAAAAAAAAAAQAAABkZXNrAAAAAAQABAAEAAAA/////5gAAAAUAAAAAAAAAAwAFgAGAAUACAAMAAwAAAAAAwQAGAAAABgAAAAAAAAAAAAKABgADAAEAAgACgAAAEwAAAAQAAAAAgAAAAAAAAAAAAAAAwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAwAAAAAAAAAEAAAAAAAAAAEAAAAAAAAAAAAAAABAAAAAgAAAAAAAAAAAAAAAAAAAAAAAAACAAAABAAAAAAAAABGWEVRAAAAAP////8AAAAA",
+     "/////3AAAAAQAAAAAAAKAAwABgAFAAgACgAAAAABBAAMAAAACAAIAAAABAAIAAAABAAAAAEAAAAUAAAAEAAUAAgABgAHAAwAAAAQABAAAAAAAAEFEAAAABwAAAAEAAAAAAAAAAQAAABkZXNrAAAAAAQABAAEAAAA/////5gAAAAUAAAAAAAAAAwAFgAGAAUACAAMAAwAAAAAAwQAGAAAABAAAAAAAAAAAAAKABgADAAEAAgACgAAAEwAAAAQAAAAAQAAAAAAAAAAAAAAAwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgAAAAAAAAACAAAAAAAAAAFAAAAAAAAAAAAAAABAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAFAAAAUkFURVMAAAD/////AAAAAA=="
+    ],
+    "statementId": "s1",
+    "rowCount": 3
+   },
+   "exchanges": [
+    {
+     "op": "submit",
+     "args": {
+      "sql": "SELECT desk FROM trading.trades",
+      "catalog": "main",
+      "token": "tok1"
+     },
+     "call": {
+      "method": "POST",
+      "path": "/sql/v1/statements",
+      "headers": {
+       "Authorization": "Bearer tok1",
+       "Content-Type": "application/json"
+      },
+      "body": "{\"sql\":\"SELECT desk FROM trading.trades\",\"catalog\":\"main\",\"timeoutMs\":300000,\"waitMs\":10000,\"rowsPerChunk\":100000,\"resultFormat\":\"arrow\"}"
+     },
+     "answer": {
+      "status": 202,
+      "body": "{\"statementId\":\"s1\",\"state\":\"queued\"}"
+     },
+     "read": {
+      "step": "poll",
+      "statementId": "s1"
+     }
+    },
+    {
+     "op": "poll",
+     "args": {
+      "statementId": "s1",
+      "token": "tok1"
+     },
+     "call": {
+      "method": "GET",
+      "path": "/sql/v1/statements/s1?waitMs=10000",
+      "headers": {
+       "Authorization": "Bearer tok1",
+       "Content-Type": "application/json"
+      },
+      "body": null
+     },
+     "answer": {
+      "status": 202,
+      "body": "{\"statementId\":\"s1\",\"state\":\"running\"}"
+     },
+     "read": {
+      "step": "poll",
+      "statementId": "s1"
+     }
+    },
+    {
+     "op": "poll",
+     "args": {
+      "statementId": "s1",
+      "token": "tok1"
+     },
+     "call": {
+      "method": "GET",
+      "path": "/sql/v1/statements/s1?waitMs=10000",
+      "headers": {
+       "Authorization": "Bearer tok1",
+       "Content-Type": "application/json"
+      },
+      "body": null
+     },
+     "answer": {
+      "status": 200,
+      "body": "{\"statementId\":\"s1\",\"state\":\"succeeded\",\"result\":{\"columns\":[{\"name\":\"desk\",\"type\":\"VARCHAR\",\"nullable\":true}],\"rowCount\":3,\"chunkCount\":2}}"
+     },
+     "read": {
+      "step": "done",
+      "statementId": "s1",
+      "rowCount": 3,
+      "chunkCount": 2
+     }
+    },
+    {
+     "op": "fetchChunk",
+     "args": {
+      "statementId": "s1",
+      "index": 0,
+      "token": "tok1"
+     },
+     "call": {
+      "method": "GET",
+      "path": "/sql/v1/statements/s1/chunks/0",
+      "headers": {
+       "Authorization": "Bearer tok1",
+       "Content-Type": "application/json"
+      },
+      "body": null
+     },
+     "answer": {
+      "status": 200,
+      "bodyBase64": "/////3AAAAAQAAAAAAAKAAwABgAFAAgACgAAAAABBAAMAAAACAAIAAAABAAIAAAABAAAAAEAAAAUAAAAEAAUAAgABgAHAAwAAAAQABAAAAAAAAEFEAAAABwAAAAEAAAAAAAAAAQAAABkZXNrAAAAAAQABAAEAAAA/////5gAAAAUAAAAAAAAAAwAFgAGAAUACAAMAAwAAAAAAwQAGAAAABgAAAAAAAAAAAAKABgADAAEAAgACgAAAEwAAAAQAAAAAgAAAAAAAAAAAAAAAwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAwAAAAAAAAAEAAAAAAAAAAEAAAAAAAAAAAAAAABAAAAAgAAAAAAAAAAAAAAAAAAAAAAAAACAAAABAAAAAAAAABGWEVRAAAAAP////8AAAAA"
+     },
+     "read": {}
+    },
+    {
+     "op": "fetchChunk",
+     "args": {
+      "statementId": "s1",
+      "index": 1,
+      "token": "tok1"
+     },
+     "call": {
+      "method": "GET",
+      "path": "/sql/v1/statements/s1/chunks/1",
+      "headers": {
+       "Authorization": "Bearer tok1",
+       "Content-Type": "application/json"
+      },
+      "body": null
+     },
+     "answer": {
+      "status": 200,
+      "bodyBase64": "/////3AAAAAQAAAAAAAKAAwABgAFAAgACgAAAAABBAAMAAAACAAIAAAABAAIAAAABAAAAAEAAAAUAAAAEAAUAAgABgAHAAwAAAAQABAAAAAAAAEFEAAAABwAAAAEAAAAAAAAAAQAAABkZXNrAAAAAAQABAAEAAAA/////5gAAAAUAAAAAAAAAAwAFgAGAAUACAAMAAwAAAAAAwQAGAAAABAAAAAAAAAAAAAKABgADAAEAAgACgAAAEwAAAAQAAAAAQAAAAAAAAAAAAAAAwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgAAAAAAAAACAAAAAAAAAAFAAAAAAAAAAAAAAABAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAFAAAAUkFURVMAAAD/////AAAAAA=="
+     },
+     "read": {}
+    },
+    {
+     "op": "closeStatement",
+     "args": {
+      "statementId": "s1",
+      "token": "tok1"
+     },
+     "call": {
+      "method": "DELETE",
+      "path": "/sql/v1/statements/s1",
+      "headers": {
+       "Authorization": "Bearer tok1",
+       "Content-Type": "application/json"
+      },
+      "body": null
+     },
+     "answer": {
+      "status": 200,
+      "body": "{\"statementId\":\"s1\",\"closed\":true}"
+     },
+     "read": {}
+    }
+   ]
+  },
+  {
+   "name": "a statement the database refused",
+   "action": {
+    "kind": "run",
+    "token": "tok1",
+    "sql": "SELECT desk FROM trading.trades",
+    "catalog": "main"
+   },
+   "outcome": {
+    "failed": "SQL_EXECUTE: Catalog Error: Table with name trades does not exist!"
+   },
+   "exchanges": [
+    {
+     "op": "submit",
+     "args": {
+      "sql": "SELECT desk FROM trading.trades",
+      "catalog": "main",
+      "token": "tok1"
+     },
+     "call": {
+      "method": "POST",
+      "path": "/sql/v1/statements",
+      "headers": {
+       "Authorization": "Bearer tok1",
+       "Content-Type": "application/json"
+      },
+      "body": "{\"sql\":\"SELECT desk FROM trading.trades\",\"catalog\":\"main\",\"timeoutMs\":300000,\"waitMs\":10000,\"rowsPerChunk\":100000,\"resultFormat\":\"arrow\"}"
+     },
+     "answer": {
+      "status": 200,
+      "body": "{\"statementId\":\"s2\",\"state\":\"failed\",\"error\":{\"code\":\"SQL_EXECUTE\",\"message\":\"Catalog Error: Table with name trades does not exist!\"}}"
+     },
+     "read": {
+      "step": "failed",
+      "statementId": "s2",
+      "error": {
+       "code": "SQL_EXECUTE",
+       "message": "Catalog Error: Table with name trades does not exist!"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "the token expired while a statement ran",
+   "action": {
+    "kind": "run",
+    "token": "tok1",
+    "sql": "SELECT desk FROM trading.trades",
+    "catalog": "main"
+   },
+   "outcome": {
+    "expired": true
+   },
+   "exchanges": [
+    {
+     "op": "submit",
+     "args": {
+      "sql": "SELECT desk FROM trading.trades",
+      "catalog": "main",
+      "token": "tok1"
+     },
+     "call": {
+      "method": "POST",
+      "path": "/sql/v1/statements",
+      "headers": {
+       "Authorization": "Bearer tok1",
+       "Content-Type": "application/json"
+      },
+      "body": "{\"sql\":\"SELECT desk FROM trading.trades\",\"catalog\":\"main\",\"timeoutMs\":300000,\"waitMs\":10000,\"rowsPerChunk\":100000,\"resultFormat\":\"arrow\"}"
+     },
+     "answer": {
+      "status": 202,
+      "body": "{\"statementId\":\"s3\",\"state\":\"running\"}"
+     },
+     "read": {
+      "step": "poll",
+      "statementId": "s3"
+     }
+    },
+    {
+     "op": "poll",
+     "args": {
+      "statementId": "s3",
+      "token": "tok1"
+     },
+     "call": {
+      "method": "GET",
+      "path": "/sql/v1/statements/s3?waitMs=10000",
+      "headers": {
+       "Authorization": "Bearer tok1",
+       "Content-Type": "application/json"
+      },
+      "body": null
+     },
+     "answer": {
+      "status": 401,
+      "body": "{\"error\":{\"code\":\"AUTH_INVALID\",\"message\":\"the token is invalid or expired\"}}"
+     },
+     "read": {
+      "error": {
+       "code": "AUTH_INVALID",
+       "message": "the token is invalid or expired"
+      },
+      "expired": true
+     }
+    },
+    {
+     "op": "cancel",
+     "args": {
+      "statementId": "s3",
+      "token": "tok1"
+     },
+     "call": {
+      "method": "POST",
+      "path": "/sql/v1/statements/s3/cancel",
+      "headers": {
+       "Authorization": "Bearer tok1",
+       "Content-Type": "application/json"
+      },
+      "body": null
+     },
+     "answer": {
+      "status": 401,
+      "body": "{\"error\":{\"code\":\"AUTH_INVALID\",\"message\":\"the token is invalid or expired\"}}"
+     },
+     "read": {
+      "error": {
+       "code": "AUTH_INVALID",
+       "message": "the token is invalid or expired"
+      },
+      "expired": true
+     }
+    }
+   ]
+  },
+  {
+   "name": "the token refreshed, and the next call carries the new one",
+   "action": {
+    "kind": "refreshThenCheck",
+    "token": "tok1"
+   },
+   "outcome": {
+    "principal": "rita",
+    "token": "tok9",
+    "said": "Not on the warehouse's record for rita: no statement s1 in its last 0."
+   },
+   "exchanges": [
+    {
+     "op": "refresh",
+     "args": {
+      "token": "tok1"
+     },
+     "call": {
+      "method": "POST",
+      "path": "/sql/v1/token/refresh",
+      "headers": {
+       "Authorization": "Bearer tok1"
+      },
+      "body": null
+     },
+     "answer": {
+      "status": 200,
+      "body": "{\"token\":\"tok9\",\"expiresAt\":\"2026-10-13T12:00:00Z\",\"principal\":\"rita\"}"
+     },
+     "read": {
+      "token": "tok9",
+      "expiresAt": "2026-10-13T12:00:00Z",
+      "principal": "rita"
+     }
+    },
+    {
+     "op": "history",
+     "args": {
+      "limit": 1000,
+      "token": "tok9"
+     },
+     "call": {
+      "method": "GET",
+      "path": "/sql/v1/history?limit=1000",
+      "headers": {
+       "Authorization": "Bearer tok9",
+       "Content-Type": "application/json"
+      },
+      "body": null
+     },
+     "answer": {
+      "status": 200,
+      "body": "[]"
+     },
+     "read": []
+    }
+   ]
+  },
+  {
+   "name": "the history",
+   "action": {
+    "kind": "history",
+    "token": "tok1",
+    "limit": 1000
+   },
+   "outcome": {
+    "history": [
+     {
+      "statementId": "s1",
+      "state": "succeeded",
+      "submittedAt": "2026-10-13T10:00:00.000000Z",
+      "finishedAt": "2026-10-13T10:00:01.000000Z",
+      "rowCount": 3
+     }
+    ]
+   },
+   "exchanges": [
+    {
+     "op": "history",
+     "args": {
+      "limit": 1000,
+      "token": "tok1"
+     },
+     "call": {
+      "method": "GET",
+      "path": "/sql/v1/history?limit=1000",
+      "headers": {
+       "Authorization": "Bearer tok1",
+       "Content-Type": "application/json"
+      },
+      "body": null
+     },
+     "answer": {
+      "status": 200,
+      "body": "[{\"statementId\":\"s1\",\"catalog\":\"main\",\"sql\":\"SELECT 1\",\"state\":\"succeeded\",\"submittedAt\":\"2026-10-13T10:00:00.000000Z\",\"finishedAt\":\"2026-10-13T10:00:01.000000Z\",\"rowCount\":\"3\"}]"
+     },
+     "read": [
+      {
+       "statementId": "s1",
+       "state": "succeeded",
+       "submittedAt": "2026-10-13T10:00:00.000000Z",
+       "finishedAt": "2026-10-13T10:00:01.000000Z",
+       "rowCount": 3
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "a statement with nothing to read, closed",
+   "action": {
+    "kind": "run",
+    "token": "tok1",
+    "sql": "SELECT desk FROM trading.trades",
+    "catalog": "main"
+   },
+   "outcome": {
+    "chunks": [],
+    "statementId": "s5",
+    "rowCount": 0
+   },
+   "exchanges": [
+    {
+     "op": "submit",
+     "args": {
+      "sql": "SELECT desk FROM trading.trades",
+      "catalog": "main",
+      "token": "tok1"
+     },
+     "call": {
+      "method": "POST",
+      "path": "/sql/v1/statements",
+      "headers": {
+       "Authorization": "Bearer tok1",
+       "Content-Type": "application/json"
+      },
+      "body": "{\"sql\":\"SELECT desk FROM trading.trades\",\"catalog\":\"main\",\"timeoutMs\":300000,\"waitMs\":10000,\"rowsPerChunk\":100000,\"resultFormat\":\"arrow\"}"
+     },
+     "answer": {
+      "status": 200,
+      "body": "{\"statementId\":\"s5\",\"state\":\"succeeded\",\"result\":{\"columns\":[],\"rowCount\":0,\"chunkCount\":0}}"
+     },
+     "read": {
+      "step": "done",
+      "statementId": "s5",
+      "rowCount": 0,
+      "chunkCount": 0
+     }
+    },
+    {
+     "op": "closeStatement",
+     "args": {
+      "statementId": "s5",
+      "token": "tok1"
+     },
+     "call": {
+      "method": "DELETE",
+      "path": "/sql/v1/statements/s5",
+      "headers": {
+       "Authorization": "Bearer tok1",
+       "Content-Type": "application/json"
+      },
+      "body": null
+     },
+     "answer": {
+      "status": 200,
+      "body": "{\"statementId\":\"s5\",\"closed\":true}"
+     },
+     "read": {}
+    }
+   ]
+  },
+  {
+   "name": "a proxy's page in place of a poll's answer",
+   "action": {
+    "kind": "run",
+    "token": "tok1",
+    "sql": "SELECT desk FROM trading.trades",
+    "catalog": "main"
+   },
+   "outcome": {
+    "failed": "INTERNAL: HTTP 502: <html><body>Bad Gateway</body></html>"
+   },
+   "exchanges": [
+    {
+     "op": "submit",
+     "args": {
+      "sql": "SELECT desk FROM trading.trades",
+      "catalog": "main",
+      "token": "tok1"
+     },
+     "call": {
+      "method": "POST",
+      "path": "/sql/v1/statements",
+      "headers": {
+       "Authorization": "Bearer tok1",
+       "Content-Type": "application/json"
+      },
+      "body": "{\"sql\":\"SELECT desk FROM trading.trades\",\"catalog\":\"main\",\"timeoutMs\":300000,\"waitMs\":10000,\"rowsPerChunk\":100000,\"resultFormat\":\"arrow\"}"
+     },
+     "answer": {
+      "status": 202,
+      "body": "{\"statementId\":\"s6\",\"state\":\"queued\"}"
+     },
+     "read": {
+      "step": "poll",
+      "statementId": "s6"
+     }
+    },
+    {
+     "op": "poll",
+     "args": {
+      "statementId": "s6",
+      "token": "tok1"
+     },
+     "call": {
+      "method": "GET",
+      "path": "/sql/v1/statements/s6?waitMs=10000",
+      "headers": {
+       "Authorization": "Bearer tok1",
+       "Content-Type": "application/json"
+      },
+      "body": null
+     },
+     "answer": {
+      "status": 502,
+      "body": "<html><body>Bad Gateway</body></html>"
+     },
+     "read": {
+      "step": "failed",
+      "error": {
+       "code": "INTERNAL",
+       "message": "HTTP 502: <html><body>Bad Gateway</body></html>"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "a chunk refused, the result closed",
+   "action": {
+    "kind": "run",
+    "token": "tok1",
+    "sql": "SELECT desk FROM trading.trades",
+    "catalog": "main"
+   },
+   "outcome": {
+    "failed": "NOT_FOUND: the result of s7 expired"
+   },
+   "exchanges": [
+    {
+     "op": "submit",
+     "args": {
+      "sql": "SELECT desk FROM trading.trades",
+      "catalog": "main",
+      "token": "tok1"
+     },
+     "call": {
+      "method": "POST",
+      "path": "/sql/v1/statements",
+      "headers": {
+       "Authorization": "Bearer tok1",
+       "Content-Type": "application/json"
+      },
+      "body": "{\"sql\":\"SELECT desk FROM trading.trades\",\"catalog\":\"main\",\"timeoutMs\":300000,\"waitMs\":10000,\"rowsPerChunk\":100000,\"resultFormat\":\"arrow\"}"
+     },
+     "answer": {
+      "status": 200,
+      "body": "{\"statementId\":\"s7\",\"state\":\"succeeded\",\"result\":{\"columns\":[{\"name\":\"desk\",\"type\":\"VARCHAR\",\"nullable\":true}],\"rowCount\":3,\"chunkCount\":1}}"
+     },
+     "read": {
+      "step": "done",
+      "statementId": "s7",
+      "rowCount": 3,
+      "chunkCount": 1
+     }
+    },
+    {
+     "op": "fetchChunk",
+     "args": {
+      "statementId": "s7",
+      "index": 0,
+      "token": "tok1"
+     },
+     "call": {
+      "method": "GET",
+      "path": "/sql/v1/statements/s7/chunks/0",
+      "headers": {
+       "Authorization": "Bearer tok1",
+       "Content-Type": "application/json"
+      },
+      "body": null
+     },
+     "answer": {
+      "status": 404,
+      "body": "{\"error\":{\"code\":\"NOT_FOUND\",\"message\":\"the result of s7 expired\"}}"
+     },
+     "read": {
+      "error": {
+       "code": "NOT_FOUND",
+       "message": "the result of s7 expired"
+      }
+     }
+    },
+    {
+     "op": "closeStatement",
+     "args": {
+      "statementId": "s7",
+      "token": "tok1"
+     },
+     "call": {
+      "method": "DELETE",
+      "path": "/sql/v1/statements/s7",
+      "headers": {
+       "Authorization": "Bearer tok1",
+       "Content-Type": "application/json"
+      },
+      "body": null
+     },
+     "answer": {
+      "status": 404,
+      "body": "{\"error\":{\"code\":\"NOT_FOUND\",\"message\":\"no statement s7\"}}"
+     },
+     "read": {
+      "error": {
+       "code": "NOT_FOUND",
+       "message": "no statement s7"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "a read that stops after its first chunk, the result closed",
+   "action": {
+    "kind": "firstChunk",
+    "token": "tok1",
+    "sql": "SELECT desk FROM trading.trades",
+    "catalog": "main"
+   },
+   "outcome": {
+    "chunks": [
+     "/////3AAAAAQAAAAAAAKAAwABgAFAAgACgAAAAABBAAMAAAACAAIAAAABAAIAAAABAAAAAEAAAAUAAAAEAAUAAgABgAHAAwAAAAQABAAAAAAAAEFEAAAABwAAAAEAAAAAAAAAAQAAABkZXNrAAAAAAQABAAEAAAA/////5gAAAAUAAAAAAAAAAwAFgAGAAUACAAMAAwAAAAAAwQAGAAAABgAAAAAAAAAAAAKABgADAAEAAgACgAAAEwAAAAQAAAAAgAAAAAAAAAAAAAAAwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAwAAAAAAAAAEAAAAAAAAAAEAAAAAAAAAAAAAAABAAAAAgAAAAAAAAAAAAAAAAAAAAAAAAACAAAABAAAAAAAAABGWEVRAAAAAP////8AAAAA"
+    ]
+   },
+   "exchanges": [
+    {
+     "op": "submit",
+     "args": {
+      "sql": "SELECT desk FROM trading.trades",
+      "catalog": "main",
+      "token": "tok1"
+     },
+     "call": {
+      "method": "POST",
+      "path": "/sql/v1/statements",
+      "headers": {
+       "Authorization": "Bearer tok1",
+       "Content-Type": "application/json"
+      },
+      "body": "{\"sql\":\"SELECT desk FROM trading.trades\",\"catalog\":\"main\",\"timeoutMs\":300000,\"waitMs\":10000,\"rowsPerChunk\":100000,\"resultFormat\":\"arrow\"}"
+     },
+     "answer": {
+      "status": 200,
+      "body": "{\"statementId\":\"s8\",\"state\":\"succeeded\",\"result\":{\"columns\":[{\"name\":\"desk\",\"type\":\"VARCHAR\",\"nullable\":true}],\"rowCount\":3,\"chunkCount\":2}}"
+     },
+     "read": {
+      "step": "done",
+      "statementId": "s8",
+      "rowCount": 3,
+      "chunkCount": 2
+     }
+    },
+    {
+     "op": "fetchChunk",
+     "args": {
+      "statementId": "s8",
+      "index": 0,
+      "token": "tok1"
+     },
+     "call": {
+      "method": "GET",
+      "path": "/sql/v1/statements/s8/chunks/0",
+      "headers": {
+       "Authorization": "Bearer tok1",
+       "Content-Type": "application/json"
+      },
+      "body": null
+     },
+     "answer": {
+      "status": 200,
+      "bodyBase64": "/////3AAAAAQAAAAAAAKAAwABgAFAAgACgAAAAABBAAMAAAACAAIAAAABAAIAAAABAAAAAEAAAAUAAAAEAAUAAgABgAHAAwAAAAQABAAAAAAAAEFEAAAABwAAAAEAAAAAAAAAAQAAABkZXNrAAAAAAQABAAEAAAA/////5gAAAAUAAAAAAAAAAwAFgAGAAUACAAMAAwAAAAAAwQAGAAAABgAAAAAAAAAAAAKABgADAAEAAgACgAAAEwAAAAQAAAAAgAAAAAAAAAAAAAAAwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAwAAAAAAAAAEAAAAAAAAAAEAAAAAAAAAAAAAAABAAAAAgAAAAAAAAAAAAAAAAAAAAAAAAACAAAABAAAAAAAAABGWEVRAAAAAP////8AAAAA"
+     },
+     "read": {}
+    },
+    {
+     "op": "closeStatement",
+     "args": {
+      "statementId": "s8",
+      "token": "tok1"
+     },
+     "call": {
+      "method": "DELETE",
+      "path": "/sql/v1/statements/s8",
+      "headers": {
+       "Authorization": "Bearer tok1",
+       "Content-Type": "application/json"
+      },
+      "body": null
+     },
+     "answer": {
+      "status": 200,
+      "body": "{\"statementId\":\"s8\",\"closed\":true}"
+     },
+     "read": {}
+    }
+   ]
+  }
+ ]
+}

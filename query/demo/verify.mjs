@@ -465,11 +465,67 @@ async function suite(title, query, signedIn = false) {
   await context.close();
 }
 
+/** A saved query as an older version of the app kept it in this origin's IndexedDB (query-store/src/records.ts). */
+function keptBy(layout) {
+  const q = {
+    id: `kept-${layout}`, name: `Kept by layout ${layout}`, description: null, groupId: 'demo', artifactId: 'trading',
+    versionId: '0.0.0', originalVersionId: null,
+    executionContext: { _type: 'explicitExecutionContext', mapping: 'demo::trading::TradingMapping', runtime: 'demo::trading::Runtime' },
+    content: '|demo::trading::Trade.all()->project(~[id: x|$x.tradeId])', lastUpdatedAt: 1, createdAt: 1, lastOpenAt: 1,
+    version: 1, taggedValues: [], stereotypes: [], defaultParameterValues: [], owner: 'me', gridConfig: null,
+  };
+  // 1 wrapped each version; 2 kept it as an object
+  return layout === 1 ? [{ query: q, validUntil: null, deletedAt: null }] : [{ ...q, deletedAt: null, validUntil: null }];
+}
+
+/**
+ * The saved queries an older version of the app left in the browser (layouts 1 and 2): moved over when the app opens
+ * the store, then listed like any other -- and kept as the rules' JSON text from then on (layout 3).
+ */
+async function olderLayouts() {
+  console.log('\nThe saved queries an older version kept:');
+  for (const layout of [1, 2]) {
+    const context = await browser.newContext();
+    const page = await context.newPage();
+    const name = `layout ${layout}: listed, and kept as text`;
+    try {
+      // the database as that version left it, before the app opens it: any page of the origin will do
+      await page.goto(`${SITE_ORIGIN}/no-such-page`);
+      await page.evaluate(([version, versions]) => new Promise((ok, fail) => {
+        const open = indexedDB.open('legend-query', version);
+        open.onupgradeneeded = () => open.result.createObjectStore('queries').put(versions, versions[0].id ?? versions[0].query.id);
+        open.onsuccess = () => { open.result.close(); ok(); };
+        open.onerror = () => fail(open.error);
+      }), [layout, keptBy(layout)]);
+      await page.goto(`${PAGE}#/setup`);
+      await page.waitForSelector(`.q-list-row:has-text("Kept by layout ${layout}")`, { timeout: 60000 });
+      const kept = await page.evaluate((id) => new Promise((ok, fail) => {
+        const open = indexedDB.open('legend-query');
+        open.onsuccess = () => {
+          const get = open.result.transaction('queries').objectStore('queries').get(id);
+          get.onsuccess = () => { ok([open.result.version, typeof get.result]); open.result.close(); };
+          get.onerror = () => fail(get.error);
+        };
+        open.onerror = () => fail(open.error);
+      }), `kept-${layout}`);
+      assert.deepEqual(kept, [3, 'string']);
+      console.log(`  ✔ ${name}`);
+    } catch (e) {
+      failures++;
+      console.log(`  ✖ ${name}\n    ${String(e.message).split('\n').join('\n    ')}`);
+      await page.screenshot({ path: join(SHOTS, `older-layout-${layout}.png`) });
+    } finally {
+      await context.close();
+    }
+  }
+}
+
 try {
   await waitForEngine();
   browser = await chromium.launch();
   console.log('Query app, end to end');
   await suite('In the browser (DuckDB-WASM, no server)', '');
+  await olderLayouts();
   await suite("On legend-lite's server", '?config=config-server.json');
   await suite('On a warehouse (its DuckDB, signed in)', '?config=config-warehouse.json', true);
 } finally {

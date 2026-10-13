@@ -11,7 +11,7 @@
 import { openDataCube, type DataCubeApp } from '../src/app/datacube-app.ts';
 import type { Versions } from '../src/app/services.ts';
 import { browserBasics } from '../src/services/browser-basics.ts';
-import { askedOffers, pythonServices, type PythonLink, type PythonShows } from '../src/services/python-host.ts';
+import { askedOffers, askedSettings, pythonServices, type PythonLink, type PythonShows } from '../src/services/python-host.ts';
 import { BASE, type WidgetModel } from './widget-loader.ts';
 
 const px = (model: WidgetModel): string => `${Number(model.get('height')) || 480}px`;
@@ -62,13 +62,16 @@ export function render(model: WidgetModel, el: HTMLElement, fetch: typeof global
   status.textContent = 'asking Python…';
   const settled = { show: (_reason: string): void => {} };
   const link: PythonLink = { baseUrl: BASE, fetch };
-  // what Python's host offers beside its frames, asked once (services.json), then the app over its services
-  askedOffers(link).then((offers) => {
+  // what Python's host offers beside its frames, and the page's settings as Python keeps them (none read, they start
+  // afresh), asked once (services.json, settings.json), then the app over its services
+  Promise.all([askedOffers(link), askedSettings(link).catch(() => undefined)]).then(([offers, settings]) => {
     // where it plans, in its one word (the status bar's readout)
     status.textContent = offers.plane.word;
     return openDataCube({
       // a notebook's cell is no tab of its own: no title to set, and no address another person could open
-      services: pythonServices({ link, shows, offers, watch: watched(model, shows), browser: browserBasics }),
+      services: pythonServices({
+        link, shows, offers, ...(settings ? { settings } : {}), watch: watched(model, shows), browser: browserBasics,
+      }),
       host,
       status,
       windows: el,

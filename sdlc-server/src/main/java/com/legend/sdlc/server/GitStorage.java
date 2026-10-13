@@ -31,10 +31,15 @@ import java.util.zip.Inflater;
  *   <li>{@code project/<id>} → {@code legend/projects/<id>.json} (the SDLC's own record of a project,
  *       beside git's files).</li>
  * </ul>
- * A bare repository: {@code <dir>/HEAD}, {@code objects/}, {@code refs/}. One writer (the server
- * serializes calls); each file written to a temporary name, then moved into place.
+ * A bare repository: {@code <dir>/HEAD}, {@code objects/}, {@code refs/}. One writer at a time: every call of the rules
+ * on it is made {@link #locked} -- the repository's own lock, which every process that opens it takes (the model home's
+ * server, Python's native library) -- and each file is written to a temporary name, then moved into place.
  */
 public final class GitStorage implements Storage {
+    /** Each repository's lock in this process, by its real path: a host's threads, one at a time. */
+    private static final java.util.concurrent.ConcurrentHashMap<Path, java.util.concurrent.locks.ReentrantLock> HELD =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
     private final Path dir;
 
     public GitStorage(Path dir) {
@@ -50,6 +55,41 @@ public final class GitStorage implements Storage {
             }
         } catch (IOException e) {
             throw new UncheckedIOException(e);
+        }
+    }
+
+    /**
+     * THE REPOSITORY'S LOCK (docs/ONE_PLATFORM_PROGRAM_2026_10_12.md G11): {@code call} -- one call of the rules -- made
+     * while no other call is made on this repository, by this process's threads (a lock per repository) or by any
+     * other process that opens it (an exclusive lock on {@code <dir>/legend/lock}, the operating system's, so a process
+     * that ends lets go). A call made inside one is made under the same hold.
+     */
+    public <T> T locked(java.util.function.Supplier<T> call) {
+        java.util.concurrent.locks.ReentrantLock mine =
+                HELD.computeIfAbsent(real(), d -> new java.util.concurrent.locks.ReentrantLock());
+        mine.lock();
+        try {
+            if (mine.getHoldCount() > 1) {
+                return call.get();
+            }
+            try (java.nio.channels.FileChannel channel = java.nio.channels.FileChannel.open(dir.resolve("legend/lock"),
+                    java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.WRITE);
+                    java.nio.channels.FileLock held = channel.lock()) {
+                return call.get();
+            } catch (IOException e) {
+                throw new UncheckedIOException(e);
+            }
+        } finally {
+            mine.unlock();
+        }
+    }
+
+    /** This repository's directory as the file system names it, so two spellings of it share one lock. */
+    private Path real() {
+        try {
+            return dir.toRealPath();
+        } catch (IOException e) {
+            return dir.toAbsolutePath().normalize();
         }
     }
 

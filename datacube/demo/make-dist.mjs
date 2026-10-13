@@ -8,8 +8,14 @@
 // product. That is the whole point of the in-browser planner -- it is
 // not a convenience for the demo, it is what removes the server.
 
-import { cp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { cp as copyEntry, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
+
+// Every file copied as itself, never as the link it is in the build's tree: Bazel's inputs are links into its own
+// output tree, and a folder of links is not a folder you can host -- nor one Bazel can read again when what they point
+// at is not on disk (CI, 2026-10-13: "Inconsistent filesystem operations" on dist/vendor/duckdb-extensions, its
+// target a cache hit never downloaded).
+const cp = (from, to, options = {}) => copyEntry(from, to, { ...options, dereference: true });
 
 // A BUILD ACTION (datacube/BUILD.bazel, dist): Bazel builds the bundles
 // and runtimes into <site-root>/demo, and names the directory to fill.
@@ -33,6 +39,13 @@ for (const f of ['classes.wasm', 'wasm-gc-module-runtime.js',
   'duckdb-eh.wasm', 'duckdb-mvp.wasm',
   'duckdb-browser-eh.worker.js', 'duckdb-browser-mvp.worker.js']) {
   await cp(v(f), join(DIST, 'vendor', f));
+}
+// the page's other modules, each fetched the first time the page asks for it: the saved stores' rules (vendor/queries,
+// the program's B5 and B6), the in-page SDLC (vendor/sdlc), the warehouse's API (vendor/warehouse, C3: the
+// single-user app signs in through it), and DuckDB's extensions (vendor/duckdb-extensions: ICU for the session's time
+// zone; JSON, Parquet and httpfs when a page reads such a file)
+for (const d of ['queries', 'sdlc', 'warehouse', 'duckdb-extensions']) {
+  await cp(v(d), join(DIST, 'vendor', d), { recursive: true });
 }
 // the pages' type: fonts.css and the files it names (vendor/fonts, Roboto from //legend-art:fonts), served with the site
 await cp(join(ROOT, 'demo', 'fonts.css'), join(DIST, 'fonts.css'));

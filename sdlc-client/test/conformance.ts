@@ -161,10 +161,12 @@ export function conformance(name: string, target: () => Target): void {
 
     it('saves text: one element per file, comments kept, the new revision answered', async () => {
       const base = await client().revision({ project: p, workspace: 'w1' });
-      saved = await client().performPureChanges(p, 'w1', {
+      const made = await client().performPureChanges(p, 'w1', {
         message: 'add the party', revisionId: base.id,
         changes: [create('demo::party::Person', PERSON), create('demo::party::Address', ADDRESS), create('demo::types::Country', COUNTRY)],
       });
+      assert.ok(made, 'a save that changes something answers its revision');
+      saved = made;
       assert.deepEqual(Object.keys(saved), REVISION_FIELDS);
       assert.equal(saved.message, 'add the party');
       assert.equal(saved.authorName, target().user);
@@ -273,6 +275,9 @@ export function conformance(name: string, target: () => Target): void {
       assert.equal(same.status, 204, same.text);
       const none = await raw('POST', `/projects/${P}/workspaces/w1/pureChanges`, { message: 'none', changes: [] });
       assert.equal(none.status, 204, none.text);
+      // and the client says it so: no revision, never a body read that is not there
+      assert.equal(await client().performPureChanges(p, 'w1', { message: 'same, through the client',
+        changes: [{ type: 'MODIFY', path: 'demo::party::Person', pureCode: PERSON }] }), undefined);
       assert.deepEqual(await client().revision({ project: p, workspace: 'w1' }), saved);
     });
 
@@ -282,6 +287,7 @@ export function conformance(name: string, target: () => Target): void {
       assert.equal((await client().pureFile({ project: p, workspace: 'w1' }, 'demo::party::Person')).pureCode, edited);
       const props = (await client().entity({ project: p, workspace: 'w1' }, 'demo::party::Person')).content['properties'] as { name: string }[];
       assert.deepEqual(props.map((x) => x.name), ['name', 'age', 'email']);
+      assert.ok(modified);
       await client().performPureChanges(p, 'w1', { message: 'drop', revisionId: modified.id, changes: [{ type: 'DELETE', path: 'demo::party::Address' }] });
       assert.deepEqual((await client().pure({ project: p, workspace: 'w1' })).map((f) => f.path), ['demo::party::Person', 'demo::types::Country']);
       // the history keeps what was
@@ -308,6 +314,7 @@ export function conformance(name: string, target: () => Target): void {
       await loopProject();
       await client().createWorkspace(P2, 'feature');
       const saved = await client().performPureChanges(P2, 'feature', { message: 'add types', changes: [create('demo::types::Country', COUNTRY)] });
+      assert.ok(saved);
       await refused('POST', `/projects/${E2}/reviews`, '', 400, 'Input required to create review');
       await refused('POST', `/projects/${E2}/reviews`, { workspaceId: 'feature', workspaceType: 'USER', description: '' }, 400, 'title may not be null');
       await refused('POST', `/projects/${E2}/reviews`, { workspaceId: 'nope', workspaceType: 'USER', title: 't', description: '' }, 404,

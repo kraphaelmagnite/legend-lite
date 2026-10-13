@@ -24,19 +24,22 @@ import { runfileFromEnv, runfileNamed } from '../../tools/js/runfiles.mts';
 // the trading project as the site serves it (BUILD.bazel `:projects`, from query/demo/models)
 const MODELS = runfileFromEnv('TRADING_PROJECT');
 const record = (name: string): Query => JSON.parse(readFileSync(runfileNamed('SAVED_QUERIES', `${name}.json`), 'utf8')) as Query;
-const MODEL = readFileSync(`${MODELS}/trading.pure`, 'utf8') + '\n' + readFileSync(`${MODELS}/runtime-duckdb.pure`, 'utf8');
+const MODEL = ['trading.pure', 'runtime-duckdb.pure', 'trading-data.pure']
+  .map((f) => readFileSync(`${MODELS}/${f}`, 'utf8')).join('\n');
 
 let engine: DuckDbEngine;
 let elements: ModelElement[];
+/** The project's own database, which the queries here run in. */
+let projectDb: string;
 const parser = plannerFor(MODEL, 'demo::trading::Runtime');
 
 before(async () => {
   const db = await openDatabase();
   engine = new DuckDbEngine(db.connection);
-  for (const line of readFileSync(`${MODELS}/trading-seed.sql`, 'utf8').split('\n')) {
-    const sql = line.trim();
-    if (sql && !sql.startsWith('--')) await engine.run(sql, 0);
-  }
+  // the project's rows, its Data element's, in a database of its own as the page makes it (C5, project-data.ts)
+  const project = await parser.projectData(MODEL, engine.databaseType);
+  projectDb = project.name;
+  for (const sql of [...project.open, ...project.use, ...project.fill]) await engine.run(sql, 0);
   elements = await parser.modelElements(MODEL) as ModelElement[];
 });
 
@@ -76,7 +79,9 @@ describe('a saved query as a source: each fixture, as the README says it runs', 
 
   it('a data space context: its Production context, 5 rows, the enumeration read as its name', async () => {
     const q = record('data-space-context');
-    assert.deepEqual(contextOf(q, elements), { mapping: 'demo::trading::TradingMapping', runtime: 'demo::trading::Runtime' });
+    // query-store's one reader (Query's too): the data space it came from beside the mapping and runtime
+    assert.deepEqual(contextOf(q, elements), { mapping: 'demo::trading::TradingMapping', runtime: 'demo::trading::Runtime',
+      dataSpace: { path: 'demo::trading::TradingDataSpace', context: 'Production' } });
     const { source, planner } = await opened(q);
     assert.deepEqual((await sourceColumns(planner, source)).map((c) => `${c.name}:${c.type}`),
       ['Trade Id:Integer', 'Side:String', 'Quantity:Integer']);
@@ -123,5 +128,52 @@ describe('enumerations as names: only the spec that makes the column', () => {
 
   it('a column no spec makes is refused by name', () => {
     assert.throws(() => enumsAsStrings(variable('src'), new Set(['Side'])), /'Side' is an enumeration/);
+  });
+});
+
+// The trading rows' three copies (TRADING_COPIES): the project's Data (trading-data.pure, which the tab fills), the
+// warehouse's fixture (trading-seed.sql, one statement per line) and the H2 connection's setup (runtime-h2.pure's
+// testDataSetupSqls, Pure strings). Nothing derives one from another, so this holds them equal.
+const COPIES = runfileFromEnv('TRADING_COPIES');
+const copy = (name: string): string => readFileSync(`${COPIES}/${name}`, 'utf8');
+const fixture = (): string[] => copy('trading-seed.sql').split('\n').map((l) => l.trim()).filter((l) => l !== '' && !l.startsWith('--'));
+const h2Setup = (): string[] => [...copy('runtime-h2.pure').matchAll(/^\s*'((?:[^'\\]|\\.)*)',?\s*$/gm)]
+  .map((m) => m[1]!.replace(/\\(.)/g, '$1'));
+
+describe("the trading rows: the project's Data, the warehouse's fixture and the H2 connection's, row for row", () => {
+  it('every table holds the same rows, NULLs included, with the same column types', async () => {
+    const others = { trading_fixture: fixture(), trading_h2: h2Setup() };
+    assert.ok(others.trading_h2.length >= 10, `the H2 connection's setup read as ${others.trading_h2.length} statements`);
+    try {
+      for (const [db, statements] of Object.entries(others)) {
+        await engine.run(`ATTACH ':memory:' AS ${db}`, 0);
+        await engine.run(`USE ${db}`, 0);
+        for (const sql of statements) await engine.run(sql, 0);
+      }
+    } finally {
+      await engine.run(`USE "${projectDb}"`, 0);
+    }
+    const values = async (sql: string): Promise<string[]> =>
+      (await engine.run(sql, 0)).columns.map((c) => c.values.map(String)).flatMap((v, i, all) => (i === 0 ? v.map((x, r) => [x, ...all.slice(1).map((o) => o[r])].join(' ')) : []));
+    const tables = (db: string): Promise<string[]> => values(
+      `SELECT table_name FROM duckdb_tables() WHERE database_name = '${db}' AND schema_name = 'TRADING' ORDER BY table_name`);
+    const types = (db: string, table: string): Promise<string[]> => values(`SELECT column_name, data_type FROM duckdb_columns()
+      WHERE database_name = '${db}' AND schema_name = 'TRADING' AND table_name = '${table}' ORDER BY column_index`);
+    const names = await tables(projectDb);
+    assert.deepEqual(names, ['FIRM', 'FIRM_RATING', 'PERSON', 'PRODUCT', 'PRODUCT_LIMIT', 'TRADE']);
+    for (const db of Object.keys(others)) {
+      assert.deepEqual(await tables(db), names, `${db}'s tables`);
+      for (const t of names) {
+        assert.deepEqual(await types(db, t), await types(projectDb, t), `${db}.TRADING.${t}'s columns`);
+        // every row both ways (EXCEPT ALL keeps duplicates; a set operation reads NULL as equal to NULL)
+        const [ours, theirs] = [`"${projectDb}".TRADING.${t}`, `${db}.TRADING.${t}`];
+        const differ = await values(`SELECT count(*) FROM ((SELECT * FROM ${ours} EXCEPT ALL SELECT * FROM ${theirs})
+          UNION ALL (SELECT * FROM ${theirs} EXCEPT ALL SELECT * FROM ${ours}))`);
+        assert.deepEqual(differ, ['0'], `${theirs} and the Data's ${t} differ`);
+      }
+    }
+    // an empty cell of the Data is NULL, as the fixture's NULL is (PERSON 5 has no title, 6 no age, 8 no firm)
+    assert.deepEqual(await values(`SELECT PERSON_ID FROM "${projectDb}".TRADING.PERSON
+      WHERE TITLE IS NULL OR AGE IS NULL OR FIRM_ID IS NULL ORDER BY PERSON_ID`), ['5', '6', '8']);
   });
 });

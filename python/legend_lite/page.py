@@ -11,6 +11,7 @@ in DataCube, said in code (docs/DATACUBE_PYTHON_PAGES_DESIGN_2026_10_09.md).
     summary.add(by_desk)
     ll.show(page)                       # under the cell in a notebook, else a browser tab; live from then on
     page.read()                         # the page as it is open now, its changes made in DataCube taken in
+    page.save()                         # into this user's saved pages, as DataCube's Save keeps it (Open… lists it)
     page.save('q3.page.json')           # DataCube's own page document (Export > Page File writes the same)
     again = ll.Page.load('q3.page.json', frames={'trades': trades_df})
 
@@ -28,9 +29,11 @@ grid (four to a band at most), a tile taken off leaving its neighbours closing o
 from __future__ import annotations
 
 import datetime
+import json
 import math
 import numbers
 import re
+import uuid
 from collections.abc import Mapping, Sequence
 from decimal import Decimal
 from pathlib import Path
@@ -419,6 +422,69 @@ class Grid(Tile):
         with frames.serving():
             return to_pandas(frames[self.frame].execute(engine.call('gridRelation', self._spec(frames))))
 
+    def _class(self, name: str | None = None, columns: Mapping[str, Any] | None = None,
+               documentation: str | None = None) -> tuple[dict[str, Any], dict[str, Any]]:
+        """Its rows as a class's, as the window asks for them: DataCube's own request (headless ``gridClass``: its rows
+        at their finest level, its table, its sample's query, the names offered), its sample read on Python's database
+        by the session's planner -- with the frames held still, so a Live frame is read once for both, unless a server
+        plans (its answer is awaited holding no lock of the frames'). Answers the writer's class action and what
+        DataCube said; a grid whose rows cannot be a class refused in DataCube's words (``ValueError``)."""
+        engine, frames = self._headless()
+        local = frames.planner is None
+        with frames.serving():
+            asked = _json.loads(engine.call('gridClass', self._spec(frames), {'source': self.frame, 'page': self._page.name}))
+            if 'refused' in asked:
+                raise ValueError(f'{self.frame!r} cannot be a class: {asked["refused"]}')
+            sample = frames[self.frame].execute(asked['sample']) if local else None
+        if sample is None:
+            sample = frames[self.frame].execute(asked['sample'])
+        cls = {'query': asked['query'], 'source': asked['source'], 'name': name or asked['names']['className'],
+               **({'documentation': documentation} if documentation else {}),
+               **({'columns': _column_choices(columns)} if columns else {}),
+               'where': {'from': asked['table']['database'], 'as': 'Python',
+                         'samples': {asked['table']['table']: _sample_rows(sample)}}}
+        return cls, asked
+
+    def export(self, kind: str = 'csv', to: str | Path | None = None) -> str | bytes | Path:
+        """The grid as its Export menu exports it, by DataCube's own code (the screen's core, run headless): what it
+        shows, with its formats, appearance and heatmaps -- ``'csv'`` (raw values), ``'excel'`` (a workbook, the tree
+        as outlines), ``'html'``, ``'text'`` (formatted, to paste) or ``'pdf'``. Answers the file's content (text, or
+        bytes for a workbook or a PDF), or, given ``to``, writes it there and answers the path."""
+        import base64
+        if kind not in ('csv', 'excel', 'html', 'text', 'pdf'):
+            raise ValueError(f"a grid exports as 'csv', 'excel', 'html', 'text' or 'pdf', not {kind!r}")
+        engine, frames = self._headless()
+        with frames.serving():
+            said = _json.loads(engine.call('gridExport', self._spec(frames), kind))
+        content: str | bytes = said['content'] if said['text'] else base64.b64decode(said['content'])
+        if to is None:
+            return content
+        path = Path(to)
+        # the bytes as the export wrote them: CSV's own CRLF, no newline translated on any system
+        path.write_bytes(content.encode('utf-8') if isinstance(content, str) else content)
+        return path
+
+    def create_class(self, name: str | None = None, *, package: str | None = None,
+                     columns: Mapping[str, Any] | None = None, documentation: str | None = None,
+                     project: str | None = None, sdlc: Any = None, writer: Any = None) -> str:
+        """Its rows at their finest level (``relation``) made a class of the page's model, as DataCube's Create a Class…
+        makes it (docs/ONE_PLATFORM_PROGRAM_2026_10_12.md B4): with everything it needs to run (its relation function,
+        mapping, the frames' store, connection and runtime -- the place ``Python`` -- and its first rows as sample
+        data), into the page's project in this user's model home, made with the page's first class. ``name``: the
+        class's (suggested from the frame's name, as the window suggests it); ``package``: the page's (suggested from
+        the page's name before its first class). ``columns``: by column, ``'property'`` (the default), ``'key'`` (kept
+        for an association to join on, not shown) or ``'omit'``, or ``{'as', 'name', 'documentation'}``. ``project``:
+        the name of the project made with the page's first class (the page's name unless given, as the window offers
+        it). ``sdlc`` and ``writer``: another SDLC or writer than this user's (legend_lite.model). Answers the class's
+        path."""
+        from . import model as models
+        cls, asked = self._class(name, columns, documentation)
+        made = self._page._into(package or asked['names']['package'], sdlc, writer,
+                                lambda s, w, at, made: models.create_class(s, w, *at, cls, made=made), project)
+        path = next((c['class'] for c in made.answer.get('classes', [])), None)
+        self._page._keep(self._view['cube'], asked['table']['table'], path)
+        return path or cls['name']
+
     def group(self, *rows: str) -> Grid:
         """Grouped by ``rows``, outermost first (the Rows zone); none, not grouped."""
         return self._set('rows', self._check(rows, 'group'))
@@ -790,6 +856,144 @@ class Page:
         # where it is shown (datacube.show_page): told each time it changes
         self._shown: list[Any] = []
         self._quiet = 0
+        # the saved page it was last saved as (``save()``): its id, or None
+        self._saved: str | None = None
+
+    # -- the page's model (docs/ONE_PLATFORM_PROGRAM_2026_10_12.md B4): its classes, into a project ----------------------
+
+    @property
+    def model(self) -> dict[str, Any] | None:
+        """Where the page's classes are, as the page document keeps it (DataCube's ``PageModelRef``): its project,
+        workspace and package, and each grid's table and class by its cube; None before its first class."""
+        ref = self._doc.get('model')
+        return _copied(ref) if ref else None
+
+    def _names(self) -> dict[str, Any]:
+        """The page's model as DataCube's windows name it before its first class (headless ``pageModelNames``): its
+        package, its data space, its project to make and DataCube's workspace in it."""
+        return _json.loads(self._session.headless().call('pageModelNames', self.name))
+
+    def _into(self, package: str, sdlc: Any, writer: Any, call: Any, project: str | None = None) -> Any:
+        """A model action into the page's project (this user's model home, unless ``sdlc`` and ``writer`` say otherwise):
+        the page's own, or one made as DataCube makes a page's (``pageModelNames``: in its group, named after the page,
+        or ``project``), the page's from the moment it is made."""
+        from . import model as models
+        ref = self._doc.get('model')
+        if ref:
+            at = (ref['project'], ref['workspace'], ref['package'])
+        else:
+            names = self._names()
+            made_project = names['project']
+            at = (models.NewProject(project or made_project['name'], made_project['group'], made_project['description']),
+                  names['workspace'], package)
+
+        def made(project_id: str) -> None:
+            self._doc['model'] = {'project': project_id, 'workspace': at[1], 'package': at[2], 'tables': {}}
+            self._changed()
+        return call(sdlc if sdlc is not None else models.local_sdlc(),
+                    writer if writer is not None else models.local_writer(), at, made)
+
+    def _keep(self, cube: str, table: str, cls: str | None) -> None:
+        """The page's model now keeps ``table`` and ``cls`` for the grid ``cube`` (page-model.ts ``keepTable``,
+        ``keepClass``)."""
+        ref = self._doc['model']
+        ref.setdefault('tables', {})[cube] = table
+        if cls is not None:
+            ref.setdefault('classes', {})[cube] = cls
+        self._changed()
+
+    def create_association(self, a: Any, b: Any, *, name: str | None = None, sdlc: Any = None,
+                           writer: Any = None) -> str:
+        """An association between two of the page's classes, as DataCube's Create an Association… makes it: each end
+        a class and what it is joined on -- ``(class, on)``, or ``{'class', 'on', 'name', 'multiplicity', 'unique'}``
+        with the name the other class reaches it by and how many of it one of the other has -- preset, as the window
+        presets it, from whether its key is unique over its class's rows when its class was made from one of this page's
+        grids. Answers the association's path."""
+        from . import model as models
+        ref = self._doc.get('model')
+        if not ref:
+            raise ValueError("an association relates two of the page's classes: make them first (grid.create_class, or "
+                             'page.create_data_space for the whole page)')
+        ends = [_end(a), _end(b)]
+
+        def made_with_facts(s: Any, w: Any, at: Any, m: Any) -> Any:
+            self._facts(s, w, at, ends)
+            return models.create_association(s, w, *at, {**({'name': name} if name else {}), 'ends': ends}, made=m)
+        made = self._into(ref['package'], sdlc, writer, made_with_facts)
+        return next((x['association'] for x in made.answer.get('associations', [])), name or 'the association')
+
+    def _facts(self, sdlc: Any, writer: Any, at: Any, ends: list[dict[str, Any]]) -> None:
+        """Each end that says neither how many nor whether its key is unique given the fact, as Create an Association…
+        presets it (model-actions.ts ``unique``): the class's key read through its relation function over the project
+        (the writer's ``joinable`` names the function and the column), DataCube's query for a value held twice
+        (headless ``classDuplicate``) planned over the project's model through its place's runtime and run on Python's
+        database -- no row, and the key is unique. An end whose facts cannot be read (the project's tables not Python's)
+        is left for the writer to refuse in words, as the window leaves it for the person."""
+        from . import model as models
+        open_ends = [e for e in ends if 'unique' not in e and 'multiplicity' not in e]
+        if not open_ends:
+            return
+        text, _ = models.project_state(sdlc, at[0], at[1])
+        joinable = {j['class']: j for j in writer.create_association(text, at[2], None).get('joinable', [])}
+        frames, headless = self._session.frames, self._session.headless()
+        for end in open_ends:
+            j = joinable.get(end['class'], {})
+            column = next((k.get('column') for k in j.get('keys', []) if k['name'] == end['on']), None)
+            if j.get('function') is None or column is None:
+                continue
+            query, runtime = headless.call('classDuplicate', j['function'], column), f'{at[2]}::runtime::Python'
+            # the session's planner, as the page's own grids are planned: Python's within the frames' hold, a server's
+            # answer awaited holding none of it
+            from .engine import NativePlanner
+            planner = frames.planner if frames.planner is not None else NativePlanner()
+            plan = None
+            with frames.serving():
+                held = frames.model_for(text)
+                if held is not None and planner.plane == 'local':
+                    plan = planner.read(planner.plan(query, held, runtime))
+            if held is None:
+                continue
+            if plan is None:
+                plan = planner.read(planner.plan(query, held, runtime))
+            with frames.serving():
+                end['unique'] = frames.run(plan).num_rows == 0
+
+    def create_data_space(self, name: str | None = None, *, title: str | None = None, description: str | None = None,
+                          associations: Sequence[Any] = (), project: str | None = None, sdlc: Any = None,
+                          writer: Any = None) -> str:
+        """The whole page in one go, as DataCube's Create a Data Space… makes it: each grid not yet a class made one
+        (named as the window suggests; a grid whose rows cannot be one left out, as the window leaves it), the
+        associations given (as ``create_association`` takes them: pairs of ends, or ``{'name', 'ends'}``) made, and a
+        data space over the page's classes -- one revision, the project made with it when the page has none (named
+        ``project``, else after the page). ``name``: the data space's (suggested from the page's name). Answers the data
+        space's path."""
+        from . import model as models
+        ref = self._doc.get('model')
+        names = self._names()
+        taken = (ref or {}).get('classes', {})
+        classes, kept = [], []
+        for grid in self.grids:
+            cube = grid._view['cube']
+            if cube in taken:
+                continue
+            try:
+                cls, asked = grid._class()
+            except ValueError:
+                continue
+            classes.append(cls)
+            kept.append((cube, asked['table']['table'], cls['name']))
+        package = ref['package'] if ref else names['package']
+        data_space = {'name': name or names['dataSpace'], **({'title': title} if title else {}),
+                      **({'description': description} if description else {})}
+        joined = [x if isinstance(x, Mapping) else {'ends': [_end(x[0]), _end(x[1])]} for x in associations]
+        made = self._into(package, sdlc, writer, lambda s, w, at, m: models.create_data_space(
+            s, w, *at, data_space, classes, [{**j, 'ends': [_end(e) for e in j['ends']]} for j in joined], made=m),
+            project)
+        made_classes = [c['class'] for c in made.answer.get('classes', [])]
+        for cube, table, class_name in kept:
+            path = next((c for c in made_classes if c.rsplit('::', 1)[-1] == class_name), None)
+            self._keep(cube, table, path)
+        return made.answer.get('dataSpace') or data_space['name']
 
     @property
     def name(self) -> str:
@@ -940,9 +1144,36 @@ class Page:
         """The page document as JSON text, its numbers exact (what ``save`` writes)."""
         return _json.dumps(self._doc, indent=indent)
 
-    def save(self, path: str | Path) -> None:
-        """The page document, as a file (as DataCube's Export > Page File writes it)."""
-        Path(path).write_text(self.to_json() + '\n', 'utf-8', newline='')
+    def save(self, path: str | Path | None = None, *, name: str | None = None) -> str | None:
+        """Saved. With no ``path``, as DataCube's Save keeps a page: into this user's saved pages (``ll.home()/pages``,
+        what Open… lists in DataCube shown from Python), by legend-lite's own saved-page rules (the native library's,
+        the page's and the server's: docs/ONE_PLATFORM_PROGRAM_2026_10_12.md B6) -- over the copy this page was last
+        saved as, else as a new one -- named ``name`` (the page's own when not given); its id is returned. With a
+        ``path``, the page document as a file instead (as DataCube's Export > Page File writes it)."""
+        if path is not None:
+            if name is not None:
+                raise ValueError("a page saved as a file takes no name: its document carries the page's own")
+            Path(path).write_text(self.to_json() + '\n', 'utf-8', newline='')
+            return None
+        from ._home import THIS_USER, pages_folder, store_call
+        named = _named(name if name is not None else self.name, "a saved page's name")
+        if named is None:
+            raise ValueError('a saved page has a name')
+        id = self._saved if self._saved is not None else str(uuid.uuid4())
+        record = _json.dumps({'id': id, 'name': named, 'content': self._doc}, indent=None)
+        status, said = (store_call('lite_saved_cubes', pages_folder(), 'PUT', f'/{id}', '', record, THIS_USER)
+                        if self._saved is not None else (404, ''))
+        if status == 404:
+            # never saved, or its saved copy deleted since (in DataCube's Open…): saved as a new one under its id
+            status, said = store_call('lite_saved_cubes', pages_folder(), 'POST', '', '', record, THIS_USER)
+        if status != 200:
+            try:
+                said = json.loads(said).get('message', said)
+            except (ValueError, AttributeError):
+                pass  # not the store's {"message"}: said as it came
+            raise ValueError(f'the page was not saved: {said}')
+        self._saved = id
+        return id
 
     @classmethod
     def load(cls, document: str | Path | Mapping[str, Any], frames: Mapping[str, Any], *, mode: str = LIVE) -> Page:
@@ -1144,3 +1375,84 @@ def _check(doc: Any) -> None:
         need(not wrong, f'the sheet {s["id"]} cannot be laid out: {"; ".join(wrong)}')
         placed += _tiles(s['layout'])
     need(sorted(placed) == sorted(v['id'] for v in views), 'every view has its place, on one sheet')
+
+
+def _column_choices(columns: Mapping[str, Any]) -> dict[str, dict[str, str]]:
+    """A person's choices for the class's columns, as the window gives them (model-changes' ``ColumnChoice``)."""
+    out: dict[str, dict[str, str]] = {}
+    for column, choice in columns.items():
+        if isinstance(choice, str):
+            choice = {'as': choice}
+        if choice.get('as', 'property') not in ('property', 'key', 'omit'):
+            raise ValueError(f"a column is a 'property', a 'key' or 'omit', not {choice.get('as')!r} ({column!r})")
+        out[column] = {k: v for k, v in choice.items() if k in ('as', 'name', 'documentation')}
+    return out
+
+
+def _sample_rows(rows: Any) -> dict[str, Any]:
+    """A table's first rows as the writer's sample takes them, each value written as the window writes it (the writer
+    copies a number's text and a string into the sample as they come): an integer past 2**53, a decimal (its digits at
+    its own scale), a date, a time and a timestamp (to the microsecond, its trailing zeros dropped, no zone: as
+    engine-client's values.ts writes them) as text; a double as JavaScript writes the number; anything nested as its
+    JSON."""
+    return {'columns': list(rows.column_names),
+            'rows': [[_sample_value(v) for v in row.values()] for row in rows.to_pylist()]}
+
+
+def _sample_value(v: Any) -> Any:
+    if v is None or isinstance(v, (bool, str)):
+        return v
+    if isinstance(v, int):
+        return v if abs(v) < 2 ** 53 else str(v)
+    if isinstance(v, float):
+        return _js_number(v)
+    if isinstance(v, Decimal):
+        return format(v, 'f')
+    if isinstance(v, datetime.datetime):
+        if v.tzinfo is not None:
+            v = v.astimezone(datetime.timezone.utc).replace(tzinfo=None)
+        return f'{v.date().isoformat()}T{_time_text(v.time())}'
+    if isinstance(v, datetime.date):
+        return v.isoformat()
+    if isinstance(v, datetime.time):
+        return _time_text(v)
+    if isinstance(v, (dict, list, tuple)):
+        return _json.dumps(v)
+    return str(v)
+
+
+def _time_text(t: datetime.time) -> str:
+    """A time of day as values.ts ``timeText`` writes it: ``HH:MM:SS``, its fraction's trailing zeros dropped."""
+    fraction = f'{t.microsecond:06d}'.rstrip('0')
+    return f'{t.hour:02d}:{t.minute:02d}:{t.second:02d}' + (f'.{fraction}' if fraction else '')
+
+
+def _js_number(v: float) -> Any:
+    """A double as JavaScript writes it (Number.prototype.toString, which JSON.stringify uses): the shortest digits
+    that read back as it -- Python's own -- laid out in fixed notation from 1e-7 up to 1e21, so ``1.0`` is ``1``. A
+    whole number answers as an int and any other as a Decimal of that text, both of which JSON writes as they are;
+    beyond that range, and for what JSON cannot carry, the float itself."""
+    if not math.isfinite(v) or v == 0:
+        return 0 if v == 0 else v
+    sign, digits, exponent = Decimal(repr(v)).normalize().as_tuple()
+    k, n = len(digits), exponent + len(digits)
+    text = ''.join(map(str, digits))
+    if k <= n <= 21:
+        return -int(text + '0' * (n - k)) if sign else int(text + '0' * (n - k))
+    if 0 < n <= 21:
+        fixed = f'{text[:n]}.{text[n:]}'
+    elif -6 < n <= 0:
+        fixed = f'0.{"0" * -n}{text}'
+    else:
+        return v
+    return Decimal(('-' if sign else '') + fixed)
+
+
+def _end(end: Any) -> dict[str, Any]:
+    """An association's end as the writer takes it (model-changes' ``AssociationEnd``): ``(class, on)`` or a mapping."""
+    if isinstance(end, Mapping):
+        if not isinstance(end.get('class'), str) or not isinstance(end.get('on'), str):
+            raise ValueError(f"an association's end names its class and what it is joined on: {dict(end)!r}")
+        return {k: end[k] for k in ('class', 'on', 'name', 'multiplicity', 'unique') if k in end}
+    cls, on = end
+    return {'class': cls, 'on': on}

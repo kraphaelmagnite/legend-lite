@@ -11,6 +11,7 @@
 import type { Planner } from './cube.ts';
 import { PureV1Client, type PrintStyle, type PureV1Options } from '../../engine-client/src/pure-v1.ts';
 import { relationColumns, tdsColumns, type Plan, type PlanColumn } from '../../engine-client/src/relation-type.ts';
+import { parseExact } from '../../engine-client/src/values.ts';
 import { toJson, type Lambda } from '../../pure-protocol/src/index.ts';
 import type { GridSource } from './model-writer.ts';
 
@@ -97,11 +98,7 @@ export class UpstreamPlanner implements Planner {
     const key = toJson(query);
     const hit = this.#useCache ? this.#cache.get(key) : undefined;
     if (hit !== undefined) return hit;
-    const body = await this.#client.generatePlan(query, signal);
-    const sql = sqlOf(body);
-    if (sql === undefined) throw new PlanError('the plan carries no SQL node', query);
-    // the plan's own tdsColumns: the result's type, as the compiler gave it
-    const plan: Plan = { sql, columns: tdsColumns(body, this.#bitColumns) };
+    const plan = serverPlan(await this.#client.generatePlan(query, signal), query, this.#bitColumns);
     if (this.#useCache) this.#cache.set(key, plan);
     return plan;
   }
@@ -137,14 +134,64 @@ export class UpstreamPlanner implements Planner {
   }
 }
 
-/** The SQL of an execution plan: its first `sql` execution node's `sqlQuery`. */
-function sqlOf(plan: unknown): string | undefined {
-  const work: unknown[] = [(plan as { rootExecutionNode?: unknown }).rootExecutionNode];
-  while (work.length > 0) {
-    const node = work.shift() as { _type?: string; sqlQuery?: string; executionNodes?: unknown[] } | undefined;
-    if (!node) continue;
-    if (node._type === 'sql' && typeof node.sqlQuery === 'string') return node.sqlQuery;
-    work.push(...(node.executionNodes ?? []));
+/**
+ * A server's `generatePlan` answer as a Plan: its one SQL node's statement (`sqlNode`), and the plan's own
+ * `tdsColumns`, the result's type as the compiler gave it. The one reading of a server's plan: the tab's planner on a
+ * server reads it so, and so does a page on Python whose Python plans on a server and runs the SQL itself
+ * (python-host.ts; Python reads it the same way, python/legend_lite/upstream.py, the two held alike by
+ * test/fixtures/upstream-plans.json). INTERIM: core reads no legend-engine plan into its own ExecutionPlan yet; when it
+ * does (docs/EXECUTION_PLAN_BOUNDARY_2026_10_05.md §8, phase 2) the tab reads a server's plan through the module and
+ * this reader and Python's go, the fixture their cases.
+ */
+export function serverPlan(body: unknown, query: Lambda, bitColumns: ReadonlySet<string> = new Set(),
+  database = 'DuckDB'): Plan {
+  return { sql: sqlNode(body, query, database), columns: tdsColumns(body, bitColumns) };
+}
+
+/** A server's `generatePlan` answer, as its text, read as `serverPlan` reads it; a refusal (legend-engine's error
+ *  shape) thrown in the server's own words. */
+export function readServerPlan(text: string, query: Lambda, bitColumns: ReadonlySet<string> = new Set(),
+  database = 'DuckDB'): Plan {
+  let body: unknown;
+  try {
+    body = parseExact(text);
+  } catch {
+    throw new PlanError(`the server answered no plan: ${text.slice(0, 300)}`, query);
   }
-  return undefined;
+  if (body === null || typeof body !== 'object' || !('rootExecutionNode' in body)) {
+    const message = (body as { message?: unknown } | null)?.message;
+    throw new PlanError(typeof message === 'string' ? message : `the server answered no plan: ${text.slice(0, 300)}`, query);
+  }
+  return serverPlan(body, query, bitColumns, database);
+}
+
+interface PlanNode {
+  readonly _type?: string;
+  readonly sqlQuery?: unknown;
+  readonly connection?: { readonly type?: unknown };
+  readonly executionNodes?: readonly (PlanNode | null)[];
+}
+
+/**
+ * The plan's one SQL statement, from the one shape read here: a root `relationalTdsInstantiation` with exactly one `sql`
+ * node under it, written for `database` (its connection's type: `DuckDB`, where the tab and Python run it), with no
+ * placeholder the engine fills in at execution (`${`). Anything else is refused by name, never run in part (the Plan Gen
+ * line's review of G1).
+ */
+function sqlNode(plan: unknown, query: Lambda, database: string): string {
+  const root = (plan as { rootExecutionNode?: PlanNode | null }).rootExecutionNode ?? undefined;
+  const children = root?.executionNodes ?? [];
+  const node = children[0] ?? undefined;
+  if (root?._type !== 'relationalTdsInstantiation' || children.length !== 1 || node?._type !== 'sql'
+    || (node.executionNodes?.length ?? 0) > 0) {
+    const shape = [root?._type ?? null, ...children.map((c) => c?._type ?? null)];
+    throw new PlanError(`a plan read here is a relationalTdsInstantiation over one sql node, not ${JSON.stringify(shape)}`, query);
+  }
+  if (typeof node.sqlQuery !== 'string') throw new PlanError('the plan carries no SQL node', query);
+  const written = typeof node.connection?.type === 'string' ? node.connection.type : 'none';
+  if (written !== database) throw new PlanError(`the plan's SQL is written for ${written}, and it would run on ${database}`, query);
+  if (node.sqlQuery.includes('${')) {
+    throw new PlanError("the plan's SQL holds a placeholder the engine fills in at execution (${...})", query);
+  }
+  return node.sqlQuery;
 }

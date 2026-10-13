@@ -23,7 +23,7 @@ DEPENDENCIES = [Path(p) for p in os.environ['LEGEND_LITE_DEPENDENCY_WHEELS'].spl
 
 # run in the installed environment: a frame shown, its cube asked for, a query executed as DataCube sends it
 SCRIPT = r'''
-import json, urllib.request, sys
+import json, urllib.parse, urllib.request, sys
 import pandas as pd
 import pyarrow as pa, pyarrow.ipc
 import legend_lite as ll
@@ -76,9 +76,40 @@ remote = {"status": said.status, "answer": said.body.decode()[:300],
           "rows": duck.execute("SELECT count(*) FROM wheel_remote").fetchone()[0] if said.status == 200 else None,
           "httpfs": duck.execute("SELECT install_path FROM duckdb_extensions() WHERE extension_name = 'httpfs'").fetchone()[0]}
 files.shutdown()
+# and an Iceberg table (G5), served by the test, read through the iceberg and avro extensions inside the wheel
+said = datacube._session.engine().answer("POST", "/remote.json", "", json.dumps({"url": sys.argv[1], "name": "wheel_iceberg"}))
+iceberg = {"status": said.status, "answer": said.body.decode()[:300],
+           "rows": duck.execute("SELECT count(*) FROM wheel_iceberg").fetchone()[0] if said.status == 200 else None,
+           "extensions": [p for (p,) in duck.execute("SELECT install_path FROM duckdb_extensions() "
+                                                     "WHERE extension_name IN ('iceberg', 'avro') AND loaded").fetchall()]}
+# Query and Studio served from the wheel (E): each app's link traded for the cookie, its page, its config, and a call the
+# page makes with the cookie alone
+import http.client, pathlib
+apps = {}
+def get(link, path, headers=None):
+    c = http.client.HTTPConnection(link.hostname, link.port, timeout=30)
+    c.request("GET", path, headers=headers or {})
+    r = c.getresponse()
+    out = (r.status, r.getheader("Set-Cookie"), r.read())
+    c.close()
+    return out
+for name, open_app in (("query", ll.query), ("studio", ll.studio)):
+    link = urllib.parse.urlsplit(open_app(browser=False))
+    traded, cookie, _ = get(link, link.path + "?" + link.query)
+    # the page's own call, as the browser marks it
+    jar = {"Cookie": cookie.split(";")[0], "Sec-Fetch-Site": "same-origin"}
+    apps[name] = {"traded": traded, "page": get(link, link.path)[0],
+                  "config": sorted(json.loads(get(link, f"/{name}/demo/config.json")[2])),
+                  "user": get(link, "/api/server/v1/currentUser", jar)[:3:2],
+                  "no_cookie": get(link, "/api/server/v1/currentUser")[0]}
+shipped = pathlib.Path(ll.__file__).with_name("_apps")
+apps["demo_projects"] = get(link, "/studio/demo/projects/manifest.json")[0]
+apps["duckdb_wasm"] = sorted(p.name for p in shipped.rglob("duckdb-*.wasm"))
 print(json.dumps({"module": ll.__file__, "library": __import__("legend_lite._library", fromlist=["x"]).library().path.as_posix(),
                   "page": page, "cube": sorted(cube_json), "rows": rows, "notebook": notebook, "headless": headless,
-                  "remote": remote}))
+                  "remote": remote, "iceberg": iceberg, "apps": {k: v if not isinstance(v, dict) else
+                                                                  {**v, "user": [v["user"][0], v["user"][1].decode()]}
+                                                                  for k, v in apps.items()}}))
 '''
 
 
@@ -288,7 +319,23 @@ class Installed(unittest.TestCase):
         checked = subprocess.run([python, '-m', 'pip', 'check', '--disable-pip-version-check'], env=env,
                                  capture_output=True, text=True, timeout=60)
         self.assertEqual(checked.returncode, 0, checked.stdout + checked.stderr)
-        ran = subprocess.run([python, '-I', '-c', SCRIPT], cwd=root, env=env, capture_output=True, text=True, timeout=120)
+        # an Iceberg table the installed engine reads, served from here
+        import functools
+        import http.server
+        import threading
+        import iceberg_table
+
+        class Quiet(http.server.SimpleHTTPRequestHandler):
+            def log_message(self, *_):
+                pass
+        (root / 'served').mkdir()
+        files = http.server.ThreadingHTTPServer(('127.0.0.1', 0), functools.partial(Quiet, directory=str(root / 'served')))
+        threading.Thread(target=files.serve_forever, daemon=True).start()
+        self.addCleanup(files.shutdown)
+        table = iceberg_table.write(root / 'served', 'trades', f'http://127.0.0.1:{files.server_address[1]}',
+                                    [[('FX', 1)], [('EQ', 2)]])
+        ran = subprocess.run([python, '-I', '-c', SCRIPT, f'{table}#iceberg'], cwd=root, env=env, capture_output=True,
+                             text=True, timeout=120)
         self.assertEqual(ran.returncode, 0, ran.stdout + ran.stderr)
         out = json.loads(ran.stdout.strip().splitlines()[-1])
         # as paths, not text: Windows writes its separators both ways
@@ -305,4 +352,14 @@ class Installed(unittest.TestCase):
         # a remote file read through the httpfs extension inside the wheel, none downloaded
         self.assertEqual((out['remote']['status'], out['remote']['rows']), (200, 2), out['remote'])
         self.assertTrue(Path(out['remote']['httpfs']).is_relative_to(venv), out['remote'])
+        self.assertEqual((out['iceberg']['status'], out['iceberg']['rows']), (200, 2), out['iceberg'])
+        self.assertEqual(len(out['iceberg']['extensions']), 2, out['iceberg'])
+        self.assertTrue(all(Path(p).is_relative_to(venv) for p in out['iceberg']['extensions']), out['iceberg'])
         self.assertTrue(Path(out['headless']['bundle']).is_relative_to(venv), out['headless'])
+        # Query and Studio inside it (E): each served, its link traded for the cookie its calls then carry; Studio's demo
+        # projects shipped, DuckDB-WASM's builds not (Python's DuckDB runs the queries)
+        for app, keys in (('query', ['depot', 'execution', 'projects']),
+                          ('studio', ['depot', 'engine', 'sdlc', 'vendor', 'worker'])):
+            self.assertEqual(out['apps'][app], {'traded': 303, 'page': 200, 'config': keys, 'user': [200, '"this user"'],
+                                                'no_cookie': 401}, out['apps'])
+        self.assertEqual((out['apps']['demo_projects'], out['apps']['duckdb_wasm']), (200, []), out['apps'])

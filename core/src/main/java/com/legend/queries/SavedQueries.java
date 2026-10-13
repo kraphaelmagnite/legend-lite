@@ -1,12 +1,8 @@
-package com.legend.server;
+package com.legend.queries;
 
 import com.legend.json.Json;
 
-import java.io.IOException;
-import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
@@ -14,6 +10,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.TreeSet;
 import java.util.function.LongSupplier;
+import java.util.function.Predicate;
 import java.util.regex.Pattern;
 
 /**
@@ -24,10 +21,14 @@ import java.util.regex.Pattern;
  * is its history, a delete keeps the history. Read from the engine's source (4.145.0 line,
  * 2026-09-30); its Mongo cannot be run here, so these rules are ported, not measured.
  *
- * <p>Storage is a directory (the server's {@code --query-store DIR}), one JSON file per query holding every
- * version -- the interim home until the warehouse keeps queries (docs/SERVER_PROGRAM_2026_09_26.md
- * leg E2). Without the directory the store refuses every call, as the engine does without its
- * database ("has not been configured properly"); it never picks a place of its own.
+ * <p>ONE IMPLEMENTATION, STORAGE PER HOST (docs/ONE_PLATFORM_PROGRAM_2026_10_12.md B5): these rules are the only
+ * ones -- legend-lite's server, Python's native library and the page's WebAssembly module each answer the routes
+ * with them -- and only where the versions are kept differs ({@link Records}): a directory, one JSON file per query
+ * holding every version ({@link FileRecords}: the server's {@code --query-store DIR}, Python's {@code ll.home()/queries}),
+ * or the records the page keeps in IndexedDB, handed in with each call ({@link MemoryRecords}). The rules and their
+ * records reach only {@code //base} and {@code //json}, so they compile to WebAssembly. Without a store the server
+ * refuses every call, as the engine does without its database ("has not been configured properly"); it never picks
+ * a place of its own.
  *
  * <p>Recorded differences: a current version's {@code validUntil} is {@code null} (the engine
  * writes its far-future sentinel); {@code query/events} and {@code query/stats} are not served.
@@ -78,11 +79,15 @@ public final class SavedQueries {
         return java.util.Collections.unmodifiableMap(out);
     }
 
-    private final Path directory;
+    /** An answer as the engine gives it: its status, and its JSON (empty for a 204). */
+    public record Answer(int status, String json) {
+    }
+
+    private final Records records;
     private final LongSupplier clock;
 
-    public SavedQueries(Path directory, LongSupplier clock) {
-        this.directory = directory;
+    public SavedQueries(Records records, LongSupplier clock) {
+        this.records = records;
         this.clock = clock;
     }
 
@@ -97,17 +102,17 @@ public final class SavedQueries {
      * {@code /api/pure/v1/query}. The engine's answers: 200 with JSON, 204 for a delete, and a
      * refusal as {@code {"message"}} with its status.
      */
-    public static PureV1Api.Answer answer(@com.legend.base.Nullable SavedQueries store, String method, String rest,
+    public static Answer answer(@com.legend.base.Nullable SavedQueries store, String method, String rest,
             @com.legend.base.Nullable String rawQuery, String body, String user) {
         if (store == null) {
-            return new PureV1Api.Answer(500, "{\"code\":-1,\"message\":\"Query store has not been configured properly"
+            return new Answer(500, "{\"code\":-1,\"message\":\"Query store has not been configured properly"
                     + " (legend-lite: start the server with --query-store DIR)\",\"status\":\"error\"}");
         }
         try {
             String[] parts = rest.isEmpty() ? new String[0] : rest.substring(1).split("/", -1);
             String id = parts.length > 0 ? java.net.URLDecoder.decode(parts[0], StandardCharsets.UTF_8) : "";
             if (parts.length > 0 && "dataCube".equals(parts[0])) {
-                return new PureV1Api.Answer(404, "{\"code\":-1,\"message\":\"no such legend-engine API in legend-lite: "
+                return new Answer(404, "{\"code\":-1,\"message\":\"no such legend-engine API in legend-lite: "
                         + "/api/pure/v1/query" + rest + "\",\"status\":\"error\"}");
             }
             return switch (method + " " + parts.length + " " + (parts.length > 1 ? parts[1] : "")) {
@@ -117,7 +122,7 @@ public final class SavedQueries {
                 case "PUT 1 " -> ok(store.update(id, body, user));
                 case "DELETE 1 " -> {
                     store.delete(id, user);
-                    yield new PureV1Api.Answer(204, "");
+                    yield new Answer(204, "");
                 }
                 case "GET 2 history" -> {
                     List<String> v = queryParams(rawQuery, "version");
@@ -127,21 +132,29 @@ public final class SavedQueries {
                 default -> notFound(rest);
             };
         } catch (Refusal r) {
-            return new PureV1Api.Answer(r.status, Json.toCompact(Map.of("message", String.valueOf(r.getMessage()))));
+            return new Answer(r.status, Json.toCompact(Map.of("message", String.valueOf(r.getMessage()))));
         } catch (java.io.UncheckedIOException | IllegalArgumentException | ClassCastException e) {
             // the store's disk failing, or a body that is not the JSON the engine takes (a bad
             // integer, a field of the wrong kind): the engine's 500, naming the exception
-            return new PureV1Api.Answer(500, Json.toCompact(Map.of("code", -1,
-                    "message", e.getClass().getSimpleName() + ": " + e.getMessage(), "status", "error")));
+            return failed(e);
         }
     }
 
-    private static PureV1Api.Answer ok(String json) {
-        return new PureV1Api.Answer(200, json);
+    /** The engine's 500 for an exception, naming it: {@code {"code", "message", "status"}}, in that order. */
+    static Answer failed(RuntimeException e) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("code", -1);
+        out.put("message", e.getClass().getSimpleName() + ": " + e.getMessage());
+        out.put("status", "error");
+        return new Answer(500, Json.toCompact(out));
     }
 
-    private static PureV1Api.Answer notFound(String rest) {
-        return new PureV1Api.Answer(404, "{\"code\":-1,\"message\":\"no such legend-engine API in legend-lite: "
+    private static Answer ok(String json) {
+        return new Answer(200, json);
+    }
+
+    private static Answer notFound(String rest) {
+        return new Answer(404, "{\"code\":-1,\"message\":\"no such legend-engine API in legend-lite: "
                 + "/api/pure/v1/query" + rest + "\",\"status\":\"error\"}");
     }
 
@@ -165,6 +178,7 @@ public final class SavedQueries {
     /** {@code POST query/search}. */
     public synchronized String search(String body, String currentUser) {
         Json.Obj spec = Json.parseObject(body.strip().isEmpty() ? "{}" : body);
+        searchShape(spec);
         List<Json.Obj> matches = new ArrayList<>();
         for (Json.Obj q : latestOfAll()) {
             if (matchesSearch(q, spec, currentUser)) {
@@ -260,6 +274,7 @@ public final class SavedQueries {
     /** {@code POST query}: a new query, owned by the caller, version 1. */
     public synchronized String create(String body, String currentUser) {
         Json.Obj query = Json.parseObject(body);
+        queryShape(query);
         validate(query);
         String id = query.getString("id");
         List<Json.Obj> versions = versions(id);
@@ -282,6 +297,7 @@ public final class SavedQueries {
     /** {@code PUT query/{id}}: the owner's new version; the old one becomes history. */
     public synchronized String update(String id, String body, String currentUser) {
         Json.Obj query = Json.parseObject(body);
+        queryShape(query);
         validate(query);
         if (!id.equals(query.getString("id"))) {
             throw new Refusal("Updating query ID is not supported", 400);
@@ -292,6 +308,7 @@ public final class SavedQueries {
     /** {@code PUT query/{id}/patchQuery}: the fields the body sets over the current version, as a new version. */
     public synchronized String patch(String id, String body, String currentUser) {
         Json.Obj patch = Json.parseObject(body);
+        queryShape(patch);
         get(id); // the engine patches what getQuery answers, which marks it opened
         Json.Obj current = java.util.Objects.requireNonNull(current(versions(id)), id);
         Map<String, Json.Node> fields = clientFields(current);
@@ -496,6 +513,91 @@ public final class SavedQueries {
         return text != null && text.toLowerCase(java.util.Locale.ROOT).contains(lowerNeedle);
     }
 
+    // ------------------------------------------------------------------ shapes
+    //
+    // A body's fields of the kinds the engine's classes take them as; another kind is the 500 for a body the engine
+    // cannot read. Checked before the rules read the body, not left to a failed cast: the page's WebAssembly has no
+    // ClassCastException (a failed cast there stops its module), so only a check answers the same on every host. A
+    // query's tagged values and stereotypes are checked as it is written, so the searches that read them later can.
+
+    private static final Predicate<Json.Node> TEXT = n -> n instanceof Json.Str;
+    private static final Predicate<Json.Node> FLAG = n -> n instanceof Json.Bool;
+    private static final Predicate<Json.Node> NUMBER = n -> n instanceof Json.Num;
+    private static final Predicate<Json.Node> OBJECT = n -> n instanceof Json.Obj;
+
+    /** The engine's {@code QuerySearchSpecification}, as far as the rules read it. */
+    private static void searchShape(Json.Obj spec) {
+        String where = "QuerySearchSpecification";
+        if (field(spec, "searchTermSpecification", OBJECT, "an object", false, where) instanceof Json.Obj term) {
+            field(term, "searchTerm", TEXT, "a string", false, "QuerySearchTermSpecification");
+            field(term, "exactMatchName", FLAG, "a boolean", false, "QuerySearchTermSpecification");
+            field(term, "includeOwner", FLAG, "a boolean", false, "QuerySearchTermSpecification");
+        }
+        field(spec, "showCurrentUserQueriesOnly", FLAG, "a boolean", false, where);
+        field(spec, "combineTaggedValuesCondition", FLAG, "a boolean", false, where);
+        field(spec, "sortByOption", TEXT, "a string", false, where);
+        field(spec, "limit", NUMBER, "a number", false, where);
+        for (Json.Obj c : objects(spec, "projectCoordinates", where, "QueryProjectCoordinates")) {
+            field(c, "groupId", TEXT, "a string", true, "QueryProjectCoordinates");
+            field(c, "artifactId", TEXT, "a string", true, "QueryProjectCoordinates");
+            field(c, "version", TEXT, "a string", false, "QueryProjectCoordinates");
+        }
+        tagsShape(spec, where);
+    }
+
+    /** The engine's {@code Query}, as far as the rules read it: its tagged values and stereotypes. */
+    private static void queryShape(Json.Obj q) {
+        tagsShape(q, "Query");
+    }
+
+    private static void tagsShape(Json.Obj o, String where) {
+        for (Json.Obj tv : objects(o, "taggedValues", where, "TaggedValue")) {
+            if (field(tv, "tag", OBJECT, "an object", true, "TaggedValue") instanceof Json.Obj tag) {
+                field(tag, "profile", TEXT, "a string", true, "TagPtr");
+                field(tag, "value", TEXT, "a string", true, "TagPtr");
+            }
+        }
+        for (Json.Obj s : objects(o, "stereotypes", where, "StereotypePtr")) {
+            field(s, "profile", TEXT, "a string", true, "StereotypePtr");
+            field(s, "value", TEXT, "a string", true, "StereotypePtr");
+        }
+    }
+
+    /** {@code o}'s {@code field}, of its kind; null when it is absent or null and need not be there. */
+    private static Json.@com.legend.base.Nullable Node field(Json.Obj o, String field, Predicate<Json.Node> kind,
+            String kindName, boolean required, String where) {
+        Json.Node n = o.has(field) ? o.get(field) : Json.nil();
+        if (n instanceof Json.Null) {
+            if (required) {
+                throw new IllegalArgumentException(where + "." + field + " is missing");
+            }
+            return null;
+        }
+        if (!kind.test(n)) {
+            throw new IllegalArgumentException(where + "." + field + " is not " + kindName);
+        }
+        return n;
+    }
+
+    /** {@code o}'s list {@code field}, each item an object ({@code item}); empty when it is absent or null. */
+    private static List<Json.Obj> objects(Json.Obj o, String field, String where, String item) {
+        Json.Node n = o.has(field) ? o.get(field) : Json.nil();
+        if (n instanceof Json.Null) {
+            return List.of();
+        }
+        if (!(n instanceof Json.Arr a)) {
+            throw new IllegalArgumentException(where + "." + field + " is not a list");
+        }
+        List<Json.Obj> out = new ArrayList<>();
+        for (Json.Node i : a.items()) {
+            if (!(i instanceof Json.Obj each)) {
+                throw new IllegalArgumentException(where + "." + field + " holds something not " + item);
+            }
+            out.add(each);
+        }
+        return out;
+    }
+
     // ------------------------------------------------------------------ records
 
     /** A query as the API writes it: every field in the engine's order, null when absent. */
@@ -547,7 +649,7 @@ public final class SavedQueries {
         return null;
     }
 
-    // ------------------------------------------------------------------ storage
+    // ------------------------------------------------------------------ storage (the host's: Records)
 
     private @com.legend.base.Nullable Json.Obj latest(String id) {
         return current(versions(id));
@@ -555,55 +657,22 @@ public final class SavedQueries {
 
     private List<Json.Obj> latestOfAll() {
         List<Json.Obj> out = new ArrayList<>();
-        if (!Files.isDirectory(directory)) {
-            return out;
-        }
-        try (var files = Files.list(directory)) {
-            for (Path p : files.filter(f -> f.getFileName().toString().endsWith(".json")).sorted().toList()) {
-                Json.Obj q = current(read(p));
-                if (q != null) {
-                    out.add(q);
-                }
+        // by id (the records' order), then by creation: the engine's natural order is insertion order
+        for (List<Json.Obj> versions : records.all().values()) {
+            Json.Obj q = current(versions);
+            if (q != null) {
+                out.add(q);
             }
-        } catch (IOException e) {
-            throw new java.io.UncheckedIOException(e);
         }
-        // the engine's natural order is insertion order: by creation
         out.sort(Comparator.comparingLong((Json.Obj q) -> longOr(q, "createdAt", 0)));
         return out;
     }
 
     private List<Json.Obj> versions(String id) {
-        Path p = file(id);
-        return Files.exists(p) ? read(p) : new ArrayList<>();
-    }
-
-    private static List<Json.Obj> read(Path p) {
-        try {
-            List<Json.Obj> out = new ArrayList<>();
-            for (Json.Node n : ((Json.Arr) Json.parse(Files.readString(p))).items()) {
-                out.add((Json.Obj) n);
-            }
-            return out;
-        } catch (IOException e) {
-            throw new java.io.UncheckedIOException(e);
-        }
+        return new ArrayList<>(records.versions(id));
     }
 
     private void write(String id, List<Json.Obj> versions) {
-        try {
-            Files.createDirectories(directory);
-            Path target = file(id);
-            Path tmp = target.resolveSibling(target.getFileName() + ".tmp");
-            Files.writeString(tmp, Json.toCompact(versions));
-            Files.move(tmp, target, java.nio.file.StandardCopyOption.REPLACE_EXISTING,
-                    java.nio.file.StandardCopyOption.ATOMIC_MOVE);
-        } catch (IOException e) {
-            throw new java.io.UncheckedIOException(e);
-        }
-    }
-
-    private Path file(String id) {
-        return directory.resolve(URLEncoder.encode(id, StandardCharsets.UTF_8) + ".json");
+        records.write(id, versions);
     }
 }

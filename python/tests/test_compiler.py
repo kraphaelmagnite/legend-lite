@@ -200,6 +200,49 @@ class Compiling(unittest.TestCase):
         self.assertEqual(db['excluded'], [])
 
 
+class ProjectDatabase(unittest.TestCase):
+    """A project's own database (C5): the native library answers as the tab's planner does -- its name from the
+    identity, DuckDB's statements, the project's rows as the server seeds them; another database refused by name.
+    Run on Python's DuckDB by the engine's tests (they have duckdb; these bindings need no other package)."""
+
+    PARTY = """###Relational
+Database demo::party::PartyDB
+(
+  Schema PARTY
+  (
+    Table PARTY (ID INTEGER PRIMARY KEY, NAME VARCHAR(200))
+  )
+)
+
+###Data
+Data demo::party::PartyData
+{
+  Relational
+  #{
+    PARTY.PARTY:
+      'ID,NAME\\n1,Meridian Capital\\n';
+  }#
+}
+"""
+
+    def test_duckdbs_statements(self):
+        from legend_lite.compiler import project_data
+        p = project_data(self.PARTY, 'DuckDB')
+        self.assertRegex(p['name'], r'^__project_[0-9a-f]{16}$')
+        self.assertEqual(p['open'], [f"ATTACH ':memory:' AS \"{p['name']}\""])
+        self.assertEqual(p['use'], [f'USE "{p["name"]}"'])
+        self.assertEqual(p['close'], [f'DETACH DATABASE IF EXISTS "{p["name"]}"'])
+        self.assertTrue(any('Meridian Capital' in s for s in p['fill']), p['fill'])
+        # named by what it holds: the same rows the same name, an edited row another
+        self.assertEqual(project_data(self.PARTY + '\n', 'DuckDB')['name'], p['name'])
+        self.assertNotEqual(project_data(self.PARTY.replace('Meridian', 'Kestrel'), 'DuckDB')['name'], p['name'])
+
+    def test_another_database_refused_by_name(self):
+        from legend_lite.compiler import project_data
+        with self.assertRaisesRegex(ll.LegendError, "a project's own database on Postgres is not built"):
+            project_data(self.PARTY, 'Postgres')
+
+
 class Hosting(unittest.TestCase):
     def test_several_threads_at_once(self):
         want = ll.plan(MODEL, ll.parse(GROUP), 'trades::RT')

@@ -12,7 +12,14 @@ load("@rules_python//python:py_library.bzl", "py_library")
 load("@rules_python//python:py_test.bzl", "py_test")
 load("//tools/guards:defs.bzl", "guards_package")
 load("//tools/java_run:defs.bzl", "java_run")
-load("//tools/platforms:defs.bzl", "COMPILER_LIBRARY_PLATFORMS", "compatible_with", "platform_select")
+load(
+    "//tools/platforms:defs.bzl",
+    "COMPILER_LIBRARY_PLATFORMS",
+    "DUCKDB_PLATFORMS",
+    "compatible_with",
+    "platform_select",
+)
+load("//tools/runfiles:defs.bzl", "executable_of")
 
 # the compiler's bindings: no package beyond Python's own
 py_library(
@@ -48,6 +55,10 @@ py_library(
         "legend_lite/frames.py",
         # a DataCube page built in Python (docs/DATACUBE_PYTHON_PAGES_DESIGN_2026_10_09.md)
         "legend_lite/page.py",
+        # a class, an association or a data space made in a project: the twin of model-changes/ (B4)
+        "legend_lite/model.py",
+        # a server planning for Python's pages (docs/ONE_PLATFORM_PROGRAM_2026_10_12.md G1)
+        "legend_lite/upstream.py",
     ],
     imports = ["."],
     deps = [
@@ -230,7 +241,8 @@ py_test(
         "//datacube:headless_bundle",
         "//native:compiler",
     ],
-    # and DuckDB's extensions as the wheel carries them: a page's remote file is read through httpfs (step 2b)
+    # and DuckDB's extensions as the wheel carries them: a page's remote file is read through httpfs (step 2b), an
+    # Iceberg table through iceberg and avro (G5)
     env = select({
         "//tools/platforms:windows_x86_64": _ENV | _HEADLESS_ENV | {"PROCESSOR_ARCHITECTURE": "AMD64"},
         "//conditions:default": _ENV | _HEADLESS_ENV,
@@ -239,10 +251,107 @@ py_test(
     target_compatible_with = _PLATFORMS,
     deps = [
         ":headless",
+        ":iceberg_table",
         ":legend_lite",
         "@pypi//pandas",
         "@rules_python//python/runfiles",
     ],
+)
+
+# legend-lite's server's launcher, exactly one file (server.exe on Windows), for upstream_test to start
+executable_of(
+    name = "legend_server",
+    testonly = True,
+    binary = "//core:server",
+)
+
+# A SERVER PLANNING FOR PYTHON'S PAGES (docs/ONE_PLATFORM_PROGRAM_2026_10_12.md G1; legend_lite/upstream.py): the twin
+# of the tab's planner on a server, held to the cases the tab's is (//datacube's upstream-plans), then against a
+# legend-lite server it starts on a free port -- a page's grid planned there and run on Python's DuckDB answers as
+# Python's own planner does -- and where a session plans, chosen once.
+py_test(
+    name = "upstream_test",
+    size = "medium",
+    srcs = [
+        "tests/main.py",
+        "tests/test_upstream.py",
+    ],
+    args = ["test_upstream"],
+    data = [
+        ":legend_server",
+        "//core:server",
+        "//datacube:test/fixtures/upstream-plans.json",
+        "//native:compiler",
+    ],
+    env = _ENV | {
+        "LEGEND_LITE_SERVER": "$(rlocationpath :legend_server)",
+        "LEGEND_LITE_UPSTREAM_PLANS": "$(rlocationpath //datacube:test/fixtures/upstream-plans.json)",
+    },
+    main = "tests/main.py",
+    target_compatible_with = _PLATFORMS,
+    deps = [
+        ":legend_lite",
+        "@rules_python//python/runfiles",
+    ],
+)
+
+# INTO A PROJECT (docs/ONE_PLATFORM_PROGRAM_2026_10_12.md B4; legend_lite/model.py): the twin of model-changes/, held
+# to the same recorded cases (each call a create makes, to the SDLC and the writer, with its exact body), then a page's
+# grids made classes, an association and a data space by DataCube's request (headless) into this user's model home.
+# `MODEL_CHANGES_RECORD=1 bazel run //python:model_test` records the cases again.
+_MODEL_ENV = _ENV | _HEADLESS_ENV | {"LEGEND_LITE_MODEL_CASES": "$(rlocationpaths //model-changes:cases)"}
+
+py_test(
+    name = "model_test",
+    size = "medium",
+    srcs = [
+        "tests/main.py",
+        "tests/test_model.py",
+    ],
+    args = ["test_model"],
+    data = [
+        ":wheel_duckdb",
+        "//datacube:headless_bundle",
+        "//model-changes:cases",
+        "//native:compiler",
+    ],
+    env = select({
+        "//tools/platforms:windows_x86_64": _MODEL_ENV | {"PROCESSOR_ARCHITECTURE": "AMD64"},
+        "//conditions:default": _MODEL_ENV,
+    }),
+    main = "tests/main.py",
+    target_compatible_with = _PLATFORMS,
+    deps = [
+        ":headless",
+        ":legend_lite",
+        "@rules_python//python/runfiles",
+    ],
+)
+
+# THE HOST-SQL GUARD, its Python half (tools/guards/host_sql.txt; docs/ONE_PLATFORM_PROGRAM_2026_10_12.md D5): no module
+# of Python's host spells SQL -- each string of every legend_lite module, read by Python's own parser, held to the rule.
+# Its TypeScript half is //tools/guards:host_sql_test.
+py_test(
+    name = "host_sql_test",
+    size = "small",
+    srcs = ["tests/test_host_sql.py"],
+    data = glob(["legend_lite/*.py"]) + ["//tools/guards:host_sql.txt"],
+    env = {
+        "HOST_SQL_PACKAGE": "$(rlocationpath legend_lite/__init__.py)",
+        "HOST_SQL_RULE": "$(rlocationpath //tools/guards:host_sql.txt)",
+    },
+    main = "tests/test_host_sql.py",
+    deps = ["@rules_python//python/runfiles"],
+)
+
+# a small Iceberg table written for the tests (G5), its files named by the URLs a test serves them at
+py_library(
+    name = "iceberg_table",
+    testonly = True,
+    srcs = ["tests/iceberg_table.py"],
+    imports = ["tests"],
+    visibility = ["//datacube:__pkg__"],
+    deps = ["@pypi//pyarrow"],
 )
 
 # The engine: legend-engine's pure/v1 API over frames, as DataCube's remote client calls it -- the compiler's answers
@@ -256,14 +365,20 @@ py_test(
         "tests/test_engine.py",
         "tests/test_page.py",
         "tests/test_show.py",
+        "tests/test_warehouse.py",
     ],
     args = [
         "test_engine",
         "test_page",
         "test_show",
+        "test_warehouse",
     ],
-    data = ["//native:compiler"],
-    env = _ENV,
+    data = [
+        "//native:compiler",
+        "//warehouse:sqlapi_corpus",
+    ],
+    # the warehouse's driver (legend_lite/warehouse.py), held to the one corpus its binding is (C3)
+    env = _ENV | {"LEGEND_LITE_SQLAPI_CORPUS": "$(rlocationpath //warehouse:sqlapi_corpus)"},
     main = "tests/main.py",
     target_compatible_with = _PLATFORMS,
     deps = [
@@ -305,11 +420,16 @@ py_test(
 py_binary(
     name = "repl",
     srcs = ["repl.py"],
+    # what the wheel carries beside the package, by their runfiles paths: DataCube's headless bundle (a page's files,
+    # examples and remote files read by DataCube's own code; grid.view(), to_pandas()) and DuckDB's httpfs as the wheel
+    # lays it out -- so the repl answers as `pip install 'legend-lite[datacube]'` does
     data = [
+        ":wheel_duckdb",
         "//datacube:dist",
+        "//datacube:headless_bundle",
         "//native:compiler",
     ],
-    env = {
+    env = _HEADLESS_ENV | {
         "LEGEND_LITE_LIBRARY": "$(rlocationpath //native:compiler)",
         "LEGEND_LITE_SITE": "$(rlocationpath //datacube:dist)",
         "PYTHONDONTWRITEBYTECODE": "1",
@@ -318,6 +438,7 @@ py_binary(
     main = "repl.py",
     target_compatible_with = _PLATFORMS,
     deps = [
+        ":headless",
         ":legend_lite",
         "@pypi//pandas",
         "@pypi//polars",
@@ -373,47 +494,80 @@ copy_to_directory(
     root_paths = ["datacube/dist"],
 )
 
-# DUCKDB'S HTTPFS EXTENSION for Python's DuckDB (docs/DATACUBE_ONE_APP_DESIGN_2026_10_11.md, step 2b): a page on Python
-# reads a remote file through it, and nothing downloads it where the wheel runs -- MODULE.bazel pins it per platform.
-# The only extension carried: iceberg would need a rule first that an Iceberg table's data files are remote too (its
-# metadata names them by path; R4, engine.py _REMOTE_SCHEMES).
+# QUERY AND STUDIO SERVED BY PYTHON (docs/ONE_PLATFORM_PROGRAM_2026_10_12.md E: ll.query(), ll.studio()): each app's
+# site as it is built, its tree kept (a page names ../src/ui/app.css), but DuckDB-WASM's builds, which a page whose
+# engine is Python's never loads (Python's DuckDB runs its queries: about 75 MB), and the demo's own configuration and
+# models (Python writes each app's config.json, pointing at itself). Studio's demo projects stay (84 KB): "Load demo
+# projects" writes them into this Python's repository, where Query then opens them by name
+_APP_SITE_LEFT_OUT = [
+    "**/duckdb-*.wasm",
+    "**/duckdb-browser-*.worker.js",
+    "**/duckdb/**",
+    "**/duckdb-extensions/**",
+    "demo/config*.json",
+    "demo/models/**",
+]
+
+copy_to_directory(
+    name = "wheel_query_site",
+    srcs = ["//query:site"],
+    out = "legend_lite/_apps/query",
+    # //datacube:python_engine_test serves it beside DataCube's page: a project loaded in Studio runs there (C5)
+    visibility = ["//datacube:__pkg__"],
+    exclude_srcs_patterns = _APP_SITE_LEFT_OUT,
+    root_paths = ["query"],
+)
+
+copy_to_directory(
+    name = "wheel_studio_site",
+    srcs = ["//studio:site"],
+    out = "legend_lite/_apps/studio",
+    # //datacube:python_engine_test serves it beside DataCube's page: a class made there opens in Studio
+    visibility = ["//datacube:__pkg__"],
+    exclude_srcs_patterns = _APP_SITE_LEFT_OUT,
+    root_paths = ["studio"],
+)
+
+# DUCKDB'S EXTENSIONS for Python's DuckDB, carried by the wheel and never downloaded where it runs (MODULE.bazel pins
+# each per platform): httpfs, through which a page on Python reads a remote file
+# (docs/DATACUBE_ONE_APP_DESIGN_2026_10_11.md, step 2b), and iceberg with the avro it reads manifests with, through
+# which it reads an Iceberg table (docs/ONE_PLATFORM_PROGRAM_2026_10_12.md G5) -- only when every file the table's
+# snapshot names is remote too, since its metadata names them by path (R4, engine.py).
 # Gunzipped by the Java action the warehouse's postgres extension uses (//warehouse:postgres_extension: Bazel 9.2's own
-# .gz unpacking fails on Windows), each into DuckDB's own extension folder layout (v1.5.5/<DuckDB's platform>/), which
-# Python points its DuckDB at (engine.py): DataCube's INSTALL httpfs then finds it installed, and LOAD loads it.
-_DUCKDB_PLATFORMS = {
-    "linux_aarch64": "linux_arm64",
-    "linux_x86_64": "linux_amd64",
-    "macos_arm64": "osx_arm64",
-    "macos_x86_64": "osx_amd64",
-    "windows_x86_64": "windows_amd64",
-}
+# .gz unpacking fails on Windows), each into DuckDB's own extension folder layout (v1.5.5/<DuckDB's platform>/, the
+# names DUCKDB_PLATFORMS gives: //tools/platforms), which Python points its DuckDB at (engine.py): DataCube's INSTALL
+# then finds each installed, and LOAD loads it.
+_DUCKDB_EXTENSIONS = ["httpfs", "iceberg", "avro"]
 
 [java_run(
-    name = "duckdb_httpfs_" + duckdb,
-    srcs = ["@duckdb_httpfs_extension_" + duckdb + "//file"],
-    outs = ["duckdb_extensions/v1.5.5/" + duckdb + "/httpfs.duckdb_extension"],
+    name = "duckdb_" + extension + "_" + duckdb,
+    srcs = ["@duckdb_" + extension + "_extension_" + duckdb + "//file"],
+    outs = ["duckdb_extensions/v1.5.5/" + duckdb + "/" + extension + ".duckdb_extension"],
     arguments = [
-        "$(execpath @duckdb_httpfs_extension_" + duckdb + "//file)",
+        "$(execpath @duckdb_" + extension + "_extension_" + duckdb + "//file)",
         "{OUT}",
     ],
     main_class = "com.legend.tools.gunzip.Gunzip",
     mnemonic = "GunzipDuckdbExtension",
     target_compatible_with = compatible_with([bazel]),
     deps = ["//tools/gunzip"],
-) for bazel, duckdb in _DUCKDB_PLATFORMS.items()]
+) for bazel, duckdb in DUCKDB_PLATFORMS.items() for extension in _DUCKDB_EXTENSIONS]
 
-_DUCKDB_HTTPFS, _DUCKDB_HTTPFS_COMPATIBLE = platform_select(
-    {bazel: [":duckdb_httpfs_" + duckdb] for bazel, duckdb in _DUCKDB_PLATFORMS.items()},
-    "DuckDB httpfs extension (MODULE.bazel, duckdb_httpfs_extension_*)",
+_DUCKDB_CARRIED, _DUCKDB_CARRIED_COMPATIBLE = platform_select(
+    {
+        bazel: [":duckdb_" + extension + "_" + duckdb for extension in _DUCKDB_EXTENSIONS]
+        for bazel, duckdb in DUCKDB_PLATFORMS.items()
+    },
+    "DuckDB's httpfs, iceberg and avro extensions (MODULE.bazel, duckdb_*_extension_*)",
 )
 
 # the folder, as the package carries it (legend_lite/_duckdb) and as the tests are given it (LEGEND_LITE_DUCKDB_EXTENSIONS)
 copy_to_directory(
     name = "wheel_duckdb",
-    srcs = _DUCKDB_HTTPFS,
+    srcs = _DUCKDB_CARRIED,
     out = "legend_lite/_duckdb",
     root_paths = ["python/duckdb_extensions"],
-    target_compatible_with = _DUCKDB_HTTPFS_COMPATIBLE,
+    target_compatible_with = _DUCKDB_CARRIED_COMPATIBLE,
     visibility = ["//datacube:__pkg__"],
 )
 
@@ -488,7 +642,9 @@ py_wheel(
         ":wheel_datacube",
         ":wheel_duckdb",
         ":wheel_package",
+        ":wheel_query_site",
         ":wheel_site",
+        ":wheel_studio_site",
     ] + select({
         "@platforms//os:linux": [":wheel_library_linux"],
         "@platforms//os:macos": [":wheel_library_macos"],
@@ -537,11 +693,15 @@ py_test(
     }),
     main = "tests/main.py",
     target_compatible_with = _PLATFORMS,
-    deps = ["@rules_python//python/runfiles"],
+    deps = [
+        ":iceberg_table",
+        "@rules_python//python/runfiles",
+    ],
 )
 
 # the REPL built in a lane, so it does not rot unseen (as //tools/metrics:tools_build_test keeps its tool): everything
-# it builds is built for engine_test and python_engine_test anyway, bar its own wrapper
+# it builds is built for engine_test, python_engine_test and headless_test (the bundle, the extensions) anyway, bar its
+# own wrapper
 build_test(
     name = "tools_build_test",
     targets = [":repl"],

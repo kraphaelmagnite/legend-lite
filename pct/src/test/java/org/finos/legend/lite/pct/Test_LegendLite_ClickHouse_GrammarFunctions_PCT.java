@@ -30,6 +30,10 @@ public class Test_LegendLite_ClickHouse_GrammarFunctions_PCT extends PCTReportCo
     // Pinned by a STABLE part of the message (the runner matches by containment): no per-run id.
     // First measured 2026-10-12 (ClickHouse 25.8, the pinned server).
     private static final MutableList<ExclusionSpecification> expectedFailures = Lists.mutable.with(
+            // getAll's testBasic passes through the harness's connection, not the dialect: the system store's tables
+            // are a session's own, so PctBackend.openSystem opens a session (EmbeddedClickHouse.sessionJdbcUrl). The
+            // ClickHouse connector owns it (the dialect plan's P5), and with it the session's idle expiry and its
+            // one-statement-at-a-time lock (PR #34's review, 2026-10-13)
             // INSTANCE IDENTITY (as on DuckDB): the asserts want the interpreter's ORIGINAL instances back, or eq/==
             // by reference; the harness inlines captured instances BY VALUE, so identity is erased before the wire
             one("meta::pure::functions::collection::tests::filter::testFilterInstance_Function_1__Boolean_1_", "instanceOf meta::pure::functions::collection::tests::model::CO_Person"),
@@ -40,19 +44,9 @@ public class Test_LegendLite_ClickHouse_GrammarFunctions_PCT extends PCTReportCo
             // and harness limits, the 0-based indexOf, error positions and messages
             one("meta::pure::functions::boolean::tests::equality::eq::testEqNonPrimitive_Function_1__Boolean_1_", "\"Assert failed\""),
             one("meta::pure::functions::boolean::tests::equality::eq::testEqPrimitiveExtension_Function_1__Boolean_1_", "\"unknown type 'meta::pure::functions::boolean::tests::equalitymodel::ExtendedInteger' in @meta::pure::functions::boolean::tests::equalitymodel::ExtendedInteger\""),
-            one("meta::pure::functions::boolean::tests::equality::equal::testEqualNonPrimitive_Function_1__Boolean_1_", "\"a struct field of unknown type reached ClickHouse: a Tuple's fields are typed\""),
+            one("meta::pure::functions::boolean::tests::equality::equal::testEqualNonPrimitive_Function_1__Boolean_1_", "\"Assert failed\""),
             one("meta::pure::functions::boolean::tests::equality::equal::testEqualPrimitiveExtension_Function_1__Boolean_1_", "\"unknown type 'meta::pure::functions::boolean::tests::equalitymodel::ExtendedInteger' in @meta::pure::functions::boolean::tests::equalitymodel::ExtendedInteger\""),
-            one("meta::pure::functions::collection::tests::map::testMapRelationshipFromOneToOne_Function_1__Boolean_1_", "\"unbound variable '$address'\""),
-            // CLICKHOUSE'S OWN LIMIT: a Tuple's fields are typed and a Tuple is never NULL (measured): an unset
-            // property is a NULL of no type, and an empty untyped list (Nullable(Nothing)) has no Tuple to zip or
-            // project into
-            one("meta::pure::functions::boolean::tests::equality::eq::testEqVarIdentity_Function_1__Boolean_1_", "\"a struct field of unknown type reached ClickHouse: a Tuple's fields are typed\""),
-            one("meta::pure::functions::boolean::tests::equality::equal::testEqualVarIdentity_Function_1__Boolean_1_", "\"a struct field of unknown type reached ClickHouse: a Tuple's fields are typed\""),
-            one("meta::pure::functions::collection::tests::map::testMapInstance_Function_1__Boolean_1_", "\"a struct field of unknown type reached ClickHouse: a Tuple's fields are typed\""),
-            one("meta::pure::functions::lang::tests::letFn::testAssignNewInstance_Function_1__Boolean_1_", "\"a struct field of unknown type reached ClickHouse: a Tuple's fields are typed\""),
-            // CLICKHOUSE'S OWN LIMIT: its JDBC driver speaks HTTP with no session, so no table only one session sees:
-            // the server engine's system database (the metamodel's tables) has nowhere to live
-            one("meta::pure::functions::collection::tests::getAll::testBasic_Function_1__Boolean_1_", "\"a session's own table reached ClickHouse, which has no session over its JDBC driver: metamodel_classes\"")
+            one("meta::pure::functions::collection::tests::map::testMapRelationshipFromOneToOne_Function_1__Boolean_1_", "\"unbound variable '$address'\"")
     );
 
     public static Test suite() {

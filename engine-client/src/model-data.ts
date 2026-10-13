@@ -4,6 +4,8 @@
 // table here holds what the same table on the server holds, its column types the server's. This file says which tables
 // a model's test data fills and which Database declares each, and runs the statements it is given.
 
+import type { HostOperationsSource } from './host-operations.ts';
+
 /** The model JSON parts read here (grammarToJson/model). */
 interface ModelElement {
   readonly _type: string;
@@ -84,8 +86,6 @@ export function databaseTables(elements: readonly ModelElement[]): DeclaredTable
   return out;
 }
 
-const tableKey = (schema: string, table: string): string => `${schema}.${table}`;
-
 /**
  * The one Database of the model that declares `schema.table` (its JSON's elements). None, or more than one, is refused:
  * which one would be a guess (the server is told, by the test that names its store; the tab has no test to ask).
@@ -130,14 +130,15 @@ export interface DataSink {
   run(sql: string): Promise<unknown>;
 }
 
-/** A sink that also takes a file's bytes: a person's own file (Parquet is binary). */
+/**
+ * A sink that also takes a file's bytes: a person's own file (Parquet is binary). DuckDB-WASM takes the buffer it is
+ * given (it hands it to its worker: the view is empty after), so the caller's bytes are copied before they go in; a
+ * file registered for one read is let go of after it (`dropFile`, where the sink can).
+ */
 export interface FileSink extends DataSink {
   registerFileBuffer(name: string, bytes: Uint8Array): Promise<void>;
+  dropFile?(name: string): Promise<void>;
 }
-
-/** A name as DuckDB reads it: a person's file's own column names, read as the file has them. */
-const ident = (s: string): string => `"${s.replace(/"/g, '""')}"`;
-const literal = (s: string): string => `'${s.replace(/'/g, "''")}'`;
 
 /**
  * A table made from a person's own file (plan A2's second source), in one transaction: the table made empty by the
@@ -148,7 +149,7 @@ const literal = (s: string): string => `'${s.replace(/'/g, "''")}'`;
  * name: read_csv and read_parquet read a name as a glob (`sales[2024].csv` matches nothing). The table's names are the
  * planner's (`seed`); returned, to drop it by later.
  */
-export async function loadFileTable(sink: FileSink, source: SeedSource, model: string,
+export async function loadFileTable(sink: FileSink, source: SeedSource & HostOperationsSource, databaseType: string, model: string,
   target: { readonly database: string; readonly schema: string; readonly table: string; readonly columns: readonly { readonly name: string }[] },
   file: { readonly name: string; readonly bytes: Uint8Array }, as: string): Promise<TableSeed> {
   const format = /\.csv$/i.test(file.name) ? 'csv' : /\.parquet$/i.test(file.name) ? 'parquet' : undefined;
@@ -159,21 +160,37 @@ export async function loadFileTable(sink: FileSink, source: SeedSource, model: s
   }]);
   const seed = made!.seed;
   const registered = `${as}.${format}`;
-  await sink.registerFileBuffer(registered, file.bytes);
-  const read = format === 'csv' ? `read_csv(${literal(registered)}, header = true, all_varchar = true)` : `read_parquet(${literal(registered)})`;
-  await sink.run('BEGIN TRANSACTION');
+  // the transaction's steps and the rows put in: the planner's statements (D5), each declared column from the file's
+  // column of its name -- a CSV's read as text, a Parquet's as typed, DuckDB converting each value to its column's type
+  const [begin, insert, commit, rollback] = await source.hostOperations(databaseType, [
+    { op: 'transaction', step: 'begin' },
+    {
+      op: 'insert', target: { schema: target.schema, name: target.table, declared: true },
+      // the planner's own columns: each as declared, the name a file's header says (no store quotes)
+      columns: seed.columns.map((c) => ({ target: c.name, from: c.name })),
+      from: { file: { at: registered, format: format === 'csv' ? 'csvText' : 'parquet' } },
+    },
+    { op: 'transaction', step: 'commit' },
+    { op: 'transaction', step: 'rollback' },
+  ]);
+  // a copy: the database takes the buffer it is given, and the caller keeps its bytes (Studio puts them in again)
+  await sink.registerFileBuffer(registered, file.bytes.slice());
   try {
-    for (const sql of seed.sql) await sink.run(sql);
-    await sink.run(`INSERT INTO ${seed.table} (${seed.columns.map((c) => c.sql).join(', ')}) `
-      + `SELECT ${seed.columns.map((c) => ident(c.name)).join(', ')} FROM ${read}`);
-    await sink.run('COMMIT');
-  } catch (e) {
+    for (const sql of begin!) await sink.run(sql);
     try {
-      await sink.run('ROLLBACK');
-    } catch (r) {
-      throw new Error(`${e instanceof Error ? e.message : String(e)} -- and putting the table back failed: ${r instanceof Error ? r.message : String(r)}`);
+      for (const sql of [...seed.sql, ...insert!, ...commit!]) await sink.run(sql);
+    } catch (e) {
+      try {
+        for (const sql of rollback!) await sink.run(sql);
+      } catch (r) {
+        throw new Error(`${e instanceof Error ? e.message : String(e)} -- and putting the table back failed: ${r instanceof Error ? r.message : String(r)}`);
+      }
+      throw e;
     }
-    throw e;
+  } finally {
+    // the rows are the table's now (or the table is as it was): the file is not read again -- and a drop that fails
+    // neither fails a put that worked nor hides why a read did not (at worst the file stays registered)
+    await sink.dropFile?.(registered).catch(() => undefined);
   }
   return seed;
 }
@@ -182,54 +199,5 @@ export async function loadFileTable(sink: FileSink, source: SeedSource, model: s
 export async function loadDataTables(sink: DataSink, tables: readonly SeededTable[]): Promise<void> {
   for (const t of tables) {
     for (const sql of t.seed.sql) await sink.run(sql);
-  }
-}
-
-/**
- * The tab's test data, one model's at a time. Tables are named as a model's Databases declare them, so two versions of
- * a project fill the same names: `use` makes one model's test data the rows there -- its own tables made afresh, and
- * every table an earlier model's test data made that this one does not fill dropped -- and loads nothing when that
- * model's are there already. `key` names the model (a project version); none means its text may have changed since
- * (Studio's workspace), so it is loaded each time. `keep` are tables something else fills (a person's file): neither
- * made nor dropped here. Calls run one after another, in the order made; `with` runs a query inside its turn, so
- * another model's load cannot land between the rows made and the query that reads them (two of DataCube's cubes,
- * over two versions of one project, on one page).
- */
-export class TestData {
-  readonly #sink: DataSink;
-  #current: string | undefined;
-  /** The tables the last load made: the planner's statement that drops each, by `schema.table`. */
-  #made = new Map<string, string>();
-  #queue: Promise<unknown> = Promise.resolve();
-
-  constructor(sink: DataSink) {
-    this.#sink = sink;
-  }
-
-  use(key: string | undefined, tables: readonly SeededTable[], keep: ReadonlySet<string> = new Set()): Promise<void> {
-    return this.with(key, tables, () => Promise.resolve(), keep);
-  }
-
-  /** `tables` made the rows there (as `use`), then `query` run, before any other call's turn. */
-  with<T>(key: string | undefined, tables: readonly SeededTable[], query: () => Promise<T>, keep: ReadonlySet<string> = new Set()): Promise<T> {
-    const next = this.#queue.then(async () => {
-      await this.#make(key, tables, keep);
-      return query();
-    });
-    this.#queue = next.catch(() => undefined);
-    return next;
-  }
-
-  async #make(key: string | undefined, tables: readonly SeededTable[], keep: ReadonlySet<string>): Promise<void> {
-    if (key !== undefined && key === this.#current) return;
-    this.#current = undefined;
-    const filled = tables.filter((t) => !keep.has(tableKey(t.schema, t.table)));
-    const now = new Set(filled.map((t) => tableKey(t.schema, t.table)));
-    for (const [k, drop] of this.#made) {
-      if (!now.has(k) && !keep.has(k)) await this.#sink.run(drop);
-    }
-    this.#made = new Map(filled.map((t) => [tableKey(t.schema, t.table), t.seed.drop]));
-    await loadDataTables(this.#sink, filled);
-    this.#current = key;
   }
 }

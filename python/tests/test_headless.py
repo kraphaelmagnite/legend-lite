@@ -58,6 +58,38 @@ class Grids(unittest.TestCase):
         self.assertIn('groupBy', view.query)
         self.assertIn('GROUP BY', view.sql.upper())
 
+    def test_a_grid_exports_as_its_export_menu_makes_the_file(self):
+        # the screen's own core (export-render.ts), run headless: each format DataCube's Export menu offers, with the
+        # grid's formats (a sum past a thousand, written with its separator where a person reads it) and its heatmap
+        import csv
+        import io
+        import pandas as pd
+        frame = pd.DataFrame({'region': ['EMEA', 'EMEA', 'APAC'], 'qty': [1200, 34, 5000]})
+        grid = self.page.grid(frame, name='trades_exported', rows=['region'], measures={'qty': 'sum'})
+        grid.configure({'columns': {'qty': {'heatmap': {'from': '#ffffff', 'to': '#ff0000'}}}})
+        # CSV: the raw values, each group's sum on its own row
+        rows = list(csv.reader(io.StringIO(grid.export('csv'))))
+        header, body = rows[0], rows[1:]
+        self.assertIn('qty', header)
+        region, qty = header.index('region'), header.index('qty')
+        self.assertEqual({r[region]: r[qty] for r in body}, {'EMEA': '1234', 'APAC': '5000'}, rows)
+        # formatted where a person reads it: the separator, as the screen draws it
+        text, html = grid.export('text'), grid.export('html')
+        self.assertIn('1,234', text)
+        self.assertIn('5,000', html)
+        # the heatmap's colours, as the grid draws them: the top of the scale its `to`
+        self.assertRegex(html.lower(), r'background(-color)?:\s*(#ff0000|rgb\(255,\s*0,\s*0\))')
+        self.assertTrue(grid.export('excel').startswith(b'PK'), 'a workbook is a zip')
+        self.assertTrue(grid.export('pdf').startswith(b'%PDF'))
+        with self.assertRaisesRegex(ValueError, "'csv', 'excel', 'html', 'text' or 'pdf'"):
+            grid.export('docx')
+        import tempfile
+        with tempfile.TemporaryDirectory() as folder:
+            self.assertEqual(grid.export('excel', to=Path(folder) / 'trades.xlsx').read_bytes()[:2], b'PK')
+            # the file's bytes as the export wrote them, on every system (CSV's own CRLF kept, never doubled)
+            written = grid.export('csv', to=Path(folder) / 'trades.csv')
+            self.assertEqual(written.read_bytes(), grid.export('csv').encode('utf-8'))
+
     def test_a_filter_and_a_calculated_column_reach_the_relation_and_its_rows(self):
         grid = self.page.grid(TRADES, name='trades_shaped')
         grid.filter(('region', 'equal', 'EMEA'))
@@ -371,6 +403,17 @@ class Remote(unittest.TestCase):
         cls.server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), handler)
         threading.Thread(target=cls.server.serve_forever, daemon=True).start()
         cls.base = f'http://127.0.0.1:{cls.server.server_address[1]}'
+        # Iceberg tables (G5): one whose every file is served, and three naming a file on this machine where its data
+        # file, its manifest and its manifest list would be -- none of which exist, so a read of one would fail (and a
+        # manifest that cannot be read ends the process inside DuckDB 1.5.5's iceberg_scan): each is refused first
+        import iceberg_table
+        served = Path(cls.folder.name)
+        # named as a page names one: its table's URL marked #iceberg (remote.ts inferFormat)
+        cls.iceberg = iceberg_table.write(served, 'trades_iceberg', cls.base, [[('FX', 1), ('EQ', 2)], [('FX', 3)]]) + '#iceberg'
+        here = cls.iceberg_here = served / 'not-served'
+        cls.iceberg_local = {
+            what: iceberg_table.write(served, f'local_{what}', cls.base, [[('FX', 1)]], **{f'{what}_url': str(here / what)})
+            + '#iceberg' for what in ('data', 'manifest', 'list')}
 
     @classmethod
     def tearDownClass(cls):
@@ -404,6 +447,30 @@ class Remote(unittest.TestCase):
         # followed (the runfiles are links on macOS and Linux)
         carried = os.path.normcase(os.path.abspath(os.environ['LEGEND_LITE_DUCKDB_EXTENSIONS']))
         self.assertTrue(os.path.normcase(os.path.abspath(httpfs[1])).startswith(carried + os.sep), httpfs[1])
+
+    def test_a_remote_iceberg_table_is_read_through_a_view_with_the_extensions_carried(self):
+        answer = self.mount(self.iceberg, 'remote_iceberg')
+        self.assertEqual(answer.status, 200, answer.body[-600:])
+        rows = self.frames.connection.execute('SELECT desk, qty FROM remote_iceberg ORDER BY qty').fetchall()
+        self.assertEqual(rows, [('FX', 1), ('EQ', 2), ('FX', 3)])
+        with self.frames.serving() as models:
+            self.assertEqual(models['remote_iceberg'], json.loads(answer.body)['model'])
+        carried = os.path.normcase(os.path.abspath(os.environ['LEGEND_LITE_DUCKDB_EXTENSIONS']))
+        for extension in ('iceberg', 'avro'):
+            with self.subTest(extension=extension):
+                loaded, path = self.frames.connection.execute(
+                    'SELECT loaded, install_path FROM duckdb_extensions() WHERE extension_name = ?', [extension]).fetchone()
+                self.assertTrue(loaded)
+                self.assertTrue(os.path.normcase(os.path.abspath(path)).startswith(carried + os.sep), path)
+
+    def test_an_iceberg_table_naming_a_file_on_this_machine_is_refused_before_any_view_reads_it(self):
+        for what, url in self.iceberg_local.items():
+            with self.subTest(names=what):
+                answer = self.mount(url, f'iceberg_{what}')
+                self.assertEqual(answer.status, 400, answer.body[:300])
+                self.assertIn(b'every file it names is a remote one', answer.body)
+                self.assertIn(repr(str(self.iceberg_here / what)), answer.body.decode('utf-8'))
+                self.assertFalse(self.frames.taken(f'iceberg_{what}'))
 
     def test_a_url_that_is_not_remote_is_refused_before_anything_runs(self):
         local = Path(self.folder.name, 'desks.csv')

@@ -34,6 +34,12 @@ files, UI, docs or commits (standing rule).
 7. **The SQL-API client and every vendor binding run in WebAssembly**
    (user, 2026-09-26): the same Java code, in the module beside the
    planner, not a separate TypeScript client.
+   - *Built 2026-10-13, one part changed and to be confirmed by the user*
+     (docs/ONE_PLATFORM_PROGRAM_2026_10_12.md C3): the same Java runs in
+     the tab (`SqlApiCalls`), but in its own small module
+     (`//warehouse:sqlapi_page`, 110 KB), not the planner's. The planner
+     runs in a worker, so each HTTP step of a statement would be a round
+     trip to it.
 
 ## 1. The pieces
 

@@ -1225,7 +1225,10 @@ public final class BigQuery extends AnsiSqlRenderer {
         }
         if (target instanceof SqlType.Array arr) {
             SqlType from = listElement(v);
-            if (v instanceof SqlExpr.NullLit || from == null) {
+            // a text element as LITERAL is the text itself (LITERAL is STRING physically): the mixed sort's ordered ids
+            // (2026-10-13, PR #34's review: element-wise, it wrote the aggregate twice)
+            if (v instanceof SqlExpr.NullLit || from == null
+                    || from == SqlType.Scalar.VARCHAR && arr.element() == SqlType.Scalar.LITERAL) {
                 return writer.append("CAST(").expr(v, 0).append(" AS ").append(bqType(target)).append(")");
             }
             // element-wise: BigQuery casts between arrays of compatible element types only (measured)

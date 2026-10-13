@@ -52,8 +52,21 @@ public final class ClickHouse extends AnsiSqlRenderer {
     static final String SETTINGS = "SETTINGS join_use_nulls = 1, union_default_mode = 'DISTINCT',"
             + " cast_keep_nullable = 1, session_timezone = 'UTC', query_plan_merge_expressions = 0";
 
+    /** The setting of correlated subqueries, experimental on 25.8 and ON by default there (measured 2026-10-13): a
+     *  correlated EXISTS answers false for an outer row whose correlated column is NULL, whatever the filter (o.v IS
+     *  NULL OR true is false for a NULL o.v). So a statement holds one only where every conjunct of its filter is
+     *  null-rejecting ({@link #expr}: an EXISTS, IN written as EXISTS, and a quantified comparison), and carries the
+     *  setting on; every other statement carries it off, so a correlated subquery written anywhere else is refused by
+     *  the server rather than answered wrong (PR #34's review: the default had made that claim false). */
+    static final String CORRELATED = ", allow_experimental_correlated_subqueries = 1";
+    static final String UNCORRELATED = ", allow_experimental_correlated_subqueries = 0";
+
     /** How deep the writer is in {@link #query}: the root query (depth 0 on entry) writes the SETTINGS clause. */
     private final int[] nesting = {0};
+
+    /** Whether the root statement being written holds a correlated subquery, each checked ({@link #CORRELATED}):
+     *  an EXISTS, IN written as EXISTS, or a quantified comparison. */
+    private final boolean[] correlatedExists = {false};
 
     public ClickHouse() {
         super(Lexicon.CLICKHOUSE, TypeNames.CLICKHOUSE, Spellings.CLICKHOUSE);
@@ -115,14 +128,113 @@ public final class ClickHouse extends AnsiSqlRenderer {
                 SqlExpr l = lists.get(i);
                 writer.append(i > 0 ? ", " : "");
                 if (lists.size() == 1) {
-                    writer.piece(list(l));
+                    writer.piece(exploded(l, ps.get(i)));
                 } else {
-                    writer.append("arrayResize(arrayMap(\"__z\" -> toNullable(\"__z\"), ").piece(list(l))
-                            .append("), ").piece(n).append(", NULL)");
+                    writer.append("arrayResize(arrayMap(\"__z\" -> toNullable(\"__z\"), ")
+                            .piece(exploded(l, ps.get(i))).append("), ").piece(n).append(", NULL)");
                 }
                 writer.append(" AS ").append(aliasIdent(sub.alias() + "." + ExplosionMarkers.markerColumn(ps.get(i))));
             }
             return writer;
+        }
+        // an as-of join whose ON is its inequality alone: ClickHouse's ASOF needs an equality besides it, so it gets one
+        // that always holds where the inequality can -- each operand's hash times zero (a NULL operand matches nothing
+        // either way); a constant key would be folded away, and "needs at least one equi-join column" (measured 25.8)
+        if (src instanceof com.legend.sql.SqlSource.Join j && j.kind() == com.legend.sql.SqlSource.Join.Kind.ASOF_LEFT
+                && j.on() != null && !conjuncts(j.on()).stream().anyMatch(c -> c instanceof SqlExpr.Call call
+                        && call.fn() == SqlFn.EQUAL)) {
+            // the inequality whose operands read the two sides, where there is one (an operand of one side only would
+            // make the hash key constant on both, which the server refuses)
+            SqlExpr.Call ineq = conjuncts(j.on()).stream()
+                    .filter(c -> c instanceof SqlExpr.Call call && (call.fn() == SqlFn.LESS
+                            || call.fn() == SqlFn.LESS_EQUAL || call.fn() == SqlFn.GREATER
+                            || call.fn() == SqlFn.GREATER_EQUAL))
+                    .map(SqlExpr.Call.class::cast)
+                    .sorted(java.util.Comparator.comparingInt(c -> TablesRead.of(c.args().get(0)).isEmpty()
+                            || TablesRead.of(c.args().get(1)).isEmpty()
+                            || TablesRead.of(c.args().get(0)).equals(TablesRead.of(c.args().get(1))) ? 1 : 0))
+                    .findFirst()
+                    .orElseThrow(() -> new DialectCapability("an as-of join with neither an equality nor an"
+                            + " inequality reached ClickHouse"));
+            source(writer, j.left(), depth);
+            nl(writer, depth).append(asOfJoinClause()).append(" ");
+            source(writer, j.right(), depth);
+            return writer.append(" ON cityHash64(").expr(ineq.args().get(0), 0).append(") * 0 = cityHash64(")
+                    .expr(ineq.args().get(1), 0).append(") * 0 AND ").expr(j.on(), 0);
+        }
+        // an outer join whose ON reads one side only ("cannot determine join keys", measured 25.8; an inner one is
+        // filtered, and left alone) is keyed by an equality that holds exactly where the condition does: if(cond, 0, 1)
+        // against the other side's column hashed times zero (never NULL, so every row of that side takes part); a NULL
+        // condition matches nothing, as SQL's ON
+        if (src instanceof com.legend.sql.SqlSource.Join j && j.on() != null
+                && (j.kind() == com.legend.sql.SqlSource.Join.Kind.LEFT
+                        || j.kind() == com.legend.sql.SqlSource.Join.Kind.RIGHT
+                        || j.kind() == com.legend.sql.SqlSource.Join.Kind.FULL)
+                && !(j.on() instanceof SqlExpr.BoolLit)) {
+            java.util.Set<String> lefts = new java.util.HashSet<>();
+            java.util.Set<String> rights = new java.util.HashSet<>();
+            aliasesOf(j.left(), lefts);
+            aliasesOf(j.right(), rights);
+            SqlExpr on = j.on();
+            java.util.Set<String> read = TablesRead.of(on);
+            boolean leftOnly = !read.isEmpty() && lefts.containsAll(read);
+            boolean rightOnly = !read.isEmpty() && rights.containsAll(read);
+            if (leftOnly || rightOnly) {
+                SqlExpr other = anyColumnOf(leftOnly ? j.right() : j.left());
+                SqlWriter.Piece cond = w -> w.append("if(").expr(on, 0).append(", 0, 1)");
+                SqlWriter.Piece zero = w -> w.append("coalesce(cityHash64(").expr(other, 0).append("), 0) * 0");
+                source(writer, j.left(), depth);
+                nl(writer, depth).append(j.kind().sql).append(" ");
+                source(writer, j.right(), depth);
+                return writer.append(" ON ").piece(leftOnly ? cond : zero).append(" = ").piece(leftOnly ? zero : cond);
+            }
+        }
+        // a lateral subquery that only FILTERS its source by the row before it is that source joined on the filter: its
+        // correlated conjuncts move to the ON, each inner column read as the subquery's own output of it (ClickHouse
+        // has no LATERAL, and its correlated subqueries refuse a sort, measured 25.8); any other lateral is refused
+        if (src instanceof com.legend.sql.SqlSource.Join j && (j.kind() == com.legend.sql.SqlSource.Join.Kind.CROSS_LATERAL
+                || j.kind() == com.legend.sql.SqlSource.Join.Kind.LEFT_LATERAL)
+                && j.right() instanceof com.legend.sql.SqlSource.Subselect sub
+                && sub.inner() instanceof SqlSelect s && s.where() != null && filterOnly(s)) {
+            java.util.Set<String> inner = new java.util.HashSet<>();
+            aliasesOf(s.from(), inner);
+            List<SqlExpr> local = new ArrayList<>();
+            List<SqlExpr> correlated = new ArrayList<>();
+            for (SqlExpr c : conjuncts(s.where())) {
+                (TablesRead.of(c).stream().allMatch(inner::contains) ? local : correlated).add(c);
+            }
+            // its own columns only: an aggregate or a window would be over the source before the filter, and a
+            // projection reading the row before is no column of the source
+            boolean columns = s.projections().stream().allMatch(p -> p.expr() instanceof SqlExpr.Column c
+                    && (c.table() == null || inner.contains(c.table())));
+            if (!correlated.isEmpty() && columns) {
+                java.util.Map<String, String> outputOf = new java.util.HashMap<>();
+                if (s.projections().isEmpty() && inner.size() == 1) {
+                    // SELECT * over one source: each of its columns is output under its own name
+                    String only = inner.iterator().next();
+                    s.outputs().forEach(o -> outputOf.putIfAbsent(only + "." + o.name(), o.name()));
+                }
+                for (SqlSelect.Projection p : s.projections()) {
+                    if (p.expr() instanceof SqlExpr.Column c && c.table() != null) {
+                        String name = p.alias() != null ? p.alias()
+                                : java.util.Objects.requireNonNull(p.out(), "a projection's output").name();
+                        outputOf.putIfAbsent(c.table() + "." + c.name(), name);
+                    }
+                }
+                InnerAsOutput rename = new InnerAsOutput(inner, outputOf, sub.alias());
+                List<SqlExpr> on = new ArrayList<>(correlated.stream().map(rename::of).toList());
+                if (j.on() != null && !(j.on() instanceof SqlExpr.BoolLit b && b.value())) {
+                    on.add(j.on());
+                }
+                SqlSelect filtered = s.withWhere(local.isEmpty() ? null
+                        : local.size() == 1 ? local.get(0) : new SqlExpr.Call(SqlFn.AND, local));
+                source(writer, j.left(), depth);
+                nl(writer, depth).append(j.kind() == com.legend.sql.SqlSource.Join.Kind.LEFT_LATERAL
+                        ? "LEFT OUTER JOIN " : "INNER JOIN ");
+                subselectSource(writer, new com.legend.sql.SqlSource.Subselect(filtered, sub.alias(), sub.frameName()),
+                        depth);
+                return writer.append(" ON ").expr(on.size() == 1 ? on.get(0) : new SqlExpr.Call(SqlFn.AND, on), 0);
+            }
         }
         if (src instanceof com.legend.sql.SqlSource.Join j && (j.kind() == com.legend.sql.SqlSource.Join.Kind.CROSS_LATERAL
                 || j.kind() == com.legend.sql.SqlSource.Join.Kind.LEFT_LATERAL)) {
@@ -189,13 +301,16 @@ public final class ClickHouse extends AnsiSqlRenderer {
     @Override
     protected SqlWriter query(SqlWriter writer, SqlQuery q, int depth) {
         boolean root = nesting[0] == 0;
+        if (root) {
+            correlatedExists[0] = false;
+        }
         nesting[0]++;
         try {
             super.query(writer, q, depth);
         } finally {
             nesting[0]--;
         }
-        return root ? nl(writer, 0).append(SETTINGS) : writer;
+        return root ? nl(writer, 0).append(SETTINGS + (correlatedExists[0] ? CORRELATED : UNCORRELATED)) : writer;
     }
 
     @Override
@@ -252,6 +367,156 @@ public final class ClickHouse extends AnsiSqlRenderer {
     @Override
     protected String rowOrderColumn() {
         throw new DialectCapability("row order reached ClickHouse, which has no row-order column");
+    }
+
+    /** A select that only filters its source: no grouping, ordering, limit, distinct or window qualification. */
+    private static boolean filterOnly(SqlSelect s) {
+        return s.groupBy().isEmpty() && s.having() == null && s.qualify() == null && s.orderBy().isEmpty()
+                && s.limit() == null && s.offset() == null
+                && !(s instanceof SqlSelect(var ps, boolean distinct, var f, var w, var g, var h, var q, var o, var l,
+                        var off, var outs) && distinct);
+    }
+
+    /** A column {@code src} defines (its first output; a join's from its left side). */
+    private static SqlExpr anyColumnOf(com.legend.sql.SqlSource src) {
+        return switch (src) {
+            case com.legend.sql.SqlSource.Join j -> anyColumnOf(j.left());
+            case com.legend.sql.SqlSource.Values v -> SqlExpr.Column.derived(v.alias(), v.columns().get(0));
+            case com.legend.sql.SqlSource.Subselect s when !s.inner().outputs().isEmpty() ->
+                    SqlExpr.Column.of(s.alias(), s.inner().outputs().get(0));
+            case com.legend.sql.SqlSource.Table t when !t.outputs().isEmpty() ->
+                    SqlExpr.Column.of(t.alias(), t.outputs().get(0));
+            default -> throw new DialectCapability("a join reading one side only, to a "
+                    + src.getClass().getSimpleName() + " of undeclared columns, reached ClickHouse");
+        };
+    }
+
+    /** Does {@code s} read a column of a source it does not define (a correlated subquery)? */
+    private static boolean correlated(SqlSelect s) {
+        java.util.Set<String> own = new java.util.HashSet<>();
+        aliasesOf(s.from(), own);
+        java.util.Set<String> read = new java.util.HashSet<>();
+        if (s.where() != null) {
+            read.addAll(TablesRead.of(s.where()));
+        }
+        s.projections().forEach(p -> read.addAll(TablesRead.of(p.expr())));
+        return !own.containsAll(read);
+    }
+
+    private static final java.util.Set<SqlFn> COMPARISONS = java.util.Set.of(SqlFn.EQUAL, SqlFn.NOT_EQUAL,
+            SqlFn.LESS, SqlFn.LESS_EQUAL, SqlFn.GREATER, SqlFn.GREATER_EQUAL);
+
+    /** Whether {@code e} is NULL wherever an outer column it reads is: it reads none ({@code own} are the subquery's
+     *  sources), it is that column, or it compares two such operands. */
+    private static boolean nullRejecting(SqlExpr e, java.util.Set<String> own) {
+        if (own.containsAll(TablesRead.of(e)) || e instanceof SqlExpr.Column) {
+            return true;
+        }
+        return e instanceof SqlExpr.Call c && c.args().size() == 2 && COMPARISONS.contains(c.fn())
+                && c.args().stream().allMatch(a -> own.containsAll(TablesRead.of(a)) || a instanceof SqlExpr.Column);
+    }
+
+    /** Whether a correlated subquery's answer is right here ({@link #CORRELATED}): it has a filter, and each of its
+     *  conjuncts is null-rejecting, so an outer row with a NULL correlated column matches no row, which is what the
+     *  server answers for it. */
+    private static boolean correlatedRight(SqlSelect s) {
+        java.util.Set<String> own = new java.util.HashSet<>();
+        aliasesOf(s.from(), own);
+        return s.where() != null && conjuncts(s.where()).stream().allMatch(x -> nullRejecting(x, own));
+    }
+
+    /** EXISTS a row of {@code s} under its filter {@code w} and {@code cond} (none: {@code w} alone). */
+    private static SqlExpr someRow(SqlSelect s, SqlExpr w, @com.legend.base.Nullable SqlExpr cond) {
+        return new SqlExpr.Exists(s.withWhere(cond == null ? w : new SqlExpr.Call(SqlFn.AND, List.of(w, cond)))
+                .withProjections(List.of(new SqlSelect.Projection(new SqlExpr.IntLit(1), "__one", null))));
+    }
+
+    /** EXISTS. Over a select of constants it answers 0 where its filter keeps a row (ClickHouse 25.8, measured:
+     *  EXISTS (SELECT 1 FROM numbers(5) WHERE number > 3) is 0, with the column selected 1): the rows' own columns are
+     *  selected instead. */
+    private SqlWriter exists(SqlWriter writer, SqlExpr.Exists ex, int parentPrec) {
+        if (ex.subquery() instanceof SqlSelect q && q.groupBy().isEmpty() && q.having() == null && !q.distinct()
+                && !(q.from() instanceof com.legend.sql.SqlSource.Dual) && !q.projections().isEmpty()
+                && q.projections().stream().allMatch(p -> p.expr() instanceof SqlExpr.IntLit
+                        || p.expr() instanceof SqlExpr.BoolLit)) {
+            writer.append("EXISTS (");
+            inline(writer, new SqlSelect(List.of(), false, q.from(), q.where(), q.groupBy(), q.having(), q.qualify(),
+                    q.orderBy(), q.limit(), q.offset(), List.of()));
+            return writer.append(")");
+        }
+        return super.expr(writer, ex, parentPrec);
+    }
+
+    /** The aliases {@code src} defines: each side of a join, else its own. */
+    private static void aliasesOf(com.legend.sql.SqlSource src, java.util.Set<String> into) {
+        if (src instanceof com.legend.sql.SqlSource.Join j) {
+            aliasesOf(j.left(), into);
+            aliasesOf(j.right(), into);
+        } else {
+            into.add(src.alias());
+        }
+    }
+
+    /** The table aliases an expression's columns read (an unqualified column reads none). */
+    private static final class TablesRead extends com.legend.sql.SqlRewriter {
+        private final java.util.Set<String> tables = new java.util.HashSet<>();
+
+        static java.util.Set<String> of(SqlExpr e) {
+            TablesRead r = new TablesRead();
+            r.rewriteExpr(e);
+            return r.tables;
+        }
+
+        @Override
+        protected SqlExpr expr(SqlExpr e) {
+            if (e instanceof SqlExpr.Column c && c.table() != null) {
+                tables.add(c.table());
+            }
+            return e;
+        }
+    }
+
+    /** An inner column read as the lateral subquery's own output of it; an inner column it does not output is
+     *  refused (the join could not read it). */
+    private static final class InnerAsOutput extends com.legend.sql.SqlRewriter {
+        private final java.util.Set<String> inner;
+        private final java.util.Map<String, String> outputOf;
+        private final String alias;
+
+        InnerAsOutput(java.util.Set<String> inner, java.util.Map<String, String> outputOf, String alias) {
+            this.inner = inner;
+            this.outputOf = outputOf;
+            this.alias = alias;
+        }
+
+        SqlExpr of(SqlExpr e) {
+            return rewriteExpr(e);
+        }
+
+        @Override
+        protected SqlExpr expr(SqlExpr e) {
+            if (e instanceof SqlExpr.Column c && c.table() != null && inner.contains(c.table())) {
+                String out = outputOf.get(c.table() + "." + c.name());
+                if (out == null) {
+                    throw new DialectCapability("a lateral filter on a column its subquery does not output reached"
+                            + " ClickHouse, which has no LATERAL: " + c.table() + "." + c.name());
+                }
+                return c.type() instanceof com.legend.sql.TypeFact.Typed t
+                        ? SqlExpr.Column.of(alias, out, t.type(), t.nullable(), com.legend.sql.OutputCol.Origin.DERIVED)
+                        : SqlExpr.Column.derived(alias, out);
+            }
+            return e;
+        }
+    }
+
+    /** {@code e}'s conjuncts: an AND's operands, each flattened; any other expression is its own one. */
+    private static List<SqlExpr> conjuncts(SqlExpr e) {
+        if (e instanceof SqlExpr.Call c && c.fn() == SqlFn.AND) {
+            List<SqlExpr> out = new ArrayList<>();
+            c.args().forEach(x -> out.addAll(conjuncts(x)));
+            return out;
+        }
+        return List.of(e);
     }
 
     /** ClickHouse's own as-of join: the ON's equalities and its one inequality, the right side's key on its right. */
@@ -376,13 +641,21 @@ public final class ClickHouse extends AnsiSqlRenderer {
         return "Map(" + notNullable(key) + ", " + value + ")";
     }
 
+    /** A Tuple; a field that is itself a struct is its {@code Variant}, which holds NULL (an absent instance: a Tuple
+     *  is never NULL, measured) and is read through {@link #structGet}. */
     @Override
     protected String structTypeName(List<java.util.Map.Entry<String, String>> fields) {
         StringBuilder sb = new StringBuilder("Tuple(");
         for (int i = 0; i < fields.size(); i++) {
-            sb.append(i > 0 ? ", " : "").append(fields.get(i).getKey()).append(" ").append(fields.get(i).getValue());
+            sb.append(i > 0 ? ", " : "").append(fields.get(i).getKey()).append(" ")
+                    .append(fieldTypeName(fields.get(i).getValue()));
         }
         return sb.append(")").toString();
+    }
+
+    /** A struct field's spelled type: a Tuple's is its Variant, anything else itself. */
+    private static String fieldTypeName(String type) {
+        return type.startsWith("Tuple(") ? "Variant(" + type + ")" : type;
     }
 
     private static String notNullable(String type) {
@@ -403,7 +676,14 @@ public final class ClickHouse extends AnsiSqlRenderer {
         if (p.out() != null && (p.out().type() == SqlType.Scalar.BOOLEAN && !(p.expr() instanceof SqlExpr.Column)
                 || p.expr().type() instanceof com.legend.sql.TypeFact.Bottom || isRaise(p.expr())
                 || p.expr() instanceof SqlExpr.NullLit && !(p.out().type() instanceof SqlType.Array))) {
-            writer.append("CAST(").expr(p.expr(), 0).append(" AS ").append(castTypeName(p.out().type())).append(")");
+            if (unnestOfUntypedEmpty(p.expr()) && !(p.out().type() instanceof SqlType.Array)) {
+                // the empty list of no type, unnested, has no row, and its cast to a Tuple (never NULL) is refused on
+                // its type ("Cannot convert NULL to a non-nullable type", measured): the slot type's empty list
+                writer.append("arrayJoin(CAST([] AS " + arrayTypeName(castTypeName(p.out().type())) + "))");
+            } else {
+                writer.append("CAST(").expr(p.expr(), 0).append(" AS ").append(castTypeName(p.out().type()))
+                        .append(")");
+            }
             String label = p.alias() != null ? aliasIdent(p.alias()) : implicitLabel(p);
             return label == null ? writer : writer.append(" AS ").append(label);
         }
@@ -447,10 +727,50 @@ public final class ClickHouse extends AnsiSqlRenderer {
         return switch (e) {
             // an Int64: a bare literal is typed by its magnitude (1 is UInt8)
             case SqlExpr.IntLit i -> writer.append("toInt64(" + i.value() + ")");
+            // the empty list whose element type is known is that type's empty array, not one of no type
+            case SqlExpr.ArrayLit a when a.elements().isEmpty() && listElement(a) instanceof SqlType t ->
+                    writer.append("CAST([] AS " + arrayTypeName(castTypeName(t)) + ")");
+            // a correlated subquery is refused as IN's argument (measured 25.8, with the experimental setting too), and
+            // accepted under EXISTS ({@link #CORRELATED}): SQL's three-valued IN of v, by EXISTS
+            case SqlExpr.InSubquery in when in.subquery() instanceof SqlSelect s && s.projections().size() == 1
+                    && correlated(s) -> {
+                SqlExpr c = s.projections().get(0).expr();
+                SqlExpr v = in.value();
+                java.util.Set<String> own = new java.util.HashSet<>();
+                aliasesOf(s.from(), own);
+                SqlExpr w = s.where();
+                if (w == null || !own.containsAll(TablesRead.of(c)) || !nullRejecting(v, own)
+                        || !conjuncts(w).stream().allMatch(x -> nullRejecting(x, own))) {
+                    throw new DialectCapability("a correlated subquery as IN's argument reached ClickHouse, whose"
+                            + " correlated subqueries answer false for an outer row with a NULL (measured 25.8): its"
+                            + " filter reads the outer row other than as a comparison's operand");
+                }
+                // true where a row matches; else NULL where a row is NULL, or v is and a row is there; else false
+                SqlExpr threeValued = new SqlExpr.Case(List.of(
+                        new SqlExpr.Case.When(someRow(s, w, new SqlExpr.Call(SqlFn.EQUAL, List.of(c, v))),
+                                new SqlExpr.BoolLit(true)),
+                        new SqlExpr.Case.When(someRow(s, w, new SqlExpr.Call(SqlFn.IS_NULL, List.of(c))),
+                                new SqlExpr.NullLit()),
+                        new SqlExpr.Case.When(new SqlExpr.Call(SqlFn.AND, List.of(
+                                new SqlExpr.Call(SqlFn.IS_NULL, List.of(v)), someRow(s, w, null))),
+                                new SqlExpr.NullLit())),
+                        new SqlExpr.BoolLit(false));
+                correlatedExists[0] = true;
+                yield expr(writer, threeValued, parentPrec);
+            }
             // a quantified comparison over no rows is SQL's ALL true and ANY false; ClickHouse answers NULL there
             // when the subquery's column is Nullable (measured: 100 > ALL (an empty Nullable(Int64)) is NULL), so the
             // empty case is answered first
             case SqlExpr.Quantified q -> {
+                // a correlated subquery: right only where its filter is null-rejecting ({@link #CORRELATED})
+                if (q.subquery() instanceof SqlSelect s && correlated(s)) {
+                    if (!correlatedRight(s)) {
+                        throw new DialectCapability("a correlated quantified comparison reached ClickHouse, whose"
+                                + " correlated subqueries answer false for an outer row with a NULL (measured 25.8):"
+                                + " its filter reads the outer row other than as a comparison's operand");
+                    }
+                    correlatedExists[0] = true;
+                }
                 writer.append("(CASE WHEN (SELECT count() FROM (");
                 inline(writer, q.subquery());
                 writer.append(") AS \"__qa\") = 0 THEN ").append(q.quantifier() == SqlExpr.Quantifier.ALL ? "true"
@@ -458,18 +778,18 @@ public final class ClickHouse extends AnsiSqlRenderer {
                 super.expr(writer, q, 0);
                 yield writer.append(" END)");
             }
-            // EXISTS over a select of constants answers 0 where its filter keeps a row (ClickHouse 25.8, measured:
-            // EXISTS (SELECT 1 FROM numbers(5) WHERE number > 3) is 0, with the column selected 1): the rows' own
-            // columns are selected instead
-            case SqlExpr.Exists ex when ex.subquery() instanceof SqlSelect q && q.groupBy().isEmpty()
-                    && q.having() == null && !q.distinct() && !(q.from() instanceof com.legend.sql.SqlSource.Dual)
-                    && !q.projections().isEmpty() && q.projections().stream().allMatch(p -> p.expr() instanceof SqlExpr.IntLit
-                            || p.expr() instanceof SqlExpr.BoolLit) -> {
-                writer.append("EXISTS (");
-                inline(writer, new SqlSelect(List.of(), false, q.from(), q.where(), q.groupBy(), q.having(), q.qualify(),
-                        q.orderBy(), q.limit(), q.offset(), List.of()));
-                yield writer.append(")");
+            // a correlated EXISTS: right only where its filter is null-rejecting, and then the statement carries the
+            // setting on ({@link #CORRELATED})
+            case SqlExpr.Exists ex when ex.subquery() instanceof SqlSelect q && correlated(q) -> {
+                if (!correlatedRight(q)) {
+                    throw new DialectCapability("a correlated EXISTS reached ClickHouse, whose correlated subqueries"
+                            + " answer false for an outer row with a NULL (measured 25.8): its filter reads the outer"
+                            + " row other than as a comparison's operand");
+                }
+                correlatedExists[0] = true;
+                yield exists(writer, ex, parentPrec);
             }
+            case SqlExpr.Exists ex -> exists(writer, ex, parentPrec);
             case SqlExpr.DecimalLit d when !(d.type() instanceof com.legend.sql.TypeFact.Typed t
                     && t.type() == SqlType.Scalar.HUGEINT) -> writer.append(decimal(d.value()));
             case SqlExpr.OrderedListAgg ola -> writer.piece(collected(w -> w.expr(ola.value(), 0),
@@ -489,6 +809,34 @@ public final class ClickHouse extends AnsiSqlRenderer {
 
     private static @com.legend.base.Nullable SqlType typeOf(SqlExpr e) {
         return e.type() instanceof com.legend.sql.TypeFact.Typed t ? t.type() : null;
+    }
+
+    /** A list an ARRAY JOIN explodes: the empty one of no element type is the empty array of the exploded column's
+     *  type ({@code column}, its UNNEST's projection), so the column reads as that type (a Tuple's field from a
+     *  Nothing is refused: "First argument for function tupleElement must be tuple", measured). */
+    private SqlWriter.Piece exploded(SqlExpr xs, SqlSelect.Projection column) {
+        boolean untypedEmpty = xs instanceof SqlExpr.ArrayLit a ? a.elements().isEmpty() && listElement(a) == null
+                : xs instanceof SqlExpr.NullLit && listElement(xs) == null;
+        SqlType t = typeOf(column.expr()) instanceof SqlType u ? u : column.out() != null ? column.out().type() : null;
+        if (untypedEmpty && t != null && !(t instanceof SqlType.Array)) {
+            String empty = "CAST([] AS " + arrayTypeName(castTypeName(t)) + ")";
+            return w -> w.append(empty);
+        }
+        return list(xs);
+    }
+
+    /** An unnest of the empty list of no element type, filtered or not: the list {@link #arrayLit} and {@link #list}
+     *  write as {@link #EMPTY_UNTYPED}. */
+    private static boolean unnestOfUntypedEmpty(SqlExpr e) {
+        if (!(e instanceof SqlExpr.Call u && u.fn() == SqlFn.UNNEST && u.args().size() == 1)) {
+            return false;
+        }
+        SqlExpr xs = u.args().get(0);
+        while (xs instanceof SqlExpr.CompactList || xs instanceof SqlExpr.Call f && f.fn() == SqlFn.LIST_FILTER) {
+            xs = xs instanceof SqlExpr.CompactList k ? k.list() : ((SqlExpr.Call) xs).args().get(0);
+        }
+        return xs instanceof SqlExpr.ArrayLit a ? a.elements().isEmpty()
+                : xs instanceof SqlExpr.NullLit && listElement(xs) == null;
     }
 
     /** A list argument: the empty collection (a NULL) as the empty array -- of its element's type when known. */
@@ -560,22 +908,66 @@ public final class ClickHouse extends AnsiSqlRenderer {
 
     @Override
     protected SqlWriter structLit(SqlWriter writer, SqlExpr.StructLit st) {
-        writer.append("CAST(tuple(").join(st.fields(), ", ", (w, f) -> w.expr(f.value(), 0)).append(") AS Tuple(");
-        return writer.join(st.fields(), ", ", (w, f) -> {
-            SqlType t = typeOf(f.value());
-            if (t == null) {
-                throw new DialectCapability("a struct field of unknown type reached ClickHouse: a Tuple's fields are"
-                        + " typed");
+        List<String> types = new ArrayList<>();
+        for (SqlExpr.StructLit.Field f : st.fields()) {
+            types.add(fieldTypeName(castTypeName(fieldType(f))));
+        }
+        writer.append("CAST(tuple(");
+        for (int i = 0; i < st.fields().size(); i++) {
+            SqlExpr.StructLit.Field f = st.fields().get(i);
+            writer.append(i > 0 ? ", " : "");
+            if (f.value() instanceof SqlExpr.NullLit && fieldType(f) instanceof SqlType.Array) {
+                // an absent list is the empty one (a list is never NULL here)
+                writer.append("CAST([] AS " + types.get(i) + ")");
+            } else if (fieldType(f) instanceof SqlType.Struct) {
+                // an instance as its Variant: NULL where it is absent
+                writer.append("CAST(").expr(f.value(), 0).append(" AS " + types.get(i) + ")");
+            } else {
+                writer.expr(f.value(), 0);
             }
-            w.append(ident(f.name())).append(" ").append(castTypeName(t));
-        }).append("))");
+        }
+        writer.append(") AS Tuple(");
+        for (int i = 0; i < st.fields().size(); i++) {
+            writer.append(i > 0 ? ", " : "").append(ident(st.fields().get(i).name())).append(" ").append(types.get(i));
+        }
+        return writer.append("))");
     }
 
-    /** A field by name; a field NUMBER (a zip's pair, read by position) by its index. */
+    /** A struct field's type: its value's, or the type its class declares (an unset optional property is a NULL of no
+     *  type). */
+    private static SqlType fieldType(SqlExpr.StructLit.Field f) {
+        SqlType t = typeOf(f.value()) instanceof SqlType v ? v : f.declared();
+        if (t == null) {
+            throw new DialectCapability("a struct field of unknown type reached ClickHouse: a Tuple's fields are"
+                    + " typed");
+        }
+        return t;
+    }
+
+    /** A field by name; a field NUMBER (a zip's pair, read by position) by its index. A struct-typed field is its
+     *  Variant (structTypeName), NULL where the instance is absent, and stays one: its value is tested, cast and
+     *  delivered as the Variant. Only a read of a field OF it unwraps the Tuple ({@code variantElement}), whose fields
+     *  are NULL where it is absent, as Pure's are. (Read as the Tuple everywhere, an absent instance was a present one
+     *  of NULL fields, a Tuple never being NULL: isEmpty false, toOne not raising; PR #34's review, 2026-10-13,
+     *  measured on 25.8.) */
     @Override
     protected SqlWriter structGet(SqlWriter writer, SqlExpr.StructGet g) {
         String field = g.field().matches("[0-9]+") ? g.field() : stringLit(g.field());
-        return writer.append("tupleElement(").expr(g.source(), 0).append(", ").append(field).append(")");
+        writer.append("tupleElement(");
+        if (variantField(g.source()) && typeOf(g.source()) instanceof SqlType.Struct st) {
+            writer.append("variantElement(").expr(g.source(), 0).append(", ").append(stringLit(castTypeName(st)))
+                    .append(")");
+        } else {
+            writer.expr(g.source(), 0);
+        }
+        return writer.append(", ").append(field).append(")");
+    }
+
+    /** Whether {@code e} is a struct-typed field of an instance (by name), held as its Variant; a zip's pair, read by
+     *  position, is a plain Tuple. */
+    private static boolean variantField(SqlExpr e) {
+        return e instanceof SqlExpr.StructGet g && typeOf(g) instanceof SqlType.Struct
+                && !g.field().matches("[0-9]+");
     }
 
     @Override
@@ -742,15 +1134,16 @@ public final class ClickHouse extends AnsiSqlRenderer {
             case VAR_POP -> writer.piece(reduced("varPopStable", rc.collection()));
             case MEDIAN -> writer.piece(reduced("quantileExactInclusive(0.5)", rc.collection()));
             // a parametric aggregate's level is a constant of its name
-            case QUANTILE_CONT -> writer.piece(reduced("quantileExactInclusive(" + level(rc.extras()) + ")",
-                    rc.collection()));
+            case QUANTILE_CONT -> writer.piece(literalLevel(rc.extras()) != null
+                    ? reduced("quantileExactInclusive(" + literalLevel(rc.extras()) + ")", rc.collection())
+                    : interpolated(rc.collection(), level(rc.extras())));
             case MODE -> writer.piece(modeOf(present));
             default -> throw new DialectCapability("a list reduced by " + rc.reducer() + " reached ClickHouse");
         };
     }
 
-    /** A quantile's level, a literal number (an aggregate's parameter in ClickHouse is a constant). */
-    private static String level(List<SqlExpr> extras) {
+    /** A quantile's level when it is a literal number (an aggregate's parameter, spelled in its name); else null. */
+    private static @com.legend.base.Nullable String literalLevel(List<SqlExpr> extras) {
         if (extras.size() == 1) {
             SqlExpr q = extras.get(0);
             if (q instanceof SqlExpr.FloatLit f) {
@@ -763,7 +1156,32 @@ public final class ClickHouse extends AnsiSqlRenderer {
                 return String.valueOf(i.value());
             }
         }
-        throw new DialectCapability("a quantile whose level is no literal number reached ClickHouse");
+        return null;
+    }
+
+    /** A quantile's one level. */
+    private static SqlExpr level(List<SqlExpr> extras) {
+        if (extras.size() != 1) {
+            throw new DialectCapability("a quantile of " + extras.size() + " levels reached ClickHouse");
+        }
+        return extras.get(0);
+    }
+
+    /**
+     * A list's continuous quantile at a level that is no literal (a descending one is 1 - q): the aggregate's
+     * parameter is spelled in its name, so it is computed from the sorted present values instead -- the value at
+     * (n - 1) q, interpolated between its neighbours (quantileExactInclusive's rule; measured equal on 25.8); NULL
+     * over none.
+     */
+    private SqlWriter.Piece interpolated(SqlExpr xs, SqlExpr q) {
+        SqlWriter.Piece s = w -> w.append("arraySort(arrayMap(\"__x\" -> toFloat64(\"__x\"), arrayFilter(\"__x\" ->"
+                + " \"__x\" IS NOT NULL, ").piece(list(xs)).append(")))");
+        SqlWriter.Piece pos = w -> w.append("((length(").piece(s).append(") - 1) * ").expr(q, 6).append(")");
+        java.util.function.Function<String, SqlWriter.Piece> at = round -> w -> w.append("arrayElement(").piece(s)
+                .append(", toUInt64(" + round + "(").piece(pos).append(")) + 1)");
+        return w -> w.append("if(empty(").piece(s).append("), NULL, ").piece(at.apply("floor")).append(" + (").piece(pos)
+                .append(" - floor(").piece(pos).append(")) * (").piece(at.apply("ceil")).append(" - ")
+                .piece(at.apply("floor")).append("))");
     }
 
     /** One list exploded in a select list: {@code arrayJoin}, set-returning as DuckDB's UNNEST (several would cross,
@@ -880,7 +1298,78 @@ public final class ClickHouse extends AnsiSqlRenderer {
         if (typeOf(a.get(0)) == SqlType.Scalar.JSON) {
             return writer.expr(a.get(0), 0);
         }
-        return writer.append("toJSONString(").expr(a.get(0), 0).append(")");
+        SqlExpr origin = nullOrigin(a.get(0));
+        return origin != null ? nullAwareJson(writer, a.get(0), origin)
+                : writer.append("toJSONString(").expr(a.get(0), 0).append(")");
+    }
+
+    /** The list functions that answer NULL for a NULL list (DuckDB's), each over its first argument. */
+    private static final java.util.Set<SqlFn> NULL_STRICT_LISTS = java.util.Set.of(SqlFn.LIST_SLICE, SqlFn.LIST_FILTER,
+            SqlFn.LIST_TRANSFORM, SqlFn.LIST_SORT, SqlFn.LIST_SORT_DESC, SqlFn.LIST_REVERSE, SqlFn.LIST_DISTINCT,
+            SqlFn.LIST_TAIL, SqlFn.LIST_INIT);
+
+    /**
+     * The JSON value a list was read from, when the list is NULL exactly where that value is a JSON null: the
+     * value's own list ({@code CAST(json AS Array)}), a NULL-strict list function of such a list, or a CASE whose
+     * branches that do not raise are such lists of one value. A list is never NULL here ({@code Nullable(Array)} is
+     * refused, measured), so the JSON null became {@code []}, and DuckDB's NULL list is only told from the empty one
+     * by the value it came from. Null when the list is no such list.
+     */
+    private static @com.legend.base.Nullable SqlExpr nullOrigin(SqlExpr e) {
+        if (e instanceof SqlExpr.Cast c && c.target() instanceof SqlType.Array
+                && typeOf(c.value()) == SqlType.Scalar.JSON) {
+            return c.value();
+        }
+        if (e instanceof SqlExpr.Call c && NULL_STRICT_LISTS.contains(c.fn()) && !c.args().isEmpty()) {
+            return nullOrigin(c.args().get(0));
+        }
+        if (e instanceof SqlExpr.Case c) {
+            SqlExpr origin = null;
+            List<SqlExpr> branches = new ArrayList<>();
+            c.whens().forEach(w -> branches.add(w.then()));
+            if (c.otherwise() != null) {
+                branches.add(c.otherwise());
+            }
+            for (SqlExpr b : branches) {
+                if (isRaise(b)) {
+                    continue;
+                }
+                SqlExpr o = nullOrigin(b);
+                if (o == null || origin != null && !origin.equals(o)) {
+                    return null;
+                }
+                origin = o;
+            }
+            return origin;
+        }
+        return null;
+    }
+
+    /** {@code x}'s JSON, NULL where its list is DuckDB's NULL list (its JSON value null): inside a CASE, each branch so,
+     *  a raising branch kept (a raise is a value of any type: Nullable(String) here). */
+    private SqlWriter nullAwareJson(SqlWriter writer, SqlExpr x, SqlExpr origin) {
+        if (x instanceof SqlExpr.Case c) {
+            writer.append("(CASE");
+            for (SqlExpr.Case.When w : c.whens()) {
+                writer.append(" WHEN ").expr(w.condition(), 0).append(" THEN ");
+                branchJson(writer, w.then(), origin);
+            }
+            if (c.otherwise() != null) {
+                writer.append(" ELSE ");
+                branchJson(writer, c.otherwise(), origin);
+            }
+            return writer.append(" END)");
+        }
+        return writer.append("if(coalesce(JSONType(").expr(origin, 0).append("), 'Null') = 'Null', NULL, toJSONString(")
+                .expr(x, 0).append("))");
+    }
+
+    private void branchJson(SqlWriter writer, SqlExpr branch, SqlExpr origin) {
+        if (isRaise(branch)) {
+            writer.append("CAST(").expr(branch, 0).append(" AS Nullable(String))");
+        } else {
+            nullAwareJson(writer, branch, origin);
+        }
     }
 
     /** A key (a member, NULL when absent) or a 0-based index (-1 the last, past the end NULL) of a JSON value's text:
@@ -987,6 +1476,14 @@ public final class ClickHouse extends AnsiSqlRenderer {
     @Override
     protected SqlWriter call(SqlWriter writer, SqlExpr.Call c, int parentPrec) {
         List<SqlExpr> a = c.args();
+        // two instances' equality: a Tuple's = answers NULL where a field is NULL on either side ((1, NULL) = (1, NULL)
+        // and (1, NULL) = (1, 'x') are NULL, measured), and an array's compares its elements NULL-safe, a nested Tuple
+        // too ([(1, NULL)] = [(1, NULL)] is 1, [(1, NULL)] = [(1, 'x')] is 0, measured): each instance in a list
+        if ((c.fn() == SqlFn.EQUAL || c.fn() == SqlFn.NOT_EQUAL) && a.size() == 2
+                && typeOf(a.get(0)) instanceof SqlType.Struct && typeOf(a.get(1)) instanceof SqlType.Struct) {
+            return writer.append("([").expr(a.get(0), 0).append(c.fn() == SqlFn.EQUAL ? "] = [" : "] != [")
+                    .expr(a.get(1), 0).append("])");
+        }
         return switch (c.fn()) {
             // ---- portable: the base arm (or a Spellings.CLICKHOUSE row) is ClickHouse SQL
             case AND, OR, NOT, EQUAL, NOT_EQUAL, LESS, LESS_EQUAL, GREATER, GREATER_EQUAL,
@@ -1535,9 +2032,10 @@ public final class ClickHouse extends AnsiSqlRenderer {
                 }
                 yield ov(super.reducer(writer, r), win);
             }
-            case STDDEV_SAMP, STDDEV -> ov(plain(writer, "stddevSampStableOrNull", r), win);
+            // one value's sample deviation and variance are inf here, DuckDB's NULL (measured 25.8, 2026-10-13)
+            case STDDEV_SAMP, STDDEV -> sampled(writer, "stddevSampStableOrNull", r, win);
             case STDDEV_POP -> ov(plain(writer, "stddevPopStableOrNull", r), win);
-            case VAR_SAMP, VARIANCE -> ov(plain(writer, "varSampStableOrNull", r), win);
+            case VAR_SAMP, VARIANCE -> sampled(writer, "varSampStableOrNull", r, win);
             case VAR_POP -> ov(plain(writer, "varPopStableOrNull", r), win);
             // one row's sample covariance is NaN here, DuckDB's NULL (measured)
             case COVAR_SAMP -> {
@@ -1623,6 +2121,15 @@ public final class ClickHouse extends AnsiSqlRenderer {
         };
     }
 
+    /** A sample statistic, NULL under two values (as DuckDB's; ClickHouse answers inf for one). */
+    private SqlWriter sampled(SqlWriter writer, String fn, SqlAgg.Reducer r,
+            SqlExpr.@com.legend.base.Nullable WindowCall win) {
+        writer.append("if(");
+        ov(writer.append("count(").append(r.distinct() ? "DISTINCT " : "").expr(r.args().get(0), 0).append(")"), win)
+                .append(" < 2, NULL, ");
+        return ov(plain(writer, fn, r), win).append(")");
+    }
+
     private SqlWriter plain(SqlWriter writer, String fn, SqlAgg.Reducer r) {
         if (!r.orderBy().isEmpty()) {
             throw new DialectCapability("an ordered " + r.fn() + " reached ClickHouse");
@@ -1680,6 +2187,108 @@ public final class ClickHouse extends AnsiSqlRenderer {
         return new SqlExpr.WindowCall(w.fn(), w.partitionBy(), List.of(keyed), w.frame(), w.type());
     }
 
+    private static boolean fractional(SqlExpr.WindowCall.Frame.Bound b) {
+        Number n = switch (b) {
+            case SqlExpr.WindowCall.Frame.Bound.Preceding p -> p.n();
+            case SqlExpr.WindowCall.Frame.Bound.Following f -> f.n();
+            default -> null;
+        };
+        return n != null && new java.math.BigDecimal(n.toString()).stripTrailingZeros().scale() > 0;
+    }
+
+    /**
+     * A RANGE frame with a fractional offset: ClickHouse takes only a non-negative 32-bit integer ("Frame end offset
+     * for 'RANGE' frame must be a nonnegative 32-bit integer, '2.1' of type 'Float64' given", measured 25.8). So the
+     * frame is computed over its partition's (value, key) pairs: the pairs whose key lies within the offsets of the
+     * row's own key, reduced by the same aggregate ({@code arrayReduce}) -- the key compared as the window compares it,
+     * a NULL key at its type's edge ({@link #nullsAtEdge}), a NULL value kept (a tuple is never NULL) for the
+     * aggregate to skip. The aggregate is the one {@link #reducerIn} writes (PR #34's review, 2026-10-13: a bare
+     * aggregate name gave COUNT as a UInt64, STDDEV without its OrNull form and MEDIAN approximate), and any other is
+     * refused. Each row holds its whole partition's pairs, so the memory is the partition's size squared: a large
+     * partition fails on the server's memory limit, loudly.
+     */
+    private SqlWriter fractionalRange(SqlWriter writer, SqlExpr.WindowCall w, SqlExpr.WindowCall.Frame f) {
+        if (!(w.fn() instanceof SqlAgg.Reducer r) || r.distinct() || !r.orderBy().isEmpty() || r.args().size() != 1
+                || w.orderBy().size() != 1) {
+            throw new DialectCapability("a RANGE frame with a fractional offset over " + w.fn() + " reached ClickHouse,"
+                    + " whose RANGE offsets are integers");
+        }
+        SqlSelect.SortKey k = w.orderBy().get(0);
+        SqlExpr key = k.expr();
+        List<SqlWriter.Piece> conds = new ArrayList<>();
+        // the key's side of each bound: ascending, a PRECEDING bound is below the row's key; descending, above it
+        java.util.function.BiFunction<SqlExpr.WindowCall.Frame.Bound, Boolean, SqlWriter.Piece> bound = (b, start) -> {
+            String sign;
+            Number n;
+            switch (b) {
+                case SqlExpr.WindowCall.Frame.Bound.Preceding p -> {
+                    sign = k.ascending() ? " - " : " + ";
+                    n = p.n();
+                }
+                case SqlExpr.WindowCall.Frame.Bound.Following fo -> {
+                    sign = k.ascending() ? " + " : " - ";
+                    n = fo.n();
+                }
+                case SqlExpr.WindowCall.Frame.Bound.CurrentRow c -> {
+                    sign = null;
+                    n = null;
+                }
+                default -> {
+                    return null;   // unbounded: no condition
+                }
+            }
+            String op = start == k.ascending() ? " >= " : " <= ";
+            String offset = n == null ? "" : sign + new java.math.BigDecimal(n.toString()).toPlainString();
+            return x -> x.append("__p.2").append(op).expr(key, 0).append(offset);
+        };
+        SqlWriter.Piece lo = bound.apply(f.from(), true);
+        SqlWriter.Piece hi = bound.apply(f.to(), false);
+        if (lo != null) {
+            conds.add(lo);
+        }
+        if (hi != null) {
+            conds.add(hi);
+        }
+        String agg = switch (r.fn()) {
+            case SUM, AVG, MIN, MAX -> aggregateName(r.fn());
+            case COUNT -> "count";
+            case STDDEV_SAMP, STDDEV -> "stddevSampStableOrNull";
+            case STDDEV_POP -> "stddevPopStableOrNull";
+            case VAR_SAMP, VARIANCE -> "varSampStableOrNull";
+            case VAR_POP -> "varPopStableOrNull";
+            case MEDIAN -> "quantileExactInclusiveOrNull(0.5)";
+            case BOOL_AND -> "minOrNull";
+            case BOOL_OR -> "maxOrNull";
+            case ANY_VALUE -> "anyOrNull";
+            default -> throw new DialectCapability("a RANGE frame with a fractional offset over " + r.fn()
+                    + " reached ClickHouse, whose RANGE offsets are integers");
+        };
+        // the frame's values: the partition's pairs within the bounds, their values
+        SqlWriter.Piece values = x -> {
+            x.append("arrayMap(__p -> ").append(r.fn() == SqlAgg.Fn.MEDIAN ? "toFloat64(__p.1)" : "__p.1").append(", ");
+            if (!conds.isEmpty()) {
+                x.append("arrayFilter(__p -> ").join(conds, " AND ", SqlWriter::piece).append(", ");
+            }
+            x.append("groupArray(tuple(").expr(r.args().get(0), 0).append(", ").expr(key, 0).append(")) OVER (");
+            if (!w.partitionBy().isEmpty()) {
+                x.append("PARTITION BY ").list(w.partitionBy());
+            }
+            x.append(")").append(conds.isEmpty() ? ")" : "))");
+        };
+        boolean sample = switch (r.fn()) {
+            case STDDEV_SAMP, STDDEV, VAR_SAMP, VARIANCE -> true;
+            default -> false;
+        };
+        if (sample) {
+            // under two values NULL, as the native sample statistic ({@link #sampled})
+            writer.append("if(arrayReduce('count', ").piece(values).append(") < 2, NULL, ");
+        }
+        boolean count = r.fn() == SqlAgg.Fn.COUNT;
+        writer.append(count ? "toInt64(" : "").append("arrayReduce('").append(agg).append("', ").piece(values)
+                .append(")").append(count ? ")" : "");
+        return sample ? writer.append(")") : writer;
+    }
+
     private static boolean isOffset(SqlExpr.WindowCall.Frame.Bound b) {
         return b instanceof SqlExpr.WindowCall.Frame.Bound.Preceding
                 || b instanceof SqlExpr.WindowCall.Frame.Bound.Following;
@@ -1724,6 +2333,9 @@ public final class ClickHouse extends AnsiSqlRenderer {
         if (w.frame() instanceof SqlExpr.WindowCall.Frame f && f.kind() == SqlExpr.WindowCall.Frame.Kind.RANGE
                 && (isOffset(f.from()) || isOffset(f.to()))) {
             w = nullsAtEdge(w);
+            if (fractional(f.from()) || fractional(f.to())) {
+                return fractionalRange(writer, w, f);
+            }
         }
         if (w.fn() instanceof SqlAgg.ValueFn v && (v.fn() == SqlAgg.Fn.LAG || v.fn() == SqlAgg.Fn.LEAD)) {
             writer.append(v.fn() == SqlAgg.Fn.LAG ? "lagInFrame(toNullable(" : "leadInFrame(toNullable(")
@@ -1941,12 +2553,28 @@ public final class ClickHouse extends AnsiSqlRenderer {
     // Session tables and DDL
     // ==================================================================
 
-    /** No session (the driver's HTTP has none), so no table only one session sees. */
+    /** A session's own table is a TEMPORARY table, and ClickHouse keeps one only in an HTTP session: the connection
+     *  names it ({@code session_id}, which the driver passes as a {@code clickhouse_setting_} property). That is the
+     *  host's to open (exec.SystemDatabase's system connection). Over a connection with no session the table is made
+     *  and gone with its request, so the read after it is refused (an unknown table, measured), never answered from
+     *  another session, which does not see it. The table and its INSERT are this interface's own renders;
+     *  ClickHouse's temporary table is a Memory one without saying so (measured). */
     @Override
     public List<String> sessionTable(com.legend.sql.SqlDdl.CreateTable table,
             com.legend.sql.SqlDml.@com.legend.base.Nullable InsertValues rows) {
-        throw new DialectCapability("a session's own table reached ClickHouse, which has no session over its JDBC"
-                + " driver: " + table.table());
+        if (!table.temporary()) {
+            throw new IllegalArgumentException("a session table is temporary: " + table.table());
+        }
+        return rows == null ? List.of(render(table)) : List.of(render(table), render(rows));
+    }
+
+    /** ClickHouse DDL: {@code BIT} is a UInt64 there (measured), so a Pure Boolean column is a {@code Bool}. */
+    @Override
+    protected String ddlType(com.legend.sql.SqlDdl.ColumnType t) {
+        if (t instanceof com.legend.sql.SqlDdl.ColumnType.Plain p && p.kind() == com.legend.sql.SqlDdl.ColumnType.Kind.BIT) {
+            return "Bool";
+        }
+        return super.ddlType(t);
     }
 
     // ==================================================================

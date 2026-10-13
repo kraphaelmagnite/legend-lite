@@ -1,9 +1,7 @@
 // THE NAMES DataCube OFFERS for the model's elements (docs/DATACUBE_MODEL_DESIGN_2026_10_10.md §15.1), before a person
 // changes them, and the rules a name the person gives is held to. Read by the windows alone (create-class.ts,
-// model-actions.ts and theirs), so the page's startup carries none of it.
-
-/** The place DataCube's tab is, in a project: the tab's DuckDB. */
-export const BROWSER_PLACE = 'Browser';
+// model-actions.ts and theirs), so the page's startup carries none of it. Where a class's rows are -- the host's
+// database, its place in the class's model (`Browser`, `Python`) -- is the host's to say (services.ts ModelWriting).
 
 /**
  * The class a source's name suggests: its file's name without the extension, in upper camel case, singular --

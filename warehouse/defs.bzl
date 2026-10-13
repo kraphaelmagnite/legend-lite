@@ -13,7 +13,7 @@ folder is packaging: the image itself (//:native) stays a compile (tools/guards 
 
 load("@bazel_lib//lib:copy_directory.bzl", "copy_directory_bin_action")
 load("@bazel_lib//lib:copy_file.bzl", "COPY_FILE_TOOLCHAINS", "copy_file_action")
-load("//tools/platforms:defs.bzl", "platform_select")
+load("//tools/platforms:defs.bzl", "DUCKDB_PLATFORMS", "platform_select")
 load("@rules_java//java/common:java_info.bzl", "JavaInfo")
 
 def _jar_entry_impl(ctx):
@@ -45,15 +45,13 @@ jar_entry = rule(
     doc = "Extracts one entry of a Java library's jar as a file named after it.",
 )
 
-# DuckDB's postgres extension for the platform being built, as MODULE.bazel pins it: one choice, which
-# //warehouse:postgres_extension unpacks beside the native server.
-POSTGRES_EXTENSION, POSTGRES_EXTENSION_COMPATIBLE = platform_select({
-    "macos_arm64": "@duckdb_postgres_extension_osx_arm64//file",
-    "macos_x86_64": "@duckdb_postgres_extension_osx_amd64//file",
-    "linux_x86_64": "@duckdb_postgres_extension_linux_amd64//file",
-    "linux_aarch64": "@duckdb_postgres_extension_linux_arm64//file",
-    "windows_x86_64": "@duckdb_postgres_extension_windows_amd64//file",
-}, "DuckDB postgres extension (MODULE.bazel, duckdb_postgres_extension_*)")
+# DuckDB's postgres extension for the platform being built, as MODULE.bazel pins it (one repository per DuckDB platform
+# name, DUCKDB_PLATFORMS: //tools/platforms): one choice, which //warehouse:postgres_extension unpacks beside the native
+# server.
+POSTGRES_EXTENSION, POSTGRES_EXTENSION_COMPATIBLE = platform_select(
+    {bazel: "@duckdb_postgres_extension_" + duckdb + "//file" for bazel, duckdb in DUCKDB_PLATFORMS.items()},
+    "DuckDB postgres extension (MODULE.bazel, duckdb_postgres_extension_*)",
+)
 
 _COPY_DIRECTORY_TOOLCHAIN = "@bazel_lib//lib:copy_directory_toolchain_type"
 

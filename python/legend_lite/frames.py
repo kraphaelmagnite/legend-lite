@@ -20,10 +20,9 @@ AN ANSWER IS TYPED BY ITS PLAN (docs/DATACUBE_ONE_APP_DESIGN_2026_10_11.md §15.
 own (engine-client's ``typedByPlan``): each column carries the compiler's type (its field's ``legend.type``), a column
 the plan does not type is refused, and each value is exact, as the database stored it -- an Integer an int64 (a sum
 DuckDB answers as an exact decimal included), keeping that exact decimal only past 64 bits, never wrong; a Decimal
-exact; a DateTime as stored, in UTC (the session's zone), to the microsecond; a Variant as the planner's SQL answers it
--- its JSON text, or, a STRUCT or a LIST under ``SELECT *``, as stored, until the planner answers every Variant as JSON
-(§15.3a: the Compiler Rewrite line's egress fix). ``to_pandas`` keeps them so: an Integer or a Boolean with nulls stays
-an integer or a boolean (pandas' nullable types), never a float or an object.
+exact; a DateTime as stored, in UTC (the session's zone), to the microsecond; a Variant its JSON text, whatever the
+shape of the query (the planner answers a stored STRUCT or LIST as JSON, §15.3a). ``to_pandas`` keeps them so: an
+Integer or a Boolean with nulls stays an integer or a boolean (pandas' nullable types), never a float or an object.
 """
 
 from __future__ import annotations
@@ -37,7 +36,7 @@ from typing import Any, Callable, Iterator
 import duckdb
 import pyarrow as pa
 
-from . import compiler
+from . import _host, _json, compiler
 
 LIVE = 'live'
 SNAPPED = 'snapped'
@@ -54,6 +53,9 @@ _CATALOG_FIELDS = ('name', 'dataType', 'logicalType', 'precision', 'scale', 'not
 
 # the field metadata that carries a result column's type, as the compiler typed it
 TYPE_KEY = b'legend.type'
+
+# how many models a page sent Python holds at once (Frames.model_for): a page's project, as its revisions move
+_ADMITTED = 8
 
 
 class UntypedColumn(RuntimeError):
@@ -114,10 +116,6 @@ def _arrow(frame: Any) -> pa.Table:
     return pa.table(frame)
 
 
-def _quoted(name: str) -> str:
-    return '"' + name.replace('"', '""') + '"'
-
-
 class Table:
     """A registered frame: its Legend model and the queries over it. Unusable once its name is registered
     again or unregistered."""
@@ -130,7 +128,8 @@ class Table:
         # the frame (or function) it was registered with, as given: what a page's grid asks for by name is it
         self.given = given
         self._registered = f'{_OWN}{name}'
-        self._target = 'main.' + _quoted(name)
+        # its table or view, in the database's own main schema: named for the host's operations (D5)
+        self._target = _host.name(name, schema='main')
         self._schema: pa.Schema | None = None
         self._closed = False
         self.model = ''
@@ -146,10 +145,11 @@ class Table:
         """Puts the frame in DuckDB as the table it is named, reads its catalog, and writes its model."""
         con = self._frames.connection
         con.register(self._registered, arrow)
-        kind = 'VIEW' if self.mode == LIVE else 'TABLE'
+        kind = 'view' if self.mode == LIVE else 'table'
         # a view whose columns changed is dropped, not replaced: the copy below may change its kind of select
-        con.execute(f'DROP {kind} IF EXISTS {self._target}')
-        con.execute(f'CREATE {kind} {self._target} AS SELECT * FROM {self._registered}')
+        _host.run(con, {'op': 'drop', 'kind': kind, 'target': self._target},
+                  {'op': 'relation', 'kind': kind, 'target': self._target,
+                   'from': {'relation': _host.name(self._registered)}})
         if self.mode == SNAPPED:
             con.unregister(self._registered)
         rows = con.execute(compiler.catalog_columns_sql('main', self.name)).fetchall()
@@ -162,9 +162,9 @@ class Table:
             'columns': [dict(zip(_CATALOG_FIELDS, row)) for row in rows],
         })
         if written['conversions']:
-            select = written['copySelectList']
-            source = self._registered if self.mode == LIVE else self._target
-            con.execute(f'CREATE OR REPLACE {kind} {self._target} AS SELECT {select} FROM {source}')
+            source = _host.name(self._registered) if self.mode == LIVE else self._target
+            _host.run(con, {'op': 'relation', 'kind': kind, 'target': self._target, 'replace': True,
+                            'selectList': written['copySelectList'], 'from': {'relation': source}})
         self.model = written['model']
         self.runtime = written['runtime']
         self.source = written['source']
@@ -181,7 +181,7 @@ class Table:
     def _drop(self) -> None:
         """Takes the frame out of DuckDB, and makes this handle unusable."""
         con = self._frames.connection
-        con.execute(f"DROP {'VIEW' if self.mode == LIVE else 'TABLE'} IF EXISTS {self._target}")
+        _host.run(con, {'op': 'drop', 'kind': 'view' if self.mode == LIVE else 'table', 'target': self._target})
         if self.mode == LIVE:
             con.unregister(self._registered)
         if self.held is not None:
@@ -219,16 +219,36 @@ class Table:
             self._refresh()
 
     def plan(self, query: str | dict[str, Any]) -> compiler.Plan:
-        """The compiler's plan for a query over this table: Pure text, a tree, or ``->...`` applied to it."""
+        """The plan for a query over this table (Pure text, a tree, or ``->...`` applied to it), by the planner the
+        frames plan with (``Frames.planner``: Python's own unless a server was chosen)."""
+        planner = self._frames.planner
+        if planner is not None:
+            return self._on_server(planner, query)
         with self._frames._lock:
             self._ready()
             return self._model().plan(self._tree(query), self.runtime)
 
     def execute(self, query: str | dict[str, Any]) -> pa.Table:
         """Runs a query over this table (as ``plan`` takes it) and answers as an Arrow table, typed by its plan."""
+        planner = self._frames.planner
+        if planner is not None:
+            plan = self._on_server(planner, query)
+            with self._frames._lock:
+                # read for this query already (_on_server): only still this table's
+                if self._closed:
+                    raise ValueError(f'the frame {self.name!r} was registered again or unregistered: use the new table')
+                return self._frames.run(plan)
         with self._frames._lock:
             self._ready()
             return self._frames.run(self._model().plan(self._tree(query), self.runtime))
+
+    def _on_server(self, planner: Any, query: str | dict[str, Any]) -> compiler.Plan:
+        """The planner chosen (R3) is a server's: it plans over this table's model, its answer awaited holding none of
+        the frames' locks (the audit of G1), and its SQL is run here."""
+        with self._frames._lock:
+            self._ready()
+            held, tree = self._model(), self._tree(query)
+        return planner.read(planner.plan(_json.dumps(tree), held, self.runtime))
 
 
 class Frames:
@@ -248,6 +268,9 @@ class Frames:
         for statement in compiler.session_setup('DuckDB'):
             self.connection.execute(statement)
         self._lock = threading.RLock()
+        # where Python's own queries over these frames (Table.plan, execute) are planned: the planner a session chose
+        # (engine.py's Planner: a server's, the program's G1), or None, Python's own in this process
+        self.planner: Any = None
         # how deep in ``serving`` the thread holding the lock is: inside, the frames are held still, each Live one read
         self._still = 0
         # DuckDB matches names without regard to case, quoted or not: so does this
@@ -257,6 +280,10 @@ class Frames:
         # §4.3), each by its name: its name as written, its model, whether it is a view, and its model held (planned
         # against while it is kept, as a frame's is: §15.3)
         self._files: dict[str, tuple[str, str, bool, compiler.HeldModel]] = {}
+        # the models a page sent that read only what Python serves (model_for), each held with the tables it declares
+        # (checked again at each use: a table no longer served is no longer read), while recent: a page's project, most
+        # recent last
+        self._admitted: dict[str, tuple[compiler.HeldModel, frozenset[str]]] = {}
 
     def register(self, name: str, frame: Any, mode: str = LIVE) -> Table:
         """Registers a frame (or a function returning one) as the table ``name``, Live or Snapped, and
@@ -332,6 +359,43 @@ class Frames:
                     return held
         return None
 
+    def model_for(self, model: str) -> compiler.HeldModel | None:
+        """The model a page's query may be planned over (docs/ONE_PLATFORM_PROGRAM_2026_10_12.md B3; the user's ruling,
+        option (c)): one held for a frame or a page's file (``held_for``), or a model the page sent -- its project's, say
+        -- every table of whose Databases is one Python serves, so the SQL planned over it reads only what Python showed
+        the page, never another table of this database (a person's own, an attached database's). Held while recent;
+        None when it declares a table Python does not serve, or does not read as a model."""
+        with self._lock:
+            held = self.held_for(model)
+            if held is not None:
+                return held
+            served = set(self._tables) | set(self._files)
+            if model in self._admitted:
+                held, tables = self._admitted.pop(model)
+                self._admitted[model] = (held, tables)
+                return held if tables <= served else None
+            try:
+                elements = compiler.model_elements(model)
+            except compiler.LegendError:
+                return None
+            tables: set[str] = set()
+            for element in elements:
+                for schema in element.get('schemas', []) if element.get('_type') == 'relational' else []:
+                    if schema.get('name') not in ('default', 'main') and schema.get('tables'):
+                        return None
+                    tables |= {str(t.get('name', '')).lower() for t in schema.get('tables', [])}
+            if not tables <= served:
+                return None
+            try:
+                held = compiler.HeldModel(model)
+            except compiler.LegendError:
+                # it reads as a model, but does not compile: no model to plan over
+                return None
+            self._admitted[model] = (held, frozenset(tables))
+            while len(self._admitted) > _ADMITTED:
+                self._admitted.pop(next(iter(self._admitted)))[0].close()
+            return held
+
     @contextlib.contextmanager
     def reading_file(self, asked: str, view: bool = False) -> Iterator[str]:
         """The frames held still while DataCube's own code reads a page's file into a table of its own on this
@@ -355,7 +419,8 @@ class Frames:
                 dropped = self._files.pop(name.lower(), None)
                 if dropped is not None:
                     dropped[3].close()
-                self.connection.execute(f'DROP {"VIEW" if view else "TABLE"} IF EXISTS main."{name}"')
+                _host.run(self.connection, {'op': 'drop', 'kind': 'view' if view else 'table',
+                                            'target': _host.name(name, schema='main')})
                 raise
 
     def keep_file(self, name: str, model: str, view: bool = False) -> None:
@@ -395,11 +460,9 @@ class Frames:
         key = name.lower()
         if key in self._tables or key in self._files:
             return True
-        found = self.connection.execute(
-            "SELECT count(*) FROM duckdb_tables() WHERE lower(table_name) = lower(?)", [name]).fetchone()[0]
-        found += self.connection.execute(
-            "SELECT count(*) FROM duckdb_views() WHERE NOT internal AND lower(view_name) = lower(?)", [name]).fetchone()[0]
-        return found > 0
+        # this database's own and its temporary ones, which a bare name reads: a project's database attached beside it
+        # (C5) holds none of the names a file may take
+        return _host.count(self.connection, {'op': 'nameTaken', 'name': name}) > 0
 
     def taken(self, name: str) -> bool:
         """Whether ``name`` is a frame's or a page's file's table: a frame of that name cannot be registered."""
@@ -407,13 +470,7 @@ class Frames:
             return name.lower() in self._tables or name.lower() in self._files
 
     def _exists(self, name: str) -> bool:
-        found = self.connection.execute(
-            "SELECT count(*) FROM duckdb_tables() WHERE database_name = current_database() AND schema_name = 'main'"
-            " AND lower(table_name) = lower(?)", [name]).fetchone()[0]
-        found += self.connection.execute(
-            "SELECT count(*) FROM duckdb_views() WHERE database_name = current_database() AND schema_name = 'main'"
-            " AND NOT internal AND lower(view_name) = lower(?)", [name]).fetchone()[0]
-        return found > 0
+        return _host.count(self.connection, {'op': 'relationExists', 'name': _host.name(name, schema='main')}) > 0
 
     def unregister(self, name: str) -> None:
         """Takes a frame's table out of the database; its handle stops working."""
@@ -429,10 +486,14 @@ class Frames:
             files, self._files = list(self._files.values()), {}
             try:
                 for name, _model, view, _held in files:
-                    self.connection.execute(f'DROP {"VIEW" if view else "TABLE"} IF EXISTS main."{name}"')
+                    _host.run(self.connection, {'op': 'drop', 'kind': 'view' if view else 'table',
+                                                'target': _host.name(name, schema='main')})
             finally:
-                # every model let go, a drop that failed or not
+                # every model let go, a drop that failed or not, and every model a page sent
                 for _name, _model, _view, held in files:
+                    held.close()
+                admitted, self._admitted = list(self._admitted.values()), {}
+                for held, _tables in admitted:
                     held.close()
 
     def __getitem__(self, name: str) -> Table:

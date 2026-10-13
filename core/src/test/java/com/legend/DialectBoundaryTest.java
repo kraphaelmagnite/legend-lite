@@ -92,8 +92,11 @@ class DialectBoundaryTest {
             // 0 -> 2 (2026-10-11, docs/CLOUD_BACKENDS_PCT_2026_10_11.md §12): the wire census (a diagnostic, deciding no
             // SQL) reads SQLite's own type names by the label the executor gives it, the dialect class's simple name, as
             // it reads Snowflake's and BigQuery's (names this pattern does not list); exec may not reference the
-            // dialect classes themselves (the planning-references ledger)
-            "SqlTypeCensus.java", 2);
+            // dialect classes themselves (the planning-references ledger). 2 -> 3 (2026-10-13, PR #34's independent
+            // review): a map delivered as its entries (an ARRAY) is accepted on BigQuery and Postgres only, the two with
+            // no map type; it had been widened to every database, so DuckDB's census could no longer catch a map
+            // shipped as an ARRAY. Moves into the dialect with the plan's P4 (the dialect reads its own wire names)
+            "SqlTypeCensus.java", 3);
 
     /** Lines CONSTRUCTING a dialect outside the dialect package, by file: the one owner per side picks it
      *  (C3, docs/PLAN_EXECUTION_SPLIT_AND_DATABASE_OWNER_2026_10_03.md; the guard at zero, 2026-10-04). */

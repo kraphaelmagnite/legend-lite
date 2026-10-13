@@ -19,7 +19,8 @@ describe('the planner client', () => {
         sawSignal = init?.signal ?? undefined;
         const plan = {
           rootExecutionNode: {
-            _type: 'sql', sqlQuery: 'SELECT 1',
+            _type: 'relationalTdsInstantiation',
+            executionNodes: [{ _type: 'sql', sqlQuery: 'SELECT 1', connection: { type: 'DuckDB' }, executionNodes: [] }],
             resultType: { _type: 'tds', tdsColumns: [{ name: 'one', type: 'Integer' }] },
           },
         };

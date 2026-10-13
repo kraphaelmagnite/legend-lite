@@ -5,7 +5,7 @@ import { base64, fromBase64 } from './web.ts';
 
 /** What the host answers. Bytes cross as base64: an engine and its host share strings, not memory. */
 export interface HostCalls {
-  /** One planner request (planner-protocol.ts's Request, as JSON), answered as its Response (JSON). */
+  /** One planner request (engine-client's planner-protocol.ts's Request, as JSON), answered as its Response (JSON). */
   planner(request: string): Promise<string>;
   /** One SQL statement run by the host's database: its result as an Arrow IPC stream, base64. */
   query(sql: string): Promise<string>;

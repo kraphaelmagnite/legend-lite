@@ -31,8 +31,8 @@ export interface Receipt {
   readonly serverNote?: string;
   /** Remote files the tab's DuckDB read over HTTP for it (a mounted source). */
   readonly reading?: readonly string[];
-  /** Set while snapped: the copy this read, and the pull that made it. */
-  readonly copy?: { readonly takenAt: Date; readonly from?: Receipt };
+  /** Set while snapped: the copy this read, the pull that made it, and whose the copy is when not this tab's (`Python`). */
+  readonly copy?: { readonly takenAt: Date; readonly from?: Receipt; readonly store?: string };
   /** Ask the server, apart from this query, whether it has the statement on record. */
   readonly check?: () => Promise<string>;
 }
@@ -48,7 +48,7 @@ export function hostOf(url: string): string {
 
 /** One short line: the status bar's chip. */
 export function receiptLabel(r: Receipt): string {
-  if (r.copy) return `this tab's copy (${r.copy.takenAt.toLocaleTimeString(UI_LOCALE)})`;
+  if (r.copy) return `${r.copy.store ?? 'this tab'}'s copy (${r.copy.takenAt.toLocaleTimeString(UI_LOCALE)})`;
   switch (r.plane) {
     case 'warehouse':
       return [r.where, r.as, r.statementId ? `#${r.statementId.slice(0, 8)}` : undefined]
@@ -72,10 +72,12 @@ export function receiptLines(r: Receipt): string[] {
   if (r.serverNote) lines.push(`The server's note: ${r.serverNote}`);
   if (r.copy) {
     const from = r.copy.from;
-    lines.push(`Read from the snap copied into this tab at ${r.copy.takenAt.toLocaleTimeString(UI_LOCALE)}`
+    const into = r.copy.store === undefined ? 'this tab' : `${r.copy.store}'s DuckDB`;
+    lines.push(`Read from the snap copied into ${into} at ${r.copy.takenAt.toLocaleTimeString(UI_LOCALE)}`
       + (from ? `, pulled from ${from.where}${from.as ? ` as ${from.as}` : ''}`
         + (from.statementId ? ` (statement ${from.statementId})` : '') : '')
-      + '. Nothing was sent to a server for this query.');
+      + (r.copy.store === undefined ? '. Nothing was sent to a server for this query.'
+        : '. Nothing was sent to the warehouse for this query.'));
   } else if (r.plane === 'tab') {
     lines.push(r.reading && r.reading.length > 0
       ? 'Nothing was sent to a query server; the file itself was fetched.'

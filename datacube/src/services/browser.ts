@@ -8,20 +8,25 @@
 
 import type { AsyncDuckDB } from '../../../engine-client/src/duckdb-wasm.ts';
 import type { DuckDbEngine } from '../../../engine-client/src/duckdb.ts';
-import type { SeedSource } from '../../../engine-client/src/model-data.ts';
-import { connect, listObjects, signInWithKey, WarehouseEngine } from '../../../engine-client/src/warehouse.ts';
-import type { QueryReader } from '../../../query-store/src/index.ts';
+import type { ProjectDatabases, ProjectDataSource } from '../../../engine-client/src/project-data.ts';
+import type { WarehouseBinding } from '../../../engine-client/src/warehouse.ts';
+import type { QueriesModule, QueryReader } from '../../../query-store/src/index.ts';
 import type { Planner } from '../cube.ts';
-import { BrowserRecords, MemoryRecords, RuleStore, openCubeDatabase, persistStorage, type CubeStore } from '../cube-store.ts';
+import {
+  BrowserRecords, CubeStoreClient, LOCAL_CUBES_API, MemoryRecords, openCubeDatabase, persistStorage, wasmCubeServer, type CubeRecords,
+} from '../cube-store.ts';
 import { FileHandles } from '../file-handles.ts';
 import type { TableModels } from '../infer.ts';
+import { writesModels, type ModelWriter } from '../model-writer.ts';
 import type { ModelOptions } from '../planner.ts';
+import { PlanThenRun } from '../runner.ts';
 import { forgetUpload, ingestFile, mountRemoteView } from '../upload.ts';
 import { browserBasics, tabTitle } from './browser-basics.ts';
 import type {
   ConfiguredProject,
   DatabaseService,
   ModelHomeService,
+  ModelWriting,
   PageService,
   PlaneService,
   QueryService,
@@ -38,7 +43,8 @@ export interface TabPlanner {
   readonly planner: Planner;
   readonly label: string;
   readonly tables: TableModels;
-  readonly seeds: SeedSource;
+  /** legend-lite's planner for a project's own database (C5, engine-client's project-data.ts). */
+  readonly projects: ProjectDataSource;
   readonly models: {
     another(model: string, runtime: string, how?: ModelOptions): Planner;
     elements(text: string): Promise<unknown[]>;
@@ -57,49 +63,60 @@ export interface TabConfig {
 export interface BrowserServicesOptions {
   readonly plane: PlaneService;
   readonly planner: TabPlanner;
-  /** This tab's DuckDB: its connection's engine, and the database files are registered on. */
-  readonly duckdb: { readonly engine: DuckDbEngine; readonly db: AsyncDuckDB };
+  /** This tab's DuckDB: its connection's engine, the database files are registered on, and its other connections. */
+  readonly duckdb: { readonly engine: DuckDbEngine; readonly db: AsyncDuckDB; connect(): Promise<DuckDbEngine> };
   readonly config: TabConfig;
   /** Where the page is, for the links it makes (Studio on a project). */
   readonly location: { readonly href: string };
 }
 
-/**
- * THE TAB'S DUCKDB SET UP as the planner's SQL expects, as Python's Frames sets up its own: the dialect's own session
- * setup, from the compiler (`Boundary.sessionSetup`: a DuckDB session in UTC), run on the connection before any query
- * the planner wrote. Left alone, DuckDB-WASM takes the browser's zone -- a fixed offset of it at that ("Etc/GMT+5" in New
- * York, in summer too) -- and `now()`, `today()` and any zoned timestamp answered otherwise than on Python.
- */
-export async function setUpSession(engine: DuckDbEngine, tables: TableModels): Promise<void> {
-  for (const statement of await tables.sessionSetup(engine.databaseType)) await engine.run(statement, 0);
-}
-
-/** The tab's services, built once as the page starts: its DuckDB set up first (`setUpSession`). */
+/** The tab's services, built once as the page starts, over the tab's DuckDB as engine-client's `startDuckDbInTab`
+ *  started it (its session set up, its extensions the site's). */
 export async function browserServices(o: BrowserServicesOptions): Promise<Services> {
   const { config } = o;
-  await setUpSession(o.duckdb.engine, o.planner.tables);
   const modelHome = o.config.depot ? depotHome(o.config.depot, o.location) : undefined;
+  // THE STORES' RULES: the saved queries' and the saved pages', one WebAssembly module (`vendor/queries/`), fetched
+  // once, at the first call of either store (a load that failed is tried again at the next)
+  let stores: Promise<QueriesModule> | undefined;
+  const storeRules = (): Promise<QueriesModule> => (stores ??= queryStores()
+    .then((m) => m.loadQueriesModule(new URL('./vendor/queries/', o.location.href).href))
+    .catch((e: unknown) => {
+      stores = undefined;
+      throw e;
+    }));
+  let projectKeeper: Promise<ProjectDatabases> | undefined;
   return {
     engine: {
       plane: o.plane,
       label: o.planner.label,
+      // the page's own planner reads a saved query and its project's model
+      reading: { parse: (text) => o.planner.planner.parse(text), elements: (text) => o.planner.models.elements(text) },
       // planned here and run here: a planner over the source's own model, on this tab's DuckDB
       rows: (model, runtime, how) => ({ planner: o.planner.models.another(model, runtime, how), engine: o.duckdb.engine }),
       database: tabDatabase(o.duckdb, o.planner.tables),
+      // the model actions: the tab's module writes (beside whichever planner the page chose), the tab's DuckDB answers
+      ...(writesModels(o.planner.tables) ? { modelWriting: tabModelWriting(o.planner.tables, o.duckdb.engine) } : {}),
       local: {
         planner: o.planner.planner,
         another: (model, runtime, how) => o.planner.models.another(model, runtime, how),
         elements: (text) => o.planner.models.elements(text),
         tables: o.planner.tables,
-        seeds: o.planner.seeds,
+        // a project's own rows, in a database of their own inside this tab's DuckDB (C5): the keeper fetched with the
+        // first saved query a page opens by name, never with the grid's start
+        projects: () => (projectKeeper ??= import('../../../engine-client/src/project-data.ts').then(({ ProjectDatabases: Keeper }) =>
+          new Keeper({
+            databaseType: o.duckdb.engine.databaseType,
+            run: (sql) => o.duckdb.engine.run(sql, 0),
+            connect: () => o.duckdb.connect(),
+          }, o.planner.projects))),
         engine: o.duckdb.engine,
       },
     },
     // opened now and waited for where a page is saved or opened: the start's first grid does not wait on IndexedDB
-    pages: browserPages(),
-    queries: queryService(config),
+    pages: browserPages(storeRules),
+    queries: queryService(config, storeRules),
     ...(modelHome ? { modelHome } : {}),
-    warehouse: warehouseService(config),
+    warehouse: warehouseService(config, o.location),
     browser: {
       ...browserBasics,
       address: () => o.location.href,
@@ -108,33 +125,40 @@ export async function browserServices(o: BrowserServicesOptions): Promise<Servic
   };
 }
 
+/** The model actions in this tab: the module's writer, a project's facts planned by it and run on the tab's DuckDB. */
+function tabModelWriting(writer: ModelWriter, engine: DuckDbEngine): ModelWriting {
+  return { place: 'Browser', writer, rows: (model, runtime) => new PlanThenRun(writer.withModel(model, runtime), engine) };
+}
+
 /** DuckDB in this tab: every grid's rows, and where a file, a remote file or a Snap goes. */
 function tabDatabase(duck: { readonly engine: DuckDbEngine; readonly db: AsyncDuckDB }, tables: TableModels): DatabaseService {
   const { engine, db } = duck;
   return {
     ingestFile: (file, options) => ingestFile(engine, db, file, tables, options),
-    forgetFile: (fileName, table) => forgetUpload(engine, db, fileName, table),
+    forgetFile: (fileName, table) => forgetUpload(engine, tables, db, fileName, table),
     mountRemote: (url, s3, name) => mountRemoteView(engine, tables, { url, name, ...(s3 ? { s3 } : {}) }),
   };
 }
 
-/** SAVED PAGES, in this browser: IndexedDB when the browser gives it, else memory (this visit only, and said so). One
- *  database holds the pages and their files' handles. */
-async function browserPages(): Promise<PageService> {
-  let store: CubeStore;
+/** SAVED PAGES, in this browser: IndexedDB when the browser gives it, else memory (this visit only, and said so), by
+ *  legend-lite's own rules (core's SavedCubes, compiled to WebAssembly; the program's B6). One database holds the pages
+ *  and their files' handles. */
+async function browserPages(load: () => Promise<QueriesModule>): Promise<PageService> {
+  let records: CubeRecords;
   let handles: FileHandles | undefined;
   let memoryOnly = false;
   try {
     const database = openCubeDatabase();
     await database;
-    store = new RuleStore(new BrowserRecords(database), 'this browser');
+    records = new BrowserRecords(database);
     handles = new FileHandles(database);
   } catch {
-    store = new RuleStore(new MemoryRecords(), 'this browser');
+    records = new MemoryRecords();
     memoryOnly = true;
   }
+  const user = 'this browser';
   return {
-    store,
+    store: new CubeStoreClient(LOCAL_CUBES_API, wasmCubeServer({ load, records, user }).fetch, user),
     where: memoryOnly ? 'for this visit only (this browser refused storage)' : 'in this browser',
     memoryOnly,
     ...(handles ? { handles } : {}),
@@ -145,15 +169,16 @@ async function browserPages(): Promise<PageService> {
 /**
  * THE QUERY STORE, through the one client (query-store/README.md): the server the deployment names, or -- none named --
  * the same API answered in this page from this origin's browser store, the one Legend Query keeps its saved queries in
- * when it runs without a server.
+ * when it runs without a server, by legend-lite's own rules (the server's, compiled to WebAssembly: the stores' module,
+ * fetched the first time a store is asked; docs/ONE_PLATFORM_PROGRAM_2026_10_12.md B5).
  */
-function queryService(config: TabConfig): QueryService {
+function queryService(config: TabConfig, load: () => Promise<QueriesModule>): QueryService {
   const url = config.queryStore;
   let store: Promise<QueryReader> | undefined;
   return {
-    store: () => (store ??= queryStores().then((m) => (url
+    store: () => (store ??= queryStores().then(async (m) => (url
       ? new m.QueryStoreClient(url)
-      : new m.QueryStoreClient(m.LOCAL_API, m.localQueryServer({ records: new m.BrowserRecords(), user: config.user }).fetch)))),
+      : new m.QueryStoreClient(m.LOCAL_API, m.wasmQueryServer({ load, records: new m.BrowserRecords(), user: config.user }).fetch)))),
     where: url ? `on ${hostOf(url)}` : 'in this browser',
     // the browser's store: a query saved in another tab (Legend Query) appears without reopening
     ...(url ? {} : {
@@ -198,7 +223,23 @@ function depotHome(depot: { readonly sdlc: string; readonly vendor: string }, lo
  *  to -- a convenience kept in this browser only; storage may be refused. */
 const REMEMBERED = 'datacube.warehouse.url';
 
-function warehouseService(config: TabConfig): WarehouseService {
+function warehouseService(config: TabConfig, location: { readonly href: string }): WarehouseService {
+  // THE WAREHOUSE'S DRIVER AND ITS API: the driver (engine-client's warehouse.ts) and the one binding
+  // (vendor/warehouse/, docs/ONE_PLATFORM_PROGRAM_2026_10_12.md C3), both fetched at the first sign-in (a load that
+  // failed is tried again at the next): a page that never signs in to a warehouse loads neither. A table is opened only
+  // once signed in, so its live engine finds them loaded
+  type Driver = typeof import('../../../engine-client/src/warehouse.ts');
+  let ready: { readonly driver: Driver; readonly binding: WarehouseBinding } | undefined;
+  let loading: Promise<{ readonly driver: Driver; readonly binding: WarehouseBinding }> | undefined;
+  const loaded = (): Promise<{ readonly driver: Driver; readonly binding: WarehouseBinding }> => (loading ??=
+    import('../../../engine-client/src/warehouse.ts')
+      .then(async (driver) => (ready = {
+        driver, binding: await driver.loadWarehouseBinding(new URL('./vendor/warehouse/', location.href).href),
+      }))
+      .catch((e: unknown) => {
+        loading = undefined;
+        throw e;
+      }));
   return {
     offered: () => {
       if (config.warehouse) return config.warehouse;
@@ -215,12 +256,19 @@ function warehouseService(config: TabConfig): WarehouseService {
         // storage refused: not remembered, nothing else changes
       }
     },
-    connect: (url, user, password) => connect(url, user, password),
+    connect: async (url, user, password) => {
+      const { driver, binding } = await loaded();
+      return driver.connect(binding, url, user, password);
+    },
     signInWithKey: async (key) => {
       if (!config.warehouse) throw new Error('this page was not served by a warehouse: its config.json names none');
-      const session = await signInWithKey(config.warehouse, key);
-      return { session, objects: await listObjects(session) };
+      const { driver, binding } = await loaded();
+      const session = await driver.signInWithKey(binding, config.warehouse, key);
+      return { session, objects: await driver.listObjects(binding, session) };
     },
-    live: (session, catalog) => new WarehouseEngine(session, catalog),
+    live: (session, catalog, databaseType) => {
+      if (ready === undefined) throw new Error('the warehouse is read once signed in: sign in first');
+      return new ready.driver.WarehouseEngine(ready.binding, session, catalog, databaseType);
+    },
   };
 }

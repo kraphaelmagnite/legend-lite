@@ -7,6 +7,7 @@
 load("//tools/guards:defs.bzl", "guards_package")
 load("@aspect_rules_js//js:defs.bzl", "js_library")
 load("//tools/js:defs.bzl", "node_test")
+load("@bazel_lib//lib:copy_file.bzl", "copy_file")
 load("@bazel_lib//lib:write_source_files.bzl", "write_source_files")
 load("@npm_engine_client//:defs.bzl", "npm_link_all_packages")
 load("//tools/js:esbuild.bzl", "esbuild_bundle")
@@ -43,11 +44,13 @@ js_library(
 )
 
 # legend-lite's planner in a worker (src/legend/planner-worker.ts), one bundle for every app that runs it in the
-# tab: Query and Studio serve it as their ./planner-worker.js, next to //wasm:planner in ./vendor/planner/.
+# tab, answering the one planner protocol (src/legend/planner-protocol.ts; docs/ONE_PLATFORM_PROGRAM_2026_10_12.md C2):
+# DataCube, Query and Studio serve it as their ./planner-worker.js, next to //wasm:planner's module.
 esbuild_bundle(
     name = "planner_worker",
     srcs = [
         "src/legend/planner-answer.ts",
+        "src/legend/planner-protocol.ts",
         "src/legend/planner-worker.ts",
     ],
     outs = ["planner-worker.js"],
@@ -60,6 +63,7 @@ esbuild_bundle(
         "--outfile=planner-worker.js",
     ],
     visibility = [
+        "//datacube:__pkg__",
         "//query:__pkg__",
         "//studio:__pkg__",
     ],
@@ -119,30 +123,108 @@ node_test(
     data = [
         ":engine_client",
         ":node_modules/@duckdb/duckdb-wasm",
+        "test/planner.ts",
     ],
     entry_point = "test/model-data.test.ts",
     wasm = True,
 )
 
-# Snap's engine half (plan A6, moved from DataCube): freezing rows into the tab's DuckDB, the stamp, the refusals
+# rows a page makes, as Arrow (arrow-ipc.ts arrowIpcStream: DataCube's demo trades), read back by DuckDB-WASM's own
+# reader
 node_test(
-    name = "snap_test",
-    # 2 s measured on a desk (2026-10-07)
+    name = "arrow_ipc_test",
     size = "small",
     data = [
         ":engine_client",
         ":node_modules/@duckdb/duckdb-wasm",
     ],
+    entry_point = "test/arrow-ipc.test.ts",
+)
+
+# Snap's engine half (plan A6, moved from DataCube): freezing rows into the tab's DuckDB, the stamp, the refusals
+node_test(
+    name = "snap_test",
+    # 2 s measured on a desk (2026-10-07); the planner loaded since D5 (it writes the copy's statements)
+    size = "small",
+    data = [
+        ":engine_client",
+        ":node_modules/@duckdb/duckdb-wasm",
+        "test/planner.ts",
+    ],
     entry_point = "test/snap.test.ts",
+    wasm = True,
+)
+
+# The tab's warehouse driver held to the one corpus (docs/ONE_PLATFORM_PROGRAM_2026_10_12.md C3): each recorded scenario
+# run against its answers through the binding's own module, the driver making exactly the recorded calls
+node_test(
+    name = "warehouse_corpus_test",
+    # medium: it loads the binding's module (WebAssembly), as //query-store:wasm_test does
+    size = "medium",
+    data = [
+        ":engine_client",
+        ":node_modules/apache-arrow",
+        "//warehouse:sqlapi_corpus",
+        "//warehouse:sqlapi_page_dir",
+    ],
+    entry_point = "test/warehouse-corpus.test.ts",
+    env = {
+        "SQLAPI_CORPUS": "$(rlocationpath //warehouse:sqlapi_corpus)",
+        "SQLAPI_PAGE": "$(rlocationpath //warehouse:sqlapi_page_dir)",
+    },
+    # the flag only: this test loads the binding's module, not the planner
+    node_options = ["--experimental-wasm-exnref"],
+)
+
+# THE TAB'S DUCKDB EXTENSIONS, served by each site at vendor/duckdb-extensions/ (MODULE.bazel pins them): the layout
+# DuckDB-WASM asks a custom extension repository for, <its version>/<its build>/<name>.duckdb_extension.wasm, so the
+# tab never fetches one from extensions.duckdb.org (startDuckDbInTab, DataCube's boot.ts: custom_extension_repository).
+# ICU, which the session's time zone loads (setUpSession); JSON and Parquet, which a file of either reads with; httpfs,
+# a remote file's.
+_DUCKDB_EXTENSIONS = [
+    "httpfs",
+    "icu",
+    "json",
+    "parquet",
+]
+
+# The DuckDB version this DuckDB-WASM asks a repository for (package.json's @duckdb/duckdb-wasm 1.33.1-dev57.0 is
+# DuckDB v1.5.4): MODULE.bazel's URLs spell it too, and move with it (a .bzl file cannot be loaded there). A stale one
+# fails loudly: the tab asks for another folder, and ICU's load fails every page's start.
+_DUCKDB_VERSION = "v1.5.4"
+
+# one per extension and browser build
+_DUCKDB_EXTENSION_BUILDS = [
+    (extension, build)
+    for extension in _DUCKDB_EXTENSIONS
+    for build in ("wasm_eh", "wasm_mvp")
+]
+
+[copy_file(
+    name = "duckdb_extension_" + extension + "_" + build,
+    src = "@duckdb_wasm_" + extension + "_extension_" + build + "//file",
+    out = "duckdb-extensions/" + _DUCKDB_VERSION + "/" + build + "/" + extension + ".duckdb_extension.wasm",
+) for extension, build in _DUCKDB_EXTENSION_BUILDS]
+
+filegroup(
+    name = "duckdb_extensions",
+    srcs = [":duckdb_extension_" + extension + "_" + build for extension, build in _DUCKDB_EXTENSION_BUILDS],
+    visibility = [
+        "//datacube:__pkg__",
+        "//query:__pkg__",
+        "//studio:__pkg__",
+    ],
 )
 
 # every test here: the local gate and CI's `ui` lane run it
 test_suite(
     name = "tests",
     tests = [
+        ":arrow_ipc_test",
         ":model_data_test",
         ":snap_test",
         ":update_generated_test",
+        ":warehouse_corpus_test",
     ],
 )
 guards_package()

@@ -99,6 +99,13 @@ class CodeShapeGuardrailTest {
             // parser-cursor family, scoped to one parse -- and SqlToPure's fresh-name counter, scoped to one
             // translation (the StoreResolver.freshVarCounter shape)
             "SqlLexer.at", "SqlLexer.line", "SqlLexer.column", "SqlParser.at", "SqlToPure.fresh",
+            // the island's reader of a date's or a timestamp's text (2026-10-13, Postgres's date spellings,
+            // docs/LEGEND_SQL_STUDY_2026_10_11.md §9.4): PostgresDateTime.Decoder is datetime.c's DecodeDateTime,
+            // these its struct pg_tm and the field mask it fills field by field -- scoped to one constant's read,
+            // the parser-cursor lifecycle
+            "PostgresDateTime.fmask", "PostgresDateTime.year", "PostgresDateTime.mon", "PostgresDateTime.mday",
+            "PostgresDateTime.yday", "PostgresDateTime.hour", "PostgresDateTime.min", "PostgresDateTime.sec",
+            "PostgresDateTime.fsec", "PostgresDateTime.is2digits", "PostgresDateTime.julian",
             "MappingProtocolParser.pos",
             // ConnectionSectionGrammar.Cursor / RuntimeSectionGrammar
             // .SliceCursor: the re-lex feeds' parser cursors — same shape,

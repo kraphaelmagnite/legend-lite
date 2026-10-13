@@ -1,0 +1,27 @@
+# legend-lite's own Postgres-judged cases over upstream's parity schema: aggregate permutations -- the regressions
+# (regr_*) over pairs with NULLs, a FILTER, and a value with no spread; ORDER BY inside aggregates whose answer has no
+# order; DISTINCT with it.
+# Each answer is snapped from Postgres 16 with upstream's (postgres-answers.jsonl, key lite/aggregates/<id>).
+tests:
+  # regressions of y on x
+  - id: regressions_by_group
+    sql: "SELECT dept_id, regr_count(salary, age) AS n, regr_avgx(salary, age) AS ax, regr_avgy(salary, age) AS ay, regr_sxx(salary, age) AS sxx, regr_syy(salary, age) AS syy, regr_sxy(salary, age) AS sxy, regr_slope(salary, age) AS b, regr_intercept(salary, age) AS a, regr_r2(salary, age) AS r2 FROM persons GROUP BY dept_id ORDER BY dept_id"
+  - id: regressions_over_the_whole_table
+    sql: "SELECT regr_count(amount, person_id) AS n, regr_slope(amount, person_id) AS b, regr_intercept(amount, person_id) AS a, regr_r2(amount, person_id) AS r2, regr_sxy(person_id, amount) AS sxy FROM orders"
+  - id: regressions_of_a_flat_x_and_a_flat_y
+    sql: "SELECT dept_id, regr_slope(age, dept_id) AS b, regr_intercept(age, dept_id) AS a, regr_r2(age, dept_id) AS r2, regr_r2(dept_id, age) AS r2y, regr_sxx(age, dept_id) AS sxx FROM persons WHERE dept_id IS NOT NULL GROUP BY dept_id ORDER BY dept_id"
+  - id: regressions_of_one_pair_and_none
+    sql: "SELECT regr_count(salary, age) AS n, regr_slope(salary, age) AS b, regr_avgx(salary, age) AS ax, regr_sxx(salary, age) AS sxx FROM persons WHERE id IN (1, 7, 8)"
+  - id: regressions_with_a_filter
+    sql: "SELECT dept_id, regr_slope(salary, age) FILTER (WHERE active) AS b, regr_count(salary, age) FILTER (WHERE age > 28) AS n FROM persons GROUP BY dept_id ORDER BY dept_id"
+  - id: regression_of_text_is_refused
+    sql: "SELECT regr_slope(name, age) AS b FROM persons"
+  # ORDER BY inside an aggregate whose answer has no order
+  - id: order_by_inside_aggregates
+    sql: "SELECT dept_id, sum(salary ORDER BY name) AS s, count(name ORDER BY name DESC) AS c, max(age ORDER BY id) AS m, avg(age ORDER BY age) AS a, bool_and(active ORDER BY id) AS b, stddev(age ORDER BY id) AS d FROM persons GROUP BY dept_id ORDER BY dept_id"
+  - id: distinct_ordered_by_its_argument
+    sql: "SELECT count(DISTINCT dept_id ORDER BY dept_id) AS c, sum(DISTINCT age ORDER BY age DESC) AS s FROM persons"
+  - id: distinct_ordered_by_another_value_is_an_error
+    sql: "SELECT count(DISTINCT dept_id ORDER BY age) AS c FROM persons"
+  - id: max_of_a_boolean_is_an_error
+    sql: "SELECT dept_id, max(active) AS m FROM persons GROUP BY dept_id ORDER BY dept_id"

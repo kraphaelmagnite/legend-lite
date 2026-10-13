@@ -1113,7 +1113,11 @@ public final class SQLite extends AnsiSqlRenderer {
         }
         if (target instanceof SqlType.Array arr) {
             SqlType from = listElement(v);
-            if (from == null || from.equals(arr.element())) {
+            // a text element as LITERAL is the text itself, as the scalar cast below writes it (LITERAL is VARCHAR
+            // physically): the mixed sort's ordered ids (2026-10-13, PR #34's review: element-wise, it wrote the
+            // aggregate twice)
+            if (from == null || from.equals(arr.element())
+                    || from == SqlType.Scalar.VARCHAR && arr.element() == SqlType.Scalar.LITERAL) {
                 return writer.expr(v, 0);
             }
             // element-wise

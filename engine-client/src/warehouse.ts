@@ -5,12 +5,12 @@
 // Snapping copies what the user may read into DuckDB-WASM and runs there, so
 // Live and Snap are one cube on two engines, one planner above both.
 //
-// The client below speaks the warehouse's HTTP SQL API. Its reference is the
-// Java binding every JVM client uses (warehouse/.../sqlapi/NativeBinding.java):
-// the same requests, the same states, the same close-after-reading. The API is
-// ours and two clients speak it; both are held to the real server in the chain
-// (the warehouse suite; the Live-versus-Snap test), and a spec replaces this
-// hand spelling the day a third client or an outside user appears.
+// The client below is a DRIVER of the one binding (warehouse/.../sqlapi/SqlApiCalls.java, docs/ONE_PLATFORM_PROGRAM
+// _2026_10_12.md C3): the binding, compiled to WebAssembly (//warehouse:sqlapi_page, the page's vendor/warehouse/),
+// names every call and reads every answer -- the very ones Python's driver (python/legend_lite/warehouse.py, through
+// the native library) makes, by the binding the JVM's client uses too -- and this file only performs them: the HTTP, the clock, aborting, and the
+// Arrow bytes, which stay here. One recorded corpus holds every driver to the same calls
+// (warehouse/src/test/resources/sqlapi-corpus.json; engine-client/test/warehouse-corpus.test.ts).
 //
 // Results are Arrow IPC streams, one per chunk, read by Arrow JS -- the
 // library DuckDB-WASM's own results come from -- and handed to the same
@@ -25,6 +25,7 @@ import type { Plan } from './relation-type.ts';
 import { toRawTable, type ArrowishTable } from './duckdb.ts';
 import { hostOf, type Receipt } from './receipt.ts';
 import type { ResultTable } from './result.ts';
+import { SessionExpired } from './warehouse-session.ts';
 
 /** A signed-in session: where the warehouse is, and the bearer token. */
 export interface WarehouseSession {
@@ -66,43 +67,109 @@ interface ApiError {
   readonly message: string;
 }
 
-/** One statement on the warehouse's record (`GET /sql/v1/history`), as it writes it. */
+/** One statement on the warehouse's record (`GET /sql/v1/history`), as the binding reads it. */
 interface HistoryEntry {
   readonly statementId: string;
   readonly state: string;
   readonly submittedAt: string;
   readonly finishedAt?: string;
-  readonly rowCount: string | number;
+  readonly rowCount: number | null;
 }
 
-interface StatementStatus {
-  readonly statementId: string;
-  readonly state: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
-  readonly result?: { readonly rowCount: number; readonly chunkCount: number };
-  readonly error?: ApiError;
+/** A statement's next step, as the binding reads a submit's or a poll's answer. */
+type Step =
+  | { readonly step: 'poll'; readonly statementId: string }
+  | { readonly step: 'done'; readonly statementId: string; readonly rowCount?: number; readonly chunkCount: number }
+  | { readonly step: 'failed'; readonly statementId?: string; readonly error: ApiError };
+
+/** One HTTP call the binding names, relative to the warehouse's base URL. */
+interface HttpCall {
+  readonly method: string;
+  readonly path: string;
+  readonly headers: Readonly<Record<string, string>>;
+  readonly body: string | null;
 }
 
-/** How long one poll may wait on the server (NativeBinding's pollWaitMs). */
-const POLL_WAIT_MS = 10_000;
-/** Rows per Arrow chunk: whole DuckDB batches of 2,048 each. */
-const ROWS_PER_CHUNK = 100_000;
-const TIMEOUT_MS = 300_000;
-
-function url(base: string, path: string): string {
-  return base.replace(/\/+$/, '') + path;
+/** A call the binding read as refused: the API's error, and whether the session it carried is gone. */
+interface Refusal {
+  readonly error: ApiError;
+  readonly expired?: true;
 }
 
-/** The API's own error, when a failed reply carries one; else the status line. */
-async function failure(r: Response): Promise<string> {
-  const text = await r.text();
-  try {
-    const e = (JSON.parse(text) as { error?: ApiError }).error;
-    if (e) return `${e.code}: ${e.message}`;
-  } catch {
-    // not one of ours (a proxy's page, say): fall through
+/** The binding's module (//warehouse:sqlapi_page): its two exports, JSON in and out. */
+export interface SqlApiModule {
+  readonly exports: {
+    call(op: string, args: string): string;
+    read(op: string, status: number, body: string): string;
+  };
+}
+
+/** THE ONE BINDING, loaded: every call this driver makes is named by it, and every answer read by it. */
+export class WarehouseBinding {
+  readonly #module: SqlApiModule;
+
+  constructor(module: SqlApiModule) {
+    this.#module = module;
   }
-  return `HTTP ${r.status}${text ? `: ${text.slice(0, 200)}` : ''}`;
+
+  /** The call `op` makes with `args`; a refusal of its arguments is this driver's bug, thrown. */
+  call(op: string, args: Readonly<Record<string, unknown>>): HttpCall {
+    const said = JSON.parse(this.#module.exports.call(op, JSON.stringify(args))) as HttpCall | Refusal;
+    if ('error' in said) throw new Error(`the warehouse binding refused ${op}: ${said.error.code}: ${said.error.message}`);
+    return said;
+  }
+
+  /** What the answer to `op`'s call says, or its refusal. */
+  read<T>(op: string, status: number, body: string): T | Refusal {
+    return JSON.parse(this.#module.exports.read(op, status, body)) as T | Refusal;
+  }
 }
+
+/** The binding's module, from the directory holding its `classes.wasm` and TeaVM's runtime (`<vendor>warehouse/`). */
+export async function loadWarehouseBinding(base: string, load?: (runtimeUrl: string) => Promise<unknown>): Promise<WarehouseBinding> {
+  const dir = base.endsWith('/') ? base : `${base}/`;
+  const runtimeUrl = `${dir}wasm-gc-module-runtime.js`;
+  const runtime = (load ? await load(runtimeUrl) : await import(/* @vite-ignore */ runtimeUrl)) as {
+    load(src: string, options?: unknown): Promise<SqlApiModule>;
+  };
+  return new WarehouseBinding(await runtime.load(`${dir}classes.wasm`, {
+    stackDeobfuscator: { enabled: false },
+    installImports(imports: Record<string, unknown>) {
+      imports.teavmConsole = { putcharStdout() {}, putcharStderr() {} };
+    },
+  }));
+}
+
+/** A refusal: an error and no step (a statement's failed step carries its error too, and is an answer). */
+const refused = (said: unknown): said is Refusal => typeof said === 'object' && said !== null && 'error' in said
+  && !('step' in said);
+const words = (r: Refusal): string => `${r.error.code}: ${r.error.message}`;
+
+/** `fetch`, with a refused connection said as what it is: the browser's own words ("Failed to fetch") name neither
+ *  the server nor the fact it could not be reached. */
+async function reach(baseUrl: string, call: HttpCall, signal?: AbortSignal): Promise<Response> {
+  try {
+    return await fetch(baseUrl.replace(/\/+$/, '') + call.path, {
+      method: call.method,
+      headers: call.headers,
+      ...(call.body === null ? {} : { body: call.body }),
+      ...(signal ? { signal } : {}),
+    });
+  } catch (error: unknown) {
+    if (signal?.aborted) throw error;
+    throw new Error(`cannot reach the warehouse at ${baseUrl} — ${error instanceof Error ? error.message : String(error)}`,
+      { cause: error });
+  }
+}
+
+/** One call the binding names, made, and its answer as the binding reads it. */
+async function exchange<T>(binding: WarehouseBinding, baseUrl: string, op: string, args: Readonly<Record<string, unknown>>,
+  signal?: AbortSignal): Promise<T | Refusal> {
+  const r = await reach(baseUrl, binding.call(op, args), signal);
+  return binding.read<T>(op, r.status, await r.text());
+}
+
+interface Token { readonly token: string; readonly expiresAt: string; readonly principal: string }
 
 /**
  * Sign in and get a token. The DEVELOPMENT sign-in: the warehouse's own
@@ -110,14 +177,9 @@ async function failure(r: Response): Promise<string> {
  * only the token is. Production replaces this with the company's single
  * sign-on, whose token the warehouse verifies -- nothing else here changes.
  */
-export async function signIn(baseUrl: string, user: string, password: string): Promise<WarehouseSession> {
-  const r = await fetch(url(baseUrl, '/sql/v1/login'), {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ user, password }),
-  });
-  if (!r.ok) throw new Error(`sign-in failed — ${await failure(r)}`);
-  const t = await r.json() as { token: string; expiresAt: string; principal: string };
+export async function signIn(binding: WarehouseBinding, baseUrl: string, user: string, password: string): Promise<WarehouseSession> {
+  const t = await exchange<Token>(binding, baseUrl, 'login', { user, password });
+  if (refused(t)) throw new Error(`sign-in failed — ${words(t)}`);
   return { baseUrl, token: t.token, principal: t.principal, expiresAt: t.expiresAt };
 }
 
@@ -125,14 +187,9 @@ export async function signIn(baseUrl: string, user: string, password: string): P
  * The single-user app's sign-in (docs/DATACUBE_APP_PLAN_2026_10_02.md): the launch key the warehouse
  * printed and put in this page's address, for a token like a password's -- refreshed, and renewed, the same.
  */
-export async function signInWithKey(baseUrl: string, key: string): Promise<WarehouseSession> {
-  const r = await fetch(url(baseUrl, '/sql/v1/login'), {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ key }),
-  });
-  if (!r.ok) throw new Error(`sign-in failed — ${await failure(r)}`);
-  const t = await r.json() as { token: string; expiresAt: string; principal: string };
+export async function signInWithKey(binding: WarehouseBinding, baseUrl: string, key: string): Promise<WarehouseSession> {
+  const t = await exchange<Token>(binding, baseUrl, 'loginKey', { key });
+  if (refused(t)) throw new Error(`sign-in failed — ${words(t)}`);
   return { baseUrl, token: t.token, principal: t.principal, expiresAt: t.expiresAt };
 }
 
@@ -142,12 +199,10 @@ export async function signInWithKey(baseUrl: string, key: string): Promise<Wareh
  * as a Pure connection names it (`DuckDB`, `Postgres`). An attached catalog the user holds no USAGE of
  * is not listed.
  */
-export async function listObjects(session: WarehouseSession): Promise<CatalogObject[]> {
-  const r = await fetch(url(session.baseUrl, '/sql/v1/objects'), {
-    headers: { Authorization: `Bearer ${session.token}` },
-  });
-  if (!r.ok) throw new Error(`could not list the tables — ${await failure(r)}`);
-  return await r.json() as CatalogObject[];
+export async function listObjects(binding: WarehouseBinding, session: WarehouseSession): Promise<CatalogObject[]> {
+  const objects = await exchange<CatalogObject[]>(binding, session.baseUrl, 'objects', { token: session.token });
+  if (refused(objects)) throw new Error(`could not list the tables — ${words(objects)}`);
+  return objects;
 }
 
 /**
@@ -155,35 +210,15 @@ export async function listObjects(session: WarehouseSession): Promise<CatalogObj
  * own tables. Signing in, then listing separately, left one user's table list beside another
  * user's session when the listing failed (P2-334).
  */
-export async function connect(baseUrl: string, user: string, password: string):
+export async function connect(binding: WarehouseBinding, baseUrl: string, user: string, password: string):
 Promise<{ readonly session: WarehouseSession; readonly objects: CatalogObject[] }> {
-  const session = await signIn(baseUrl, user, password);
-  const objects = await listObjects(session);
+  const session = await signIn(binding, baseUrl, user, password);
+  const objects = await listObjects(binding, session);
   return { session, objects };
 }
 
-/**
- * The warehouse refused the token: expired, or issued by a warehouse that has since restarted.
- * Its own type, so the cube can offer to sign in again right where it says so.
- */
-export class SessionExpired extends Error {
-  readonly baseUrl: string;
-  readonly principal: string;
-  constructor(baseUrl: string, principal: string) {
-    super(`the warehouse session for ${principal} has expired — sign in again`);
-    this.name = 'SessionExpired';
-    this.baseUrl = baseUrl;
-    this.principal = principal;
-  }
-}
-
-/** Whether `error`, or anything in its cause chain, is a `SessionExpired`. */
-export function sessionExpired(error: unknown): SessionExpired | null {
-  for (let e = error, depth = 0; e && depth < 10; e = (e as { cause?: unknown }).cause, depth++) {
-    if (e instanceof SessionExpired) return e;
-  }
-  return null;
-}
+// the session's end, as its own error (warehouse-session.ts: a page's code reads it without loading this driver)
+export { SessionExpired, sessionExpired } from './warehouse-session.ts';
 
 /** The time a WarehouseEngine reads and the timer it schedules its token refresh on: the system's, or a test's own
  *  (Bazel workplan P3-16: a test proves the refresh by advancing a clock, never by sleeping). */
@@ -206,6 +241,9 @@ export const SYSTEM_CLOCK: Clock = {
 
 export class WarehouseEngine implements QueryEngine {
   readonly name = 'warehouse';
+  /** Its catalog's database type (`DuckDB`, `Postgres`): what a statement run on it is written for (Snap's count). */
+  readonly databaseType: string;
+  readonly #binding: WarehouseBinding;
   /** Renewed in place when the same user signs in again (`renew`) or the token is refreshed. */
   #session: WarehouseSession;
   readonly #catalog: string;
@@ -213,7 +251,11 @@ export class WarehouseEngine implements QueryEngine {
   #refreshTimer: unknown;
   readonly #clock: Clock;
 
-  constructor(session: WarehouseSession, catalog = 'main', clock: Clock = SYSTEM_CLOCK) {
+  /** `databaseType`: the catalog's, as the warehouse lists it (CatalogObject.databaseType) -- never assumed. */
+  constructor(binding: WarehouseBinding, session: WarehouseSession, catalog: string, databaseType: string,
+    clock: Clock = SYSTEM_CLOCK) {
+    this.databaseType = databaseType;
+    this.#binding = binding;
     this.#session = session;
     this.#catalog = catalog;
     this.#clock = clock;
@@ -240,7 +282,7 @@ export class WarehouseEngine implements QueryEngine {
 
   /** Swap the token for a fresh one now: same user, a new expiry. */
   async refreshToken(): Promise<void> {
-    const t = await this.#call<{ token: string; expiresAt: string; principal: string }>('POST', '/sql/v1/token/refresh');
+    const t = await this.#call<Token>('refresh', {});
     this.renew({ baseUrl: this.#session.baseUrl, token: t.token, principal: t.principal, expiresAt: t.expiresAt });
   }
 
@@ -271,7 +313,7 @@ export class WarehouseEngine implements QueryEngine {
    * once and not kept.
    */
   async signInAgain(password: string): Promise<void> {
-    this.renew(await signIn(this.#session.baseUrl, this.#session.principal, password));
+    this.renew(await signIn(this.#binding, this.#session.baseUrl, this.#session.principal, password));
   }
 
   renew(session: WarehouseSession): void {
@@ -335,12 +377,13 @@ export class WarehouseEngine implements QueryEngine {
    * user: its history (`GET /sql/v1/history`), which lists only the caller's own statements.
    */
   async check(id: string): Promise<string> {
-    const history = await this.#call<readonly HistoryEntry[]>('GET', '/sql/v1/history?limit=1000');
+    const history = await this.#call<readonly HistoryEntry[]>('history', { limit: 1000 });
     const found = history.find((h) => h.statementId === id);
     const who = this.#session.principal;
     if (!found) return `Not on the warehouse's record for ${who}: no statement ${id} in its last ${history.length}.`;
+    const rows = found.rowCount === null ? 'its rows uncounted' : `${found.rowCount.toLocaleString(UI_LOCALE)} rows`;
     return `On the warehouse's record for ${who}: statement ${id}, ${found.state}, `
-      + `${Number(found.rowCount).toLocaleString(UI_LOCALE)} rows, submitted ${new Date(found.submittedAt).toLocaleTimeString(UI_LOCALE)}`
+      + `${rows}, submitted ${new Date(found.submittedAt).toLocaleTimeString(UI_LOCALE)}`
       + (found.finishedAt ? `, finished ${new Date(found.finishedAt).toLocaleTimeString(UI_LOCALE)}` : '') + '.';
   }
 
@@ -354,52 +397,38 @@ export class WarehouseEngine implements QueryEngine {
     signal?: AbortSignal,
     onReceipt?: (receipt: Receipt) => void,
   ): AsyncGenerator<Uint8Array> {
-    let status = await this.#call<StatementStatus>('POST', '/sql/v1/statements', signal, {
-      sql,
-      catalog: this.#catalog,
-      timeoutMs: TIMEOUT_MS,
-      waitMs: POLL_WAIT_MS,
-      rowsPerChunk: ROWS_PER_CHUNK,
-      resultFormat: 'arrow',
-    });
-    const id = status.statementId;
+    let step = await this.#call<Step>('submit', { sql, catalog: this.#catalog }, signal);
+    const id = step.statementId;
+    // where a read that ends early leaves its statement: still running, cancelled; done, its result closed; read to the
+    // end (or failed there), nothing
+    let ending: 'cancel' | 'closeStatement' | undefined = 'cancel';
     try {
-      while (status.state === 'queued' || status.state === 'running') {
-        status = await this.#call<StatementStatus>('GET', `/sql/v1/statements/${id}?waitMs=${POLL_WAIT_MS}`, signal);
+      while (step.step === 'poll') step = await this.#call<Step>('poll', { statementId: step.statementId }, signal);
+      if (step.step === 'failed') {
+        ending = undefined;
+        throw new Error(`${step.error.code}: ${step.error.message}`);
       }
-      if (status.state !== 'succeeded') {
-        const e = status.error;
-        throw new Error(e ? `${e.code}: ${e.message}` : `the statement ended ${status.state}`);
-      }
+      const done = step;
+      ending = 'closeStatement';
       // What the SERVER issued for it: its id and its count, never the tab's.
       onReceipt?.({
         plane: 'warehouse',
         where: `the warehouse at ${hostOf(this.#session.baseUrl)}`,
         as: this.#session.principal,
-        statementId: id,
-        ...(status.result ? { serverRows: Number(status.result.rowCount) } : {}),
-        check: () => this.check(id),
+        statementId: done.statementId,
+        ...(done.rowCount !== undefined ? { serverRows: done.rowCount } : {}),
+        check: () => this.check(done.statementId),
       });
-      const chunks = status.result?.chunkCount ?? 0;
-      for (let i = 0; i < chunks; i++) {
-        const r = await this.#fetch(url(this.#session.baseUrl, `/sql/v1/statements/${id}/chunks/${i}`), {
-          headers: this.#auth(),
-          ...(signal ? { signal } : {}),
-        });
-        if (r.status === 401) throw new SessionExpired(this.#session.baseUrl, this.#session.principal);
-        if (!r.ok) throw new Error(await failure(r));
+      for (let index = 0; index < done.chunkCount; index++) {
+        // a chunk's bytes are this driver's: only a failed chunk's answer is the binding's to read
+        const r = await reach(this.#session.baseUrl, this.#binding.call('fetchChunk', { statementId: done.statementId, index, ...this.#token() }), signal);
+        if (r.status !== 200) this.#refuse(this.#binding.read('fetchChunk', r.status, await r.text()));
         yield new Uint8Array(await r.arrayBuffer());
       }
-      // every chunk read: the server may free the result now, not at expiry
-      await fetch(url(this.#session.baseUrl, `/sql/v1/statements/${id}`), { method: 'DELETE', headers: this.#auth() });
-    } catch (error: unknown) {
-      if (signal?.aborted) {
-        // stop the server's work too; the page has already moved on
-        void fetch(url(this.#session.baseUrl, `/sql/v1/statements/${id}/cancel`), {
-          method: 'POST', headers: this.#auth(),
-        }).catch(() => undefined);
-      }
-      throw error;
+    } finally {
+      // every chunk read, or the read ended early: the server may free the result now, not at expiry, and stop a
+      // statement still running; what it answers changes nothing here (the rows were read, or the read has failed)
+      if (ending !== undefined && id !== undefined) await this.#call(ending, { statementId: id }).catch(() => undefined);
     }
   }
 
@@ -408,33 +437,21 @@ export class WarehouseEngine implements QueryEngine {
     this.#clock.clearTimeout(this.#refreshTimer);
   }
 
-  #auth(): Record<string, string> {
-    return { Authorization: `Bearer ${this.#session.token}` };
+  #token(): { readonly token: string } {
+    return { token: this.#session.token };
   }
 
-  /**
-   * `fetch`, with a refused connection said as what it is. The browser's own words are
-   * "Failed to fetch", which names neither the server nor the fact it could not be reached.
-   */
-  async #fetch(target: string, init: RequestInit): Promise<Response> {
-    try {
-      return await fetch(target, init);
-    } catch (error: unknown) {
-      if (init.signal?.aborted) throw error;
-      throw new Error(`cannot reach the warehouse at ${this.#session.baseUrl} — `
-        + `${error instanceof Error ? error.message : String(error)}`, { cause: error });
-    }
+  /** A refused answer, raised: an expired session as its own error, so the cube can offer to sign in again. */
+  #refuse(said: unknown): void {
+    if (!refused(said)) return;
+    if (said.expired) throw new SessionExpired(this.#session.baseUrl, this.#session.principal);
+    throw new Error(words(said));
   }
 
-  async #call<T>(method: string, path: string, signal?: AbortSignal, body?: unknown): Promise<T> {
-    const r = await this.#fetch(url(this.#session.baseUrl, path), {
-      method,
-      headers: body === undefined ? this.#auth() : { ...this.#auth(), 'Content-Type': 'application/json' },
-      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-      ...(signal ? { signal } : {}),
-    });
-    if (r.status === 401) throw new SessionExpired(this.#session.baseUrl, this.#session.principal);
-    if (!r.ok && r.status !== 202) throw new Error(await failure(r));
-    return await r.json() as T;
+  /** One call the binding names, with this engine's token, and its answer as the binding reads it. */
+  async #call<T>(op: string, args: Readonly<Record<string, unknown>>, signal?: AbortSignal): Promise<T> {
+    const said = await exchange<T>(this.#binding, this.#session.baseUrl, op, { ...args, ...this.#token() }, signal);
+    this.#refuse(said);
+    return said as T;
   }
 }

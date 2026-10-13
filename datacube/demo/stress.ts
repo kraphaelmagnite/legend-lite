@@ -17,9 +17,8 @@
 // "broke" is what this exists to find. A large "refused" count is
 // expected and its messages are worth reading.
 
-import * as duckdb from '../../engine-client/src/duckdb-wasm.ts';
-
-import { DuckDbEngine, type ArrowishConnection } from '../../engine-client/src/duckdb.ts';
+import type { DuckDbEngine } from '../../engine-client/src/duckdb.ts';
+import { startDuckDbInTab } from '../../engine-client/src/duckdb-tab.ts';
 import type { Lambda } from '../../pure-protocol/src/index.ts';
 import { levelWithValues } from '../src/plan.ts';
 import { col, lambda, lit, times, type ValueSpecification } from '../../pure-protocol/src/index.ts';
@@ -36,7 +35,6 @@ import { familyOf, isNumeric } from '../../engine-client/src/types.ts';
 import type { Plan } from '../../engine-client/src/relation-type.ts';
 import { sourceColumns } from '../src/source-columns.ts';
 import { kindOf } from '../src/snapshot.ts';
-import { setUpSession } from '../src/services/browser.ts';
 
 export interface Outcome {
   readonly csv: string;
@@ -71,28 +69,12 @@ const COLUMN_OPS: FilterOperator[] = [
 ];
 
 async function boot() {
-  const asset = (f: string) => new URL(`./vendor/${f}`, location.href).href;
-  const bundle = await duckdb.selectBundle({
-    mvp: {
-      mainModule: asset('duckdb-mvp.wasm'),
-      mainWorker: asset('duckdb-browser-mvp.worker.js'),
-    },
-    eh: {
-      mainModule: asset('duckdb-eh.wasm'),
-      mainWorker: asset('duckdb-browser-eh.worker.js'),
-    },
-  });
-  const db = new duckdb.AsyncDuckDB(
-    new duckdb.VoidLogger(), new Worker(bundle.mainWorker!));
-  await db.instantiate(bundle.mainModule, bundle.pthreadWorker);
-  const conn = await db.connect();
-  const engine = new DuckDbEngine(conn as unknown as ArrowishConnection);
   // the planner the page's ?planner= names (in this tab unless said): each file's model is
   // written and swapped in as it is opened (`models`)
   const { planner, models, tables } = await plannerFor(chosenPlane(), '');
   if (!models) throw new Error('the chosen planner cannot take a file\'s model');
-  // set up as the tab's DuckDB is (services/browser.ts): the session the planner's SQL expects
-  await setUpSession(engine, tables);
+  // the one start of a tab's DuckDB (engine-client's startDuckDbInTab), set up by that planner's rules
+  const { db, engine } = await startDuckDbInTab('./vendor/', tables);
   return { db, engine, planner, models, tables };
 }
 

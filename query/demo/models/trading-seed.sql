@@ -1,5 +1,6 @@
--- The trading demo's rows, for DuckDB (in the tab, or the warehouse): the same data
--- runtime-h2.pure's connection seeds into H2. One statement per line.
+-- The warehouse's fixture for the trading demo (config-warehouse.json): the rows the project's
+-- Data holds (trading-data.pure, which the tab fills), and runtime-h2.pure's connection seeds
+-- into H2. One statement per line.
 CREATE SCHEMA IF NOT EXISTS TRADING;
 CREATE OR REPLACE TABLE TRADING.FIRM (FIRM_ID INTEGER PRIMARY KEY, LEGAL_NAME VARCHAR(128), REGION VARCHAR(8), FOUNDED DATE);
 CREATE OR REPLACE TABLE TRADING.PERSON (PERSON_ID INTEGER PRIMARY KEY, FIRST_NAME VARCHAR(64), LAST_NAME VARCHAR(64), TITLE VARCHAR(64), AGE INTEGER, FIRM_ID INTEGER);

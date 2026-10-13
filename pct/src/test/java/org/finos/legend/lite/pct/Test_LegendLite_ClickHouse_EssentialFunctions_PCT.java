@@ -30,6 +30,10 @@ public class Test_LegendLite_ClickHouse_EssentialFunctions_PCT extends PCTReport
     // Pinned by a STABLE part of the message (the runner matches by containment): no per-run id.
     // First measured 2026-10-12 (ClickHouse 25.8, the pinned server).
     private static final MutableList<ExclusionSpecification> expectedFailures = Lists.mutable.with(
+            // testFormatFloat passes through the harness's connection, not the dialect: its statement is past 256 KiB,
+            // and EmbeddedClickHouse.jdbcUrl raises max_query_size and the AST limits; a server on its defaults refuses
+            // it ("Max query size exceeded", loudly). The ClickHouse connector carries them (the dialect plan's P5;
+            // PR #34's review, 2026-10-13)
             // INSTANCE IDENTITY (as on DuckDB): the asserts want the interpreter's ORIGINAL instances back, or eq/==
             // by reference; the harness inlines captured instances BY VALUE, so identity is erased before the wire
             one("meta::pure::functions::collection::tests::find::testFindInstance_Function_1__Boolean_1_", "instanceOf meta::pure::functions::collection::tests::model::CO_Person"),
@@ -57,17 +61,7 @@ public class Test_LegendLite_ClickHouse_EssentialFunctions_PCT extends PCTReport
             one("meta::pure::functions::math::tests::trigonometry::testArcSineError_Function_1__Boolean_1_", "\"Execution error message mismatch.\nThe actual message was \"Infinite or NaN\"\nwhere the expected message was:\"Unable to compute asin of 2.0\"\""),
             one("meta::pure::functions::string::tests::indexOf::testFromIndex_Function_1__Boolean_1_", "\"\nexpected: 1\nactual:   2\""),
             one("meta::pure::functions::string::tests::indexOf::testSimple_Function_1__Boolean_1_", "\"\nexpected: 4\nactual:   5\""),
-            one("meta::pure::functions::string::tests::toString::testComplexClassToString_Function_1__Boolean_1_", "\"Code: 10. DB::Exception: Tuple doesn't have element with name '__id'"),
-            // CLICKHOUSE'S OWN LIMIT: a Tuple's fields are typed and a Tuple is never NULL (measured): an unset
-            // property is a NULL of no type, and an empty untyped list (Nullable(Nothing)) has no Tuple to zip or
-            // project into
-            one("meta::pure::functions::collection::tests::contains::testContainsNonPrimitive_Function_1__Boolean_1_", "\"a struct field of unknown type reached ClickHouse: a Tuple's fields are typed\""),
-            one("meta::pure::functions::collection::tests::zip::testZipBothListsEmpty_Function_1__Boolean_1_", "\"Code: 70. DB::Exception: Cannot convert NULL to a non-nullable type"),
-            one("meta::pure::functions::collection::tests::zip::testZipFirstListEmpty_Function_1__Boolean_1_", "\"Code: 70. DB::Exception: Cannot convert NULL to a non-nullable type"),
-            one("meta::pure::functions::collection::tests::zip::testZipSecondListEmpty_Function_1__Boolean_1_", "\"Code: 70. DB::Exception: Cannot convert NULL to a non-nullable type"),
-            // CLICKHOUSE'S OWN LIMIT: a statement over the server's max_query_size (256 KiB by default) is refused
-            // before its own SETTINGS clause is read: this one spells many Floats' text
-            one("meta::pure::functions::string::tests::format::testFormatFloat_Function_1__Boolean_1_", "\"Code: 62. DB::Exception: Max query size exceeded (can be increased with the `max_query_size` setting)")
+            one("meta::pure::functions::string::tests::toString::testComplexClassToString_Function_1__Boolean_1_", "\"Code: 10. DB::Exception: Tuple doesn't have element with name '__id'")
     );
 
     public static Test suite() {

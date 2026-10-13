@@ -176,8 +176,13 @@ public final class SqlApi {
         }
     }
 
-    /** A catalog object's column: its name and DuckDB's name for its type. */
-    public record CatalogColumn(String name, String type) {
+    /**
+     * A catalog object's column: its name and DuckDB's name for its type, and STRUCTURED, as the server reads its
+     * catalog (DuckDb.CATALOG_COLUMNS_SQL): the canonical type, a DECIMAL's precision and scale, and whether the
+     * catalog says it holds no NULL -- what a model is written from, never by parsing {@code type}.
+     */
+    public record CatalogColumn(String name, String type, @Nullable String logicalType, @Nullable Integer precision,
+            @Nullable Integer scale, boolean notNull) {
     }
 
     public record HistoryEntry(String statementId, String catalog, String sql, State state, String submittedAt,

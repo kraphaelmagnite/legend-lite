@@ -6,14 +6,16 @@
 // said (`refusePlanner`) and the page stops.
 
 import { UI_LOCALE } from '../../engine-client/src/locale.ts';
-import * as duckdb from '../../engine-client/src/duckdb-wasm.ts';
 
 import type { HeldCopy } from '../src/app.ts';
 import { DEFAULT_CONFIGURATION, type CubeConfiguration } from '../src/config.ts';
 import type { Planner, SnapTarget } from '../src/cube.ts';
 import type { ModelOptions } from '../src/planner.ts';
-import { DuckDbEngine, type ArrowishConnection } from '../../engine-client/src/duckdb.ts';
-import type { SeedSource } from '../../engine-client/src/model-data.ts';
+import type { DuckDbEngine } from '../../engine-client/src/duckdb.ts';
+import { startDuckDbInTab } from '../../engine-client/src/duckdb-tab.ts';
+import { SAMPLE_TRADES, sampleTrades } from '../src/sample-trades.ts';
+import type { HostOperationsSource } from '../../engine-client/src/host-operations.ts';
+import type { ProjectDataSource } from '../../engine-client/src/project-data.ts';
 import { mountRemote } from '../src/remote.ts';
 import { isPageFragment } from '../src/share/link.ts';
 import type { TableModels } from '../src/infer.ts';
@@ -29,8 +31,6 @@ import { accessor, type ValueSpecification } from '../../pure-protocol/src/index
 // the query store's code, fetched the first time it is needed -- a query link in the address -- as charts are: a
 // grid-only page never downloads it (test/bundle-budget.test.ts)
 const queryStores = () => import('../../query-store/src/index.ts');
-
-const ROWS = 200_000;
 
 /**
  * THE THREE PLANES, as data rather than as three copies of a menu.
@@ -188,10 +188,10 @@ export interface Engine {
    */
   readonly tables: TableModels;
   /**
-   * legend-lite's planner in this tab for a project's test data (a saved query opened by name): the server's statements
-   * that make and fill its tables (engine-client's model-data.ts) -- the same module as `tables`.
+   * legend-lite's planner in this tab for a project's own database (a saved query opened by name; C5): the statements
+   * that make, fill and drop it (engine-client's project-data.ts) -- the same module as `tables`.
    */
-  readonly seeds: SeedSource;
+  readonly projects: ProjectDataSource;
   /**
    * A file opened in this tab: the planner repointed at the model written for it from DuckDB's
    * catalog (`tables`, infer.ts). Every planner takes one (planners.ts).
@@ -233,7 +233,7 @@ export type MakePlanner = (status: HTMLElement) => Promise<Engine>;
 /** Where the demo's shared model and tables live: `#>{trades::DB.TRADES}#`. */
 export const SOURCE = accessor('trades::DB', 'TRADES');
 /** Where the demo cube snaps; its copy is planned by the page's own planner (the model is DuckDB's). */
-export const SNAP_TARGET: Omit<SnapTarget, 'planner'> = {
+export const SNAP_TARGET: Omit<SnapTarget, 'planner' | 'host'> = {
   table: 'TRADES_SNAP',
   source: accessor('trades::DB', 'TRADES_SNAP'),
   conversions: [],
@@ -247,59 +247,14 @@ export async function loadModel(): Promise<string> {
 
 // -- sample data ----------------------------------------------------
 
-const REGIONS = ['EMEA', 'AMER', 'APAC'];
-const DESKS = ['Rates', 'Credit', 'FX', 'Equity', 'Commodities'];
-
 /**
- * DuckDB in this tab: its bundle from our own origin, its worker, one connection -- the engine,
- * and the database itself (files are registered on it): the tab's database service (src/services/browser.ts).
+ * The demo's trades, generated in this tab as the table the model reads (src/sample-trades.ts: Arrow data, put in by
+ * DuckDB's Arrow reader -- the page spells no SQL), a table of that name dropped first (the planner's operation).
  */
-export async function startDuckDb(): Promise<{ readonly engine: DuckDbEngine; readonly db: duckdb.AsyncDuckDB }> {
-  // Bundles are served from OUR origin, copied out of node_modules by
-  // `bazel build //datacube:vendor`. Loading them from a CDN instead forces a
-  // cross-origin Worker, which the platform forbids outright and which
-  // is then usually worked around with a blob that importScripts the
-  // CDN url. That workaround exists to solve a problem worth not
-  // having: a deployment behind a firewall is not fetching its query
-  // engine from a CDN anyway.
-  // Absolute URLs, not relative ones. The WORKER resolves mainModule
-  // against its own location, so './vendor/x.wasm' becomes
-  // '/demo/vendor/vendor/x.wasm' and fails as an opaque
-  // "WebAssembly.compile: HTTP status code is not ok".
-  const asset = (f: string) => new URL(`./vendor/${f}`, location.href).href;
-  const bundle = await duckdb.selectBundle({
-    mvp: {
-      mainModule: asset('duckdb-mvp.wasm'),
-      mainWorker: asset('duckdb-browser-mvp.worker.js'),
-    },
-    eh: {
-      mainModule: asset('duckdb-eh.wasm'),
-      mainWorker: asset('duckdb-browser-eh.worker.js'),
-    },
-  });
-  const worker = new Worker(bundle.mainWorker!);
-  const db = new duckdb.AsyncDuckDB(new duckdb.ConsoleLogger(), worker);
-  await db.instantiate(bundle.mainModule, bundle.pthreadWorker);
-  const conn = await db.connect();
-  return { engine: new DuckDbEngine(conn as unknown as ArrowishConnection), db };
-}
-
-/** The demo's trades, generated in this tab's DuckDB as the table the model reads. */
-export async function generateTrades(engine: DuckDbEngine): Promise<void> {
-  await engine.run(
-    `CREATE OR REPLACE TABLE trades AS
-     SELECT
-       ${sqlPick(REGIONS, 'i % 3')}            AS region,
-       ${sqlPick(DESKS, '(i // 3) % 5')}       AS desk,
-       (2021 + ((i // 15) % 5))                AS year,
-       ('Q' || (1 + ((i // 75) % 4)))          AS qtr,
-       ('Book ' || (1 + ((i // 300) % 4)))     AS book,
-       ((i * 7919) % 1000000) / 100.0  AS notional,
-       ((i * 104729) % 200000) / 100.0 - 1000.0 AS pnl,
-       ((i * 31) % 97) + 1             AS qty
-     FROM range(${ROWS}) t(i)`,
-    0,
-  );
+export async function generateTrades(engine: DuckDbEngine, host: HostOperationsSource): Promise<void> {
+  const stream = sampleTrades();
+  const [drop] = await host.hostOperations(engine.databaseType, [{ op: 'drop', kind: 'table', target: { name: 'trades' } }]);
+  await engine.loadArrow({ table: 'trades' }, (async function* () { yield stream; })(), drop);
 }
 
 /**
@@ -340,10 +295,20 @@ async function startPage(makePlanner: MakePlanner, settled: { show: (reason: str
   // the deployment's settings (config.json, the address's overrides), read once: the services hold what they say
   const configured = pageConfig();
   configured.catch(() => {});
-  status.textContent = 'starting DuckDB…';
+  status.textContent = 'starting DuckDB and the planner…';
 
-  const duck = await startDuckDb();
-  performance.mark('dc:duckdb-ready');
+  // the one start of a tab's DuckDB (engine-client's startDuckDbInTab): its files and extensions from ./vendor/, its
+  // session set up by the planner's rules before anything uses it. So the database is ready once the planner is too:
+  // DuckDB's start still overlaps the planner's (above), but the sample's rows and a remote mount below come after
+  // both -- before a value is written, the session is the planner's (C1), not the browser's zone.
+  // the planner's, as it arrives: the extension folder, the session, and the page's host operations (D5)
+  const planned = {
+    sessionSetup: (databaseType: string) => engineReady.then((p) => p.tables.sessionSetup(databaseType)),
+    hostOperations: (databaseType: string, operations: Parameters<TableModels['hostOperations']>[1]) =>
+      engineReady.then((p) => p.tables.hostOperations(databaseType, operations)),
+  };
+  const duck = await startDuckDbInTab('./vendor/', planned);
+  performance.mark('dc:database-ready');
 
   // A REMOTE SOURCE, when one is named.
   //
@@ -363,7 +328,7 @@ async function startPage(makePlanner: MakePlanner, settled: { show: (reason: str
   if (start.kind === 'sample' && remote) {
     status.textContent = `mounting ${remote}…`;
     const format = params.get('format');
-    await mountRemote(duck.engine, {
+    await mountRemote(duck.engine, planned, {
       sources: [{
         name: 'trades',
         url: remote,
@@ -381,9 +346,9 @@ async function startPage(makePlanner: MakePlanner, settled: { show: (reason: str
     status.textContent = `reading ${remote}`;
   } else if (start.kind === 'sample') {
 
-  status.textContent = `generating ${ROWS.toLocaleString(UI_LOCALE)} rows…`;
-  await generateTrades(duck.engine);
-  generated = { label: 'trades (generated in this tab)', takenAt: new Date(), rowCount: ROWS };
+  status.textContent = `generating ${SAMPLE_TRADES.toLocaleString(UI_LOCALE)} rows…`;
+  await generateTrades(duck.engine, planned);
+  generated = { label: 'trades (generated in this tab)', takenAt: new Date(), rowCount: SAMPLE_TRADES };
   }
 
   // -- the cube ------------------------------------------------------
@@ -452,11 +417,6 @@ async function startPage(makePlanner: MakePlanner, settled: { show: (reason: str
  * four of five pivot columns were legitimately null and the grid
  * looked broken. Independent divisors make every combination occur.
  */
-function sqlPick(values: readonly string[], indexExpr: string): string {
-  const cases = values.map((v, i) => `WHEN ${i} THEN '${v}'`).join(' ');
-  return `CASE (${indexExpr}) ${cases} END`;
-}
-
 export function must(id: string): HTMLElement {
   const el = document.getElementById(id);
   if (!el) throw new Error(`missing #${id}`);

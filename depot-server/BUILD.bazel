@@ -10,7 +10,11 @@ load("//tools/java:defs.bzl", "legend_java_library")
 legend_java_library(
     name = "rules",
     srcs = glob(["src/main/java/com/legend/depot/*.java"]),
-    visibility = ["//sdlc-server:__pkg__"],
+    # the SDLC's (its server, its page), and Python's model home (//native: docs/ONE_PLATFORM_PROGRAM_2026_10_12.md B3)
+    visibility = [
+        "//native:__pkg__",
+        "//sdlc-server:__pkg__",
+    ],
     deps = [
         "//base",
         "//json",

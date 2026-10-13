@@ -1,5 +1,6 @@
-"""THE PLANNER PROTOCOL, answered by legend-lite's native library (datacube/src/planner-protocol.ts): each request kind
-DataCube's planner sends, the native function answering it, and that function's arguments from the request. Each
+"""THE PLANNER PROTOCOL, answered by legend-lite's native library (engine-client/src/legend/planner-protocol.ts, the one
+protocol every app that plans in a tab sends: docs/ONE_PLATFORM_PROGRAM_2026_10_12.md C2): each request kind, the native
+function answering it, and that function's arguments from the request. Each
 function delegates to the Boundary function the tab's TabExports export of that kind delegates to, so the tab's worker
 and Python answer every request the same way. ``KINDS`` is that table, the one place it is written: DataCube's
 headless engine answers by it (legend_lite._headless), and so does Python's engine for a page
@@ -20,9 +21,15 @@ KINDS: dict[str, tuple[str, Callable[[dict[str, Any]], tuple[str, ...]]]] = {
     'tableModel': ('lite_table_model', lambda m: (m['table'],)),
     'catalogColumnsSql': ('lite_catalog_columns_sql', lambda m: (m['schema'], m['table'])),
     'planJson': ('lite_plan_json_held', lambda m: (str(m['handle']), m['lambda'], m['runtime'])),
+    'planModel': ('lite_plan_json', lambda m: (m['model'], m['lambda'], m['runtime'])),
     'pureV1': ('lite_pure_v1', lambda m: (m['path'], m['query'], m['body'])),
+    'executePlan': ('lite_execute_json_plan', lambda m: (m['body'], m['models'])),
+    'executeAnswer': ('lite_execute_json_answer', lambda m: (m['plan'], m['wire'])),
     'testData': ('lite_test_data_sql', lambda m: (m['model'], m['database'], m['tables'])),
     'sessionSetup': ('lite_session_setup', lambda m: (m['databaseType'],)),
+    'projectData': ('lite_project_data', lambda m: (m['model'], m['databaseType'])),
+    'hostOperations': ('lite_host_operations', lambda m: (m['databaseType'], m['operations'])),
+    'warm': ('lite_warm_model', lambda m: (m['model'],)),
 }
 
 # the kinds that plan against a model held (by its handle in the tab; by its text from a page to Python's engine)

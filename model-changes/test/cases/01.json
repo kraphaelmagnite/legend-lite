@@ -1,0 +1,154 @@
+{
+ "name": "a class into a project made for it",
+ "function": "createClass",
+ "project": {
+  "name": "Trades by desk",
+  "group": "datacube",
+  "description": "The classes of a DataCube page"
+ },
+ "workspace": "datacube",
+ "package": "tradesByDesk",
+ "class": {
+  "query": {
+   "_type": "lambda",
+   "body": [
+    {
+     "_type": "func",
+     "function": "select",
+     "parameters": [
+      {
+       "_type": "classInstance",
+       "type": ">",
+       "value": {
+        "path": [
+         "model_trades::DB",
+         "model_trades"
+        ]
+       }
+      },
+      {
+       "_type": "classInstance",
+       "type": "colSpecArray",
+       "value": {
+        "colSpecs": [
+         {
+          "name": "desk"
+         },
+         {
+          "name": "qty"
+         }
+        ]
+       }
+      }
+     ]
+    }
+   ],
+   "parameters": []
+  },
+  "source": {
+   "model": "###Relational\nDatabase model_trades::DB\n(\n    Table model_trades\n    (\n        desk VARCHAR(4096),\n        qty BIGINT\n    )\n)\n\n###Connection\nRelationalDatabaseConnection model_trades::Conn\n{\n    type: DuckDB;\n    specification: DuckDB { };\n    auth: Test;\n}\n\n###Runtime\nRuntime model_trades::RT\n{\n    mappings: [];\n    connections:\n    [\n        model_trades::DB: [ c1: model_trades::Conn ]\n    ];\n}\n",
+   "runtime": "model_trades::RT"
+  },
+  "name": "Trade",
+  "columns": {
+   "qty": {
+    "name": "quantity"
+   }
+  },
+  "where": {
+   "from": "model_trades::DB",
+   "as": "Python",
+   "samples": {
+    "model_trades": {
+     "columns": [
+      "desk",
+      "qty"
+     ],
+     "rows": [
+      [
+       "FX",
+       1
+      ],
+      [
+       "EQ",
+       2
+      ],
+      [
+       "FX",
+       4
+      ]
+     ]
+    }
+   }
+  }
+ },
+ "calls": [
+  {
+   "to": "sdlc",
+   "method": "GET",
+   "path": "/projects",
+   "body": null,
+   "status": 200,
+   "answer": "[]"
+  },
+  {
+   "to": "sdlc",
+   "method": "POST",
+   "path": "/projects",
+   "body": "{\"name\":\"Trades by desk\",\"description\":\"The classes of a DataCube page\",\"groupId\":\"datacube\",\"artifactId\":\"trades-by-desk\"}",
+   "status": 200,
+   "answer": "{\"projectId\":\"datacube:trades-by-desk\",\"name\":\"Trades by desk\",\"description\":\"The classes of a DataCube page\",\"tags\":[],\"webUrl\":null}"
+  },
+  {
+   "to": "sdlc",
+   "method": "GET",
+   "path": "/projects/datacube%3Atrades-by-desk/workspaces/datacube",
+   "body": null,
+   "status": 404,
+   "answer": "{\"code\":404,\"message\":\"Unknown: user workspace datacube of project datacube:trades-by-desk\",\"timestamp\":\"2026-10-13T06:30:24.246Z\"}"
+  },
+  {
+   "to": "sdlc",
+   "method": "POST",
+   "path": "/projects/datacube%3Atrades-by-desk/workspaces/datacube",
+   "body": null,
+   "status": 200,
+   "answer": "{\"projectId\":\"datacube:trades-by-desk\",\"userId\":\"local\",\"workspaceId\":\"datacube\"}"
+  },
+  {
+   "to": "sdlc",
+   "method": "GET",
+   "path": "/projects/datacube%3Atrades-by-desk/workspaces/datacube/revisions/CURRENT",
+   "body": null,
+   "status": 200,
+   "answer": "{\"id\":\"291090bedd231ab4037625f4cbf8f46518049ad3\",\"authorName\":\"local\",\"authoredTimestamp\":\"2026-10-13T06:30:24Z\",\"committerName\":\"local\",\"committedTimestamp\":\"2026-10-13T06:30:24Z\",\"message\":\"Build project structure\"}"
+  },
+  {
+   "to": "sdlc",
+   "method": "GET",
+   "path": "/projects/datacube%3Atrades-by-desk/workspaces/datacube/revisions/291090bedd231ab4037625f4cbf8f46518049ad3/pure",
+   "body": null,
+   "status": 200,
+   "answer": "[]"
+  },
+  {
+   "to": "writer",
+   "route": "createClass",
+   "body": "{\"project\":{\"_type\":\"text\",\"code\":\"\"},\"package\":\"tradesByDesk\",\"class\":{\"lambda\":{\"_type\":\"lambda\",\"body\":[{\"_type\":\"func\",\"function\":\"select\",\"parameters\":[{\"_type\":\"classInstance\",\"type\":\">\",\"value\":{\"path\":[\"model_trades::DB\",\"model_trades\"]}},{\"_type\":\"classInstance\",\"type\":\"colSpecArray\",\"value\":{\"colSpecs\":[{\"name\":\"desk\"},{\"name\":\"qty\"}]}}]}],\"parameters\":[]},\"source\":{\"_type\":\"text\",\"code\":\"###Relational\\nDatabase model_trades::DB\\n(\\n    Table model_trades\\n    (\\n        desk VARCHAR(4096),\\n        qty BIGINT\\n    )\\n)\\n\\n###Connection\\nRelationalDatabaseConnection model_trades::Conn\\n{\\n    type: DuckDB;\\n    specification: DuckDB { };\\n    auth: Test;\\n}\\n\\n###Runtime\\nRuntime model_trades::RT\\n{\\n    mappings: [];\\n    connections:\\n    [\\n        model_trades::DB: [ c1: model_trades::Conn ]\\n    ];\\n}\\n\"},\"name\":\"Trade\",\"columns\":{\"qty\":{\"name\":\"quantity\"}},\"where\":{\"from\":\"model_trades::DB\",\"as\":\"Python\",\"samples\":{\"model_trades\":{\"columns\":[\"desk\",\"qty\"],\"rows\":[[\"FX\",1],[\"EQ\",2],[\"FX\",4]]}},\"runtime\":\"model_trades::RT\"}}}",
+   "answer": "{\"changes\":[{\"type\":\"CREATE\",\"path\":\"tradesByDesk::store::Python\",\"pureCode\":\"###Relational\\nDatabase tradesByDesk::store::Python\\n(\\n  Table model_trades\\n  (\\n    desk VARCHAR(4096),\\n    qty BIGINT\\n  )\\n)\\n\"},{\"type\":\"CREATE\",\"path\":\"tradesByDesk::connection::Python\",\"pureCode\":\"###Connection\\nRelationalDatabaseConnection tradesByDesk::connection::Python\\n{\\n  store: tradesByDesk::store::Python;\\n  type: DuckDB;\\n  specification: DuckDB\\n  {\\n    path: ':memory:';\\n  };\\n  auth: Test;\\n}\\n\"},{\"type\":\"CREATE\",\"path\":\"tradesByDesk::runtime::Python\",\"pureCode\":\"###Runtime\\nRuntime tradesByDesk::runtime::Python\\n{\\n  mappings:\\n  [\\n    tradesByDesk::mapping::Model\\n  ];\\n  connections:\\n  [\\n    tradesByDesk::store::Python:\\n    [\\n      python: tradesByDesk::connection::Python\\n    ]\\n  ];\\n}\\n\"},{\"type\":\"CREATE\",\"path\":\"tradesByDesk::function::TradeFn__Relation_1_\",\"pureCode\":\"function tradesByDesk::function::TradeFn(): meta::pure::metamodel::relation::Relation<(desk:String, qty:Integer)>[1]\\n{\\n  #>{tradesByDesk::store::Python.model_trades}#->select(~[desk, qty])\\n}\\n\"},{\"type\":\"CREATE\",\"path\":\"tradesByDesk::domain::Trade\",\"pureCode\":\"Class tradesByDesk::domain::Trade\\n{\\n  desk: String[0..1];\\n  quantity: Integer[0..1];\\n}\\n\"},{\"type\":\"CREATE\",\"path\":\"tradesByDesk::mapping::TradeMapping\",\"pureCode\":\"###Mapping\\nMapping tradesByDesk::mapping::TradeMapping\\n(\\n  *tradesByDesk::domain::Trade: Relation\\n  {\\n    ~func tradesByDesk::function::TradeFn():Relation<Any>[1]\\n    desk: desk,\\n    quantity: qty\\n  }\\n)\\n\"},{\"type\":\"CREATE\",\"path\":\"tradesByDesk::mapping::Model\",\"pureCode\":\"###Mapping\\nMapping tradesByDesk::mapping::Model\\n(\\n  include mapping tradesByDesk::mapping::TradeMapping\\n)\\n\"},{\"type\":\"CREATE\",\"path\":\"tradesByDesk::data::Model_tradesSample\",\"pureCode\":\"###Data\\nData tradesByDesk::data::Model_tradesSample\\n{\\n  Relational\\n  #{\\n    default.model_trades:\\n      'desk,qty\\\\n'+\\n      'FX,1\\\\n'+\\n      'EQ,2\\\\n'+\\n      'FX,4\\\\n';\\n  }#\\n}\\n\"}],\"classes\":[{\"class\":\"tradesByDesk::domain::Trade\",\"mapping\":\"tradesByDesk::mapping::Model\",\"runtime\":\"tradesByDesk::runtime::Python\",\"query\":\"tradesByDesk::domain::Trade.all()->project(~[desk: x|$x.desk, qty: x|$x.quantity])\",\"properties\":[{\"column\":\"desk\",\"as\":\"property\",\"property\":\"desk\",\"type\":\"String\",\"multiplicity\":\"[0..1]\"},{\"column\":\"qty\",\"as\":\"property\",\"property\":\"quantity\",\"type\":\"Integer\",\"multiplicity\":\"[0..1]\"}]}],\"associations\":[],\"suggestions\":[],\"joinable\":[{\"class\":\"tradesByDesk::domain::Trade\",\"function\":\"tradesByDesk::function::TradeFn\",\"keys\":[{\"name\":\"desk\",\"type\":\"String\",\"shown\":true,\"column\":\"desk\"},{\"name\":\"quantity\",\"type\":\"Integer\",\"shown\":true,\"column\":\"qty\"}]}],\"notes\":[]}"
+  },
+  {
+   "to": "sdlc",
+   "method": "POST",
+   "path": "/projects/datacube%3Atrades-by-desk/workspaces/datacube/pureChanges",
+   "body": "{\"message\":\"Create a Class: Trade\",\"changes\":[{\"type\":\"CREATE\",\"path\":\"tradesByDesk::store::Python\",\"pureCode\":\"###Relational\\nDatabase tradesByDesk::store::Python\\n(\\n  Table model_trades\\n  (\\n    desk VARCHAR(4096),\\n    qty BIGINT\\n  )\\n)\\n\"},{\"type\":\"CREATE\",\"path\":\"tradesByDesk::connection::Python\",\"pureCode\":\"###Connection\\nRelationalDatabaseConnection tradesByDesk::connection::Python\\n{\\n  store: tradesByDesk::store::Python;\\n  type: DuckDB;\\n  specification: DuckDB\\n  {\\n    path: ':memory:';\\n  };\\n  auth: Test;\\n}\\n\"},{\"type\":\"CREATE\",\"path\":\"tradesByDesk::runtime::Python\",\"pureCode\":\"###Runtime\\nRuntime tradesByDesk::runtime::Python\\n{\\n  mappings:\\n  [\\n    tradesByDesk::mapping::Model\\n  ];\\n  connections:\\n  [\\n    tradesByDesk::store::Python:\\n    [\\n      python: tradesByDesk::connection::Python\\n    ]\\n  ];\\n}\\n\"},{\"type\":\"CREATE\",\"path\":\"tradesByDesk::function::TradeFn__Relation_1_\",\"pureCode\":\"function tradesByDesk::function::TradeFn(): meta::pure::metamodel::relation::Relation<(desk:String, qty:Integer)>[1]\\n{\\n  #>{tradesByDesk::store::Python.model_trades}#->select(~[desk, qty])\\n}\\n\"},{\"type\":\"CREATE\",\"path\":\"tradesByDesk::domain::Trade\",\"pureCode\":\"Class tradesByDesk::domain::Trade\\n{\\n  desk: String[0..1];\\n  quantity: Integer[0..1];\\n}\\n\"},{\"type\":\"CREATE\",\"path\":\"tradesByDesk::mapping::TradeMapping\",\"pureCode\":\"###Mapping\\nMapping tradesByDesk::mapping::TradeMapping\\n(\\n  *tradesByDesk::domain::Trade: Relation\\n  {\\n    ~func tradesByDesk::function::TradeFn():Relation<Any>[1]\\n    desk: desk,\\n    quantity: qty\\n  }\\n)\\n\"},{\"type\":\"CREATE\",\"path\":\"tradesByDesk::mapping::Model\",\"pureCode\":\"###Mapping\\nMapping tradesByDesk::mapping::Model\\n(\\n  include mapping tradesByDesk::mapping::TradeMapping\\n)\\n\"},{\"type\":\"CREATE\",\"path\":\"tradesByDesk::data::Model_tradesSample\",\"pureCode\":\"###Data\\nData tradesByDesk::data::Model_tradesSample\\n{\\n  Relational\\n  #{\\n    default.model_trades:\\n      'desk,qty\\\\n'+\\n      'FX,1\\\\n'+\\n      'EQ,2\\\\n'+\\n      'FX,4\\\\n';\\n  }#\\n}\\n\"}],\"revisionId\":\"291090bedd231ab4037625f4cbf8f46518049ad3\"}",
+   "status": 200,
+   "answer": "{\"id\":\"2784350a28c69cebab1ae16ae82fd513558b05d1\",\"authorName\":\"local\",\"authoredTimestamp\":\"2026-10-13T06:30:24Z\",\"committerName\":\"local\",\"committedTimestamp\":\"2026-10-13T06:30:24Z\",\"message\":\"Create a Class: Trade\"}"
+  }
+ ],
+ "result": {
+  "project": "datacube:trades-by-desk",
+  "workspace": "datacube",
+  "revision": "2784350a28c69cebab1ae16ae82fd513558b05d1"
+ }
+}

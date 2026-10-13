@@ -343,18 +343,23 @@ public final class PureV1Api {
             java.io.StringWriter rows = new java.io.StringWriter();
             QueryPlan plan = runner.run(model, lambda, runtime, rows);
             if (plan.shape() == com.legend.plan.ResultShape.GRAPH) {
-                // a graph fetch: the engine's JSON result (measured, 4.145.0, 2026-09-30) -- the
-                // objects' array, or the one object bare when there is exactly one (as Pure's
-                // serialize writes a single-element collection)
-                String values = rows.toString().isEmpty() ? "[]" : rows.toString();
-                Json.Node parsed = Json.parse(values);
-                if (parsed instanceof Json.Arr arr && arr.items().size() == 1) {
-                    values = Json.toCompact(arr.items().get(0));
-                }
-                return "{\"builder\":{\"_type\":\"json\"},\"values\":" + values + "}";
+                return graphResult(rows.toString());
             }
             return tdsResult(plan, rows.toString());
         });
+    }
+
+    /**
+     * A graph fetch's JSON result (measured, 4.145.0, 2026-09-30) from the objects' array the database built: the
+     * array, or the one object bare when there is exactly one (as Pure's serialize writes a single-element collection).
+     */
+    private static String graphResult(String objects) {
+        String values = objects.isEmpty() ? "[]" : objects;
+        Json.Node parsed = Json.parse(values);
+        if (parsed instanceof Json.Arr arr && arr.items().size() == 1) {
+            values = Json.toCompact(arr.items().get(0));
+        }
+        return "{\"builder\":{\"_type\":\"json\"},\"values\":" + values + "}";
     }
 
     /**
@@ -369,19 +374,8 @@ public final class PureV1Api {
      */
     public static Answer arrowPlan(String body, java.util.Collection<String> models) {
         return answer(500, "COMPILATION", () -> {
-            Json.Obj request = request(body);
-            String model = modelText(request.getObj("model"));
-            if (!models.contains(model)) {
-                // a host's models change (Python's: a Live frame whose columns changed is written a new model), so
-                // the refusal says what to do
-                throw new IllegalArgumentException("this engine runs queries over the models it serves only, "
-                        + "and the request's model is not one of them: if the engine's model changed since it was "
-                        + "read (a frame whose columns changed), read it again");
-            }
-            LambdaFunction lambda = ProtocolReader.lambda(
-                    boundParameters(request.getObj("function"), request.getArrOr("parameterValues", null)));
-            com.legend.TypedQuery query = com.legend.Compiler.query(com.legend.Compiler.compileModel(model), lambda);
-            QueryPlan plan = query.plan(runtimeOf(request, query.target()));
+            Hosted hosted = hosted(body, models);
+            QueryPlan plan = hosted.plan();
             if (plan.shape() == com.legend.plan.ResultShape.GRAPH) {
                 // upstream's Arrow answer is a relational result's (RelationalResultToArrowIPCSerializer)
                 throw new IllegalArgumentException("ARROW_IPC answers a relation query; a graph fetch is answered in JSON");
@@ -395,6 +389,96 @@ public final class PureV1Api {
             out.put("metadata", metadata);
             return Json.toCompact(out);
         });
+    }
+
+    /**
+     * E8's plan half for a host that runs the SQL itself and answers in the engine's JSON (the tab: its DuckDB, its
+     * executor typing the rows; docs/ONE_PLATFORM_PROGRAM_2026_10_12.md C1): the {@code ExecuteInput} read, bound and
+     * planned as {@link #execute} plans it, answered with every part of {@link #execute}'s answer but the rows -- a
+     * relation's {@code {"sql", "builder", "activities", "columns"}} (the TDS builder and the activities as the JSON
+     * answer writes them, and its result's columns, in order), or a graph fetch's {@code {"sql", "builder":
+     * {"_type": "json"}}}, whose SQL builds the objects' JSON array in one cell (the host writes one object bare, as
+     * {@link #execute} does). {@code models} are the only models the host runs, as {@link #arrowPlan}'s.
+     */
+    public static Answer jsonPlan(String body, java.util.Collection<String> models) {
+        return answer(500, "COMPILATION", () -> {
+            Hosted hosted = hosted(body, models);
+            QueryPlan plan = hosted.plan();
+            Map<String, Object> out = new LinkedHashMap<>();
+            out.put("sql", plan.sql());
+            if (plan.shape() == com.legend.plan.ResultShape.GRAPH) {
+                // its SQL builds the objects' JSON array in one cell, as the server's does
+                out.put("run", plan.sql());
+                out.put("builder", Map.of("_type", "json"));
+            } else {
+                // the rows as the server's database writes them: the JSON wire, one value
+                out.put("run", hosted.query().wireSql(hosted.runtime()));
+                out.put("builder", tdsBuilder(plan));
+                out.put("activities", List.of(activity(plan, true)));
+                out.put("columns", columnNames(plan));
+            }
+            return Json.toCompact(out);
+        });
+    }
+
+    /**
+     * E8's answer for a host that ran {@link #jsonPlan}'s {@code run} SQL on its own database: {@code plan} that plan's
+     * answer, {@code wire} the one value the database wrote (a relation's JSON wire, a graph fetch's objects; empty for
+     * none) -- arranged by the writers {@link #execute} answers with, so the host's answer is the server's text. The
+     * database rendered every value; Java arranges them.
+     */
+    public static Answer jsonAnswer(String plan, String wire) {
+        return answer(500, "COMPILATION", () -> {
+            // jsonPlan's own answer, handed back: read by kind, never cast (the tab's WebAssembly has no ClassCastException)
+            Json.Obj planned = Json.parseObject(plan);
+            if (!(planned.has("builder") && planned.get("builder") instanceof Json.Obj builder)) {
+                throw new IllegalArgumentException("the plan answers no builder: it is not jsonPlan's");
+            }
+            if (builder.has("_type") && builder.get("_type") instanceof Json.Str t && t.value().equals("json")) {
+                return graphResult(wire);
+            }
+            if (!(planned.has("columns") && planned.get("columns") instanceof Json.Arr columns
+                    && planned.has("activities") && planned.get("activities") instanceof Json.Arr activities)) {
+                throw new IllegalArgumentException("the plan answers no columns or activities: it is not jsonPlan's");
+            }
+            List<String> names = new ArrayList<>();
+            for (Json.Node n : columns.items()) {
+                if (!(n instanceof Json.Str name)) {
+                    throw new IllegalArgumentException("the plan's columns are not names: it is not jsonPlan's");
+                }
+                names.add(name.value());
+            }
+            return tdsText(Json.toCompact(builder), Json.toCompact(activities), names, wire);
+        });
+    }
+
+    /** An {@code ExecuteInput} read, its parameters bound and planned, for a host that runs only {@code models}: its
+     *  query, its runtime and its plan (a relation's or a graph fetch's, as the server's execute answers only those). */
+    private record Hosted(com.legend.TypedQuery query, String runtime, QueryPlan plan) {
+    }
+
+    private static Hosted hosted(String body, java.util.Collection<String> models) {
+        Json.Obj request = request(body);
+        String model = modelText(request.getObj("model"));
+        if (!models.contains(model)) {
+            // a host's models change (Python's: a Live frame whose columns changed is written a new model), so
+            // the refusal says what to do; a project's model with Data rows (Query's or Studio's, served by Python)
+            // the host runs in that project's own database, handing it in as one of `models` (C5)
+            throw new IllegalArgumentException("this engine runs queries over the models it serves, and over a "
+                    + "project's model with Data rows (in a database of its own); the request's model is neither: if "
+                    + "the engine's model changed since it was read (a frame whose columns changed), read it again");
+        }
+        LambdaFunction lambda = ProtocolReader.lambda(
+                boundParameters(request.getObj("function"), request.getArrOr("parameterValues", null)));
+        com.legend.TypedQuery query = com.legend.Compiler.query(com.legend.Compiler.compileModel(model), lambda);
+        String runtime = runtimeOf(request, query.target());
+        QueryPlan plan = query.plan(runtime);
+        if (plan.shape() != com.legend.plan.ResultShape.TABULAR && plan.shape() != com.legend.plan.ResultShape.GRAPH) {
+            // as the server's execute refuses it (Execution.wireOn): a value's answer is not one the engine was measured on
+            throw new com.legend.error.NotImplementedException(
+                    "execute: a " + plan.shape() + " result's serialization is unprobed");
+        }
+        return new Hosted(query, runtime, plan);
     }
 
     /**
@@ -471,16 +555,27 @@ public final class PureV1Api {
      * the {@code relational} activity carrying the SQL, then the columns and rows.
      */
     static String tdsResult(QueryPlan plan, String wireRows) {
-        List<String> names = columnNames(plan);
+        return tdsText(Json.toCompact(tdsBuilder(plan)), Json.toCompact(List.of(activity(plan, true))), columnNames(plan),
+                wireRows);
+    }
+
+    /** {@link #tdsResult}'s writer, over the builder's and the activities' JSON and the columns' names. */
+    private static String tdsText(String builder, String activities, List<String> names, String wireRows) {
         StringBuilder out = new StringBuilder();
-        out.append("{\"builder\": ").append(Json.toCompact(tdsBuilder(plan)))
-                .append(", \"activities\": ").append(Json.toCompact(List.of(activity(plan, true))))
+        out.append("{\"builder\": ").append(builder)
+                .append(", \"activities\": ").append(activities)
                 .append(", \"result\" : {\"columns\" : ").append(Json.toCompact(names))
                 .append(", \"rows\" : [");
         Json.Node wire = wireRows.isEmpty() ? new Json.Arr(List.of()) : Json.parse(wireRows);
+        // the database's rows, read by kind (a host's database answering otherwise is refused, never cast)
+        if (!(wire instanceof Json.Arr rows)) {
+            throw new IllegalArgumentException("the database's rows are not the JSON wire's array");
+        }
         boolean first = true;
-        for (Json.Node row : ((Json.Arr) wire).items()) {
-            Json.Obj r = (Json.Obj) row;
+        for (Json.Node row : rows.items()) {
+            if (!(row instanceof Json.Obj r)) {
+                throw new IllegalArgumentException("a row of the database's JSON wire is not an object");
+            }
             List<Object> values = new ArrayList<>();
             for (String n : names) {
                 values.add(r.fields().get(n));

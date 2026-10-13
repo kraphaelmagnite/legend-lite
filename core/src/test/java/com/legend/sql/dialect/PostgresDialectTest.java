@@ -189,9 +189,10 @@ class PostgresDialectTest {
 
     @Test
     void whatPostgresCannotSayIsAWall() {
-        // a wall is honest; a guessed spelling is a silent wrong answer
-        assertThrows(DialectCapability.class, () -> plan("->extend(~[h: r|$r.sym->toOne()->hashCode()])"
-                + "->select(~[id, h])"));
+        // a wall is honest; a guessed spelling is a silent wrong answer. Pure's hashCode is spelled (2026-10-12):
+        // the first 64 bits of the MD5 of the values' JSON text, read signed (MariaDB's construction)
+        assertTrue(plan("->extend(~[h: r|$r.sym->toOne()->hashCode()])->select(~[id, h])")
+                .contains("CAST(CAST('x' || left(md5(CAST(json_build_array("));
         // round(double precision, int) does not exist: a Float to a scale is scaled, rounded half-even
         // (round(double precision) is rint) and scaled back, as DuckDB's ROUND_EVEN(x, s)
         assertTrue(plan("->extend(~[r: r|$r.f8->toOne()->round(2)])->select(~[id, r])").contains(
@@ -199,9 +200,8 @@ class PostgresDialectTest {
                         + " / power(CAST(10 AS DOUBLE PRECISION), CAST(2 AS INTEGER)))"));
         // a dynamic pivot needs a key-discovery round trip a planner cannot make
         assertThrows(DialectCapability.class, () -> plan("->pivot(~[ok], ~[t: r|$r.qty : y|$y->sum()])"));
-        // DuckDB's trim-zeros %g has no to_char code
-        assertThrows(DialectCapability.class, () -> plan("->extend(~[s: r|$r.ts->toOne()->toString()])"
-                + "->select(~[id, s])"));
+        // DuckDB's %g is the milliseconds, three digits (the part's engine convention, Snowflake's FF3): to_char's MS
+        assertTrue(plan("->extend(~[s: r|$r.ts->toOne()->toString()])->select(~[id, s])").contains("SS\".\"MS"));
     }
 
     @Test

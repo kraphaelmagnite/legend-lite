@@ -26,6 +26,7 @@ from collections.abc import Coroutine
 from pathlib import Path
 from typing import Any
 
+from . import _host
 from ._library import Library, library
 
 from ._planner import KINDS, answer  # noqa: F401 -- the planner protocol's table, answered here and by the engine
@@ -73,7 +74,7 @@ class Headless:
         self._own_db = connection is None
         self._db = duckdb.connect() if connection is None else connection
         if self._own_db:
-            self._db.execute("SET file_search_path = '" + str(self._folder).replace("'", "''") + "'")
+            _host.run(self._db, {'op': 'fileSearchPath', 'folder': str(self._folder)})
         self._loop = asyncio.new_event_loop()
         self._thread = threading.Thread(target=self._loop.run_forever, name='legend-lite-datacube', daemon=True)
         self._thread.start()

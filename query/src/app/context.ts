@@ -3,7 +3,7 @@
 
 import type { ModelHomeConfig } from '../../../depot-client/src/model-home.ts';
 import type { QueryEngine } from '../../../engine-client/src/engine.ts';
-import type { SeededTable, TestData } from '../../../engine-client/src/model-data.ts';
+import type { ProjectDatabases, ProjectRunner } from '../../../engine-client/src/project-data.ts';
 import type { Engine, QueryStore } from '../backend/engine.ts';
 import type { WasmGrammar } from '../../../engine-client/src/legend/wasm-grammar.ts';
 import type { PureModelContextText } from '../backend/wire.ts';
@@ -19,13 +19,13 @@ export interface ProjectConfig {
 }
 
 /**
- * Where queries run. In the browser (`duckdb-wasm`: DuckDB in this tab, seeded from SQL files;
- * `warehouse`: the warehouse's DuckDB, as the signed-in user) the tab's planner writes the SQL
- * and saved queries stay in this browser. On a `server` (legend-lite's, or legend-engine) the
+ * Where queries run. In the browser (`duckdb-wasm`: DuckDB in this tab, each project's rows its Data elements', C5;
+ * `warehouse`: the warehouse's DuckDB, as the signed-in user, its fixture's rows `seed`) the tab's planner writes the
+ * SQL and saved queries stay in this browser. On a `server` (legend-lite's, or legend-engine) the
  * server executes and keeps saved queries.
  */
 export type ExecutionConfig =
-  | { readonly kind: 'duckdb-wasm'; readonly seed?: readonly string[]; readonly user: string }
+  | { readonly kind: 'duckdb-wasm'; readonly user: string }
   | { readonly kind: 'warehouse'; readonly url: string; readonly catalog?: string; readonly seed?: readonly string[] }
   | { readonly kind: 'server'; readonly engine: string };
 
@@ -58,11 +58,6 @@ export interface LoadedProject {
   readonly gav: string;
   readonly context: PureModelContextText;
   readonly graph: ModelGraph;
-  /**
-   * Its own test data, where queries run in this tab (a project opened by name: its relational Data elements' tables,
-   * by-name.ts): made the tab's rows whenever it is the version opened (AppContext.activate).
-   */
-  readonly tables?: readonly SeededTable[];
 }
 
 export function gavOf(p: ProjectConfig): string {
@@ -148,16 +143,22 @@ export class AppContext {
   depotProjects: readonly { readonly groupId: string; readonly artifactId: string }[] = [];
   readonly #loading = new Map<string, Promise<LoadedProject>>();
 
-  /** Where a project's test data goes: DuckDB in this tab (set by the page; none when queries run elsewhere). */
-  testData: TestData | undefined;
+  /**
+   * Where a project's own rows go: its database inside this tab's DuckDB (C5), the screens' engine pointed there as
+   * it opens, the tab's own connection beside (set by the page; none when queries run elsewhere).
+   */
+  tabProjects: { readonly databases: ProjectDatabases; readonly runner: ProjectRunner; readonly host: QueryEngine } | undefined;
 
   /**
-   * A project's test data made the tab's rows -- every time it is the one opened, since another version, filling the
-   * same tables, may have been opened since. Only the screen that will show the project asks (App's #render, once it
-   * knows no later navigation overtook it), so a load that answered late cannot swap the rows under another screen.
+   * The screens' engine pointed at the project's own database (made and filled the first time; another version keeps
+   * its own) -- or at the tab's own connection, for a project with none. Only the screen that will show the project
+   * asks (App's #render, once it knows no later navigation overtook it), so a load that answered late cannot move
+   * the engine under another screen.
    */
   async activate(p: LoadedProject): Promise<void> {
-    if (p.tables && this.testData) await this.testData.use(p.gav, p.tables);
+    if (!this.tabProjects) return;
+    const { databases, runner, host } = this.tabProjects;
+    runner.use((await databases.engineFor(p.context.code, host)).engine);
   }
 
   /**

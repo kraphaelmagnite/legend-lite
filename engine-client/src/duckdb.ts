@@ -399,16 +399,16 @@ export class DuckDbEngine implements QueryEngine {
   async loadArrow(
     target: { readonly schema?: string; readonly table: string },
     chunks: AsyncIterable<Uint8Array>,
+    /** The planner's statements run first, in the same turn (its schema made, the table there dropped: snap.ts). */
+    prepare: readonly string[] = [],
   ): Promise<void> {
     const insert = this.#conn.insertArrowFromIPCStream;
     if (typeof insert !== 'function') {
       throw new Error('this DuckDB connection cannot load Arrow data');
     }
-    const qi = (n: string) => `"${n.replace(/"/g, '""')}"`;
-    const qualified = target.schema ? `${qi(target.schema)}.${qi(target.table)}` : qi(target.table);
+    const where = target.schema ? `${target.schema}.${target.table}` : target.table;
     return this.#serialised(async () => {
-      if (target.schema) await this.#conn.query(`CREATE SCHEMA IF NOT EXISTS ${qi(target.schema)}`);
-      await this.#conn.query(`DROP TABLE IF EXISTS ${qualified}`);
+      for (const sql of prepare) await this.#conn.query(sql);
       let first = true;
       for await (const bytes of chunks) {
         await insert.call(this.#conn, bytes, {
@@ -418,7 +418,7 @@ export class DuckDbEngine implements QueryEngine {
         });
         first = false;
       }
-      if (first) throw new Error(`no data came back to load into ${qualified}`);
+      if (first) throw new Error(`no data came back to load into ${where}`);
     });
   }
 

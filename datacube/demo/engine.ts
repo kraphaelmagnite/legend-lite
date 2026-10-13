@@ -15,7 +15,7 @@
 import { openDataCube } from '../src/app/datacube-app.ts';
 import type { Versions } from '../src/app/services.ts';
 import { browserBasics, tabTitle } from '../src/services/browser-basics.ts';
-import { askedOffers, askedVersions, pythonServices, type PythonLink, type PythonShows } from '../src/services/python-host.ts';
+import { askedOffers, askedSettings, askedVersions, pythonServices, type PythonLink, type PythonShows } from '../src/services/python-host.ts';
 
 /** How often the page asks whether Python changed what it shows: a brief call on this machine, nothing held open (ms). */
 const ASK_EVERY = 1000;
@@ -69,11 +69,14 @@ async function start(): Promise<void> {
   status.textContent = 'asking Python…';
   const settled = { show: (_reason: string): void => {} };
   try {
-    const offers = await askedOffers(link);
+    // what Python offers, and the page's settings as Python keeps them (none read, they start afresh), asked once
+    const [offers, settings] = await Promise.all([askedOffers(link), askedSettings(link).catch(() => undefined)]);
     // where it plans, in its one word (the status bar's readout)
     status.textContent = offers.plane.word;
     await openDataCube({
-      services: pythonServices({ link, shows, offers, watch: polled(link, shows), browser: { ...browserBasics, title: tabTitle() } }),
+      services: pythonServices({
+        link, shows, offers, ...(settings ? { settings } : {}), watch: polled(link, shows), browser: { ...browserBasics, title: tabTitle() },
+      }),
       host,
       status,
       windows: document.body,

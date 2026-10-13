@@ -60,6 +60,29 @@ public final class Boundary {
      * texts.
      */
     public static com.legend.server.PureV1Api.Answer executePlan(String body, String modelsJson) {
+        return com.legend.server.PureV1Api.arrowPlan(body, models(modelsJson));
+    }
+
+    /**
+     * Execute's plan half in the engine's JSON (PureV1Api.jsonPlan): everything the answer holds but its rows -- the
+     * SQL, the TDS builder, the activities, the result's columns, or a graph fetch's JSON builder -- for a host whose
+     * executor runs the SQL and types the rows (the tab; docs/ONE_PLATFORM_PROGRAM_2026_10_12.md C1).
+     * {@code modelsJson}: the only models the host runs, a JSON array of their texts.
+     */
+    public static com.legend.server.PureV1Api.Answer executeJsonPlan(String body, String modelsJson) {
+        return com.legend.server.PureV1Api.jsonPlan(body, models(modelsJson));
+    }
+
+    /**
+     * Execute's answer for a host that ran {@link #executeJsonPlan}'s {@code run} SQL (PureV1Api.jsonAnswer): that
+     * plan's answer and the one value its database wrote, arranged by the writers legend-lite's server answers with.
+     */
+    public static com.legend.server.PureV1Api.Answer executeJsonAnswer(String plan, String wire) {
+        return com.legend.server.PureV1Api.jsonAnswer(plan, wire);
+    }
+
+    /** The models a host runs, from their JSON array of texts. */
+    private static java.util.List<String> models(String modelsJson) {
         java.util.List<String> models = new java.util.ArrayList<>();
         if (!(com.legend.json.Json.parse(modelsJson) instanceof com.legend.json.Json.Arr arr)) {
             throw new IllegalArgumentException("the models: not a JSON array");
@@ -70,7 +93,7 @@ public final class Boundary {
             }
             models.add(text.value());
         }
-        return com.legend.server.PureV1Api.arrowPlan(body, models);
+        return models;
     }
 
     /** A host's refusal of a call it could not finish (its database refusing the SQL), in the engine's shape. */
@@ -306,6 +329,40 @@ public final class Boundary {
      */
     public static String sessionSetup(String databaseType) {
         return com.legend.json.Json.toCompact(dialectOf(databaseType).sessionSetup());
+    }
+
+    /**
+     * A host's named operations on its own database of the given type (docs/ONE_PLATFORM_PROGRAM_2026_10_12.md D5,
+     * {@code com.legend.sql.dialect.HostOperations}): {@code operationsJson} a JSON array of them (planner's
+     * HostOperationsJson reads it), answered {@code [[statement, ...], ...]}, one list per operation, in order -- what
+     * the tab and Python's host run instead of spelling SQL. An operation the database has not is refused by name.
+     */
+    public static String hostOperations(String databaseType, String operationsJson) {
+        com.legend.sql.dialect.HostOperations host = com.legend.sql.dialect.HostOperations.of(dialectOf(databaseType));
+        java.util.List<Object> out = new java.util.ArrayList<>();
+        for (com.legend.sql.dialect.HostOperation op : HostOperationsJson.read(operationsJson)) {
+            out.add(host.statements(op));
+        }
+        return com.legend.json.Json.toCompact(out);
+    }
+
+    /**
+     * A project's own database on a database of the given type (docs/ONE_PLATFORM_PROGRAM_2026_10_12.md C5,
+     * {@code com.legend.setup.ProjectData}): where {@code model}'s Data rows live on a host, named by what it holds
+     * (the model's Databases and Data rows). {@code {"name", "open", "use", "fill", "close"}}, each but the name the
+     * statements in order: make it, point a connection of its own at it, make and fill every table a relational Data
+     * element fills (on that connection), drop it. A database without the operations is refused by name.
+     */
+    public static String projectData(String model, String databaseType) {
+        com.legend.setup.ProjectData p = com.legend.setup.ProjectData.of(com.legend.Compiler.compileModel(model),
+                dialectOf(databaseType));
+        java.util.Map<String, Object> out = new java.util.LinkedHashMap<>();
+        out.put("name", p.name());
+        out.put("open", p.open());
+        out.put("use", p.use());
+        out.put("fill", p.fill());
+        out.put("close", p.close());
+        return com.legend.json.Json.toCompact(out);
     }
 
     /** A JSON number field as an Integer, or null when absent or null. */

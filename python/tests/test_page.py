@@ -110,9 +110,38 @@ class Document(Paged):
         self.assertIn('1.50', open(path, encoding='utf-8').read())
         again = ll.Page.load(path, frames={'trades': trades()})
         self.assertEqual(again.to_json(), page.to_json())
+        with self.assertRaises(ValueError):
+            page.save(path, name='a file carries its page\'s name')
         # a value JSON cannot carry is refused where it is given
         with self.assertRaises(TypeError):
             grid.configure({'when': datetime.date(2024, 1, 31)})
+
+    def test_saved_as_datacubes_save_keeps_it_into_this_users_saved_pages(self):
+        # page.save() with no path: legend-lite's saved-page rules in the native library (B6), over ll.home()/pages --
+        # what DataCube's Open… lists when it is shown from Python, the tab's own Save keeping it the same way
+        from legend_lite.engine import Engine
+        page, grid, _ = self.built()
+        grid.calculate('scaled', '$x.notional->toOne() * 1.50D')
+        first = page.save()
+        engine = Engine(ll.Frames())
+        listed = json.loads(engine.answer('POST', '/api/pure/v1/query/dataCube/search', '', '{}').body)
+        self.assertIn((first, page.name, 'this user'), [(q['id'], q['name'], q['owner']) for q in listed])
+        opened = engine.answer('GET', f'/api/pure/v1/query/dataCube/{first}', '', None)
+        self.assertEqual(opened.status, 200)
+        # its content the page document, its decimal's digits kept
+        self.assertEqual(json.loads(opened.body)['content'], json.loads(page.to_json()))
+        self.assertIn(b'1.50', opened.body)
+        # saved again: over the copy it was saved as, its new name taken
+        self.assertEqual(page.save(name='Q3, again'), first)
+        again = json.loads(engine.answer('GET', f'/api/pure/v1/query/dataCube/{first}', '', None).body)
+        self.assertEqual(again['name'], 'Q3, again')
+        # deleted meanwhile (in DataCube's Open…): saved again as a new one under its id
+        self.assertEqual(engine.answer('DELETE', f'/api/pure/v1/query/dataCube/{first}', '', None).status, 204)
+        self.assertEqual(page.save(), first)
+        # another page is another saved page
+        self.assertNotEqual(ll.Page('Other').save(), first)
+        with self.assertRaises(ValueError):
+            page.save(name=' ')
 
     def test_tiles_are_placed_and_taken_off_as_datacube_places_them(self):
         page, grid, chart = self.built()

@@ -577,17 +577,9 @@ public final class WarehouseServer implements AutoCloseable {
 
     // -- the site --------------------------------------------------------------
 
-    /** The media types the DataCube site is made of; anything else is served as bytes (RFC 9110 §8.3). */
-    private static final Map<String, String> SITE_TYPES = Map.of(
-            "html", "text/html; charset=utf-8",
-            "js", "text/javascript; charset=utf-8",
-            "mjs", "text/javascript; charset=utf-8",
-            "css", "text/css; charset=utf-8",
-            "json", "application/json",
-            "wasm", "application/wasm",
-            "pure", "text/plain; charset=utf-8",
-            "svg", "image/svg+xml",
-            "woff2", "font/woff2");
+    /** The media types the DataCube site is made of, the one table every host serving a site answers with
+     *  (com.legend.site.SiteTypes, Python's engine's too); anything else is served as bytes (RFC 9110 §8.3). */
+    private static final Map<String, String> SITE_TYPES = com.legend.site.SiteTypes.BY_EXTENSION;
 
     /**
      * The DataCube page ({@code --site}): its files, and {@code /config.json} naming this server as the

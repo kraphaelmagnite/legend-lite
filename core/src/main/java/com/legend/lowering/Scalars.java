@@ -1063,11 +1063,11 @@ final class Scalars {
                     if (mx != null) {
                         // identity-preserving mixed sort: order the ids by
                         // their comparables (parallel select-list unnests)
+                        SqlExpr ids = SqlExpr.Call.of(SqlFn.UNNEST, mx.idList());
+                        SqlExpr vals = SqlExpr.Call.of(SqlFn.UNNEST, mx.valList());
                         var inner = new SqlSelect(List.of(
-                                new SqlSelect.Projection(
-                                        SqlExpr.Call.of(SqlFn.UNNEST, mx.idList()), "i", null),
-                                new SqlSelect.Projection(
-                                        SqlExpr.Call.of(SqlFn.UNNEST, mx.valList()), "v", null)),
+                                new SqlSelect.Projection(ids, "i", null),
+                                new SqlSelect.Projection(vals, "v", null)),
                                 dedup, new com.legend.sql.SqlSource.Dual(), null,
                                 List.of(), null, null, List.of(),
                                 null, null, List.of());
@@ -1075,8 +1075,8 @@ final class Scalars {
                         var outer = new SqlSelect(List.of(
                                 new SqlSelect.Projection(
                                         new SqlExpr.OrderedListAgg(
-                                                SqlExpr.Column.derived("_mx", "i"),
-                                                SqlExpr.Column.derived("_mx", "v")), "s", null)),
+                                                projected("_mx", "i", ids),
+                                                projected("_mx", "v", vals)), "s", null)),
                                 false, src, null, List.of(), null, null, List.of(),
                                 null, null, List.of());
                         // F10 slice 2/3: the sorted ids ARE pure-literal
@@ -2801,6 +2801,16 @@ final class Scalars {
     static SqlExpr unwrapArrayCast(SqlExpr e) {
         return e instanceof SqlExpr.Cast c
                 && c.target() instanceof SqlType.Array ? c.value() : e;
+    }
+
+    /** {@code alias.name}, a subselect's projection of {@code e}, stamped
+     * with {@code e}'s type (the site holds the projection, as
+     * Comparators' element reference); untyped where {@code e} is. */
+    private static SqlExpr.Column projected(String alias, String name, SqlExpr e) {
+        return e.type() instanceof com.legend.sql.TypeFact.Typed t
+                ? SqlExpr.Column.of(alias, name, t.type(), t.nullable(),
+                        com.legend.sql.OutputCol.Origin.DERIVED)
+                : SqlExpr.Column.derived(alias, name);
     }
 
     /** {@code CASE WHEN cond THEN error(msg) ELSE value END} — a DATABASE-raised guard. */

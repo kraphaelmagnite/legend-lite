@@ -34,27 +34,6 @@ public class Test_LegendLite_Postgres_StandardFunctions_PCT extends PCTReportCon
 
     // Pinned by a STABLE part of the message (the runner matches by containment): no per-run id.
     private static final MutableList<ExclusionSpecification> expectedFailures = Lists.mutable.with(
-            // Postgres raises differently (its own error, or a different position or wording)
-            one("meta::pure::functions::collection::tests::greatest::testGreatest_Boolean_Function_1__Boolean_1_", "ERROR: function max(boolean) does not exist"),
-            one("meta::pure::functions::collection::tests::least::testLeast_Boolean_Function_1__Boolean_1_", "ERROR: function min(boolean) does not exist"),
-            // collections over the jsonb carrier: leg P4
-            one("meta::pure::functions::collection::tests::greatest::testGreatest_Empty_Function_1__Boolean_1_", "LIST_MAX over Bottom[] reached Postgres: a list of unknown element type"),
-            one("meta::pure::functions::collection::tests::least::testLeast_Empty_Function_1__Boolean_1_", "LIST_MIN over Bottom[] reached Postgres: a list of unknown element type"),
-            one("meta::pure::functions::date::tests::max::testMax_DateArray_Function_1__Boolean_1_", "LIST_MAX over Bottom[] reached Postgres: a list of unknown element type"),
-            one("meta::pure::functions::date::tests::max::testMax_DateTimeArray_Function_1__Boolean_1_", "LIST_MAX over Bottom[] reached Postgres: a list of unknown element type"),
-            one("meta::pure::functions::date::tests::max::testMax_StrictDateArray_Function_1__Boolean_1_", "LIST_MAX over Bottom[] reached Postgres: a list of unknown element type"),
-            one("meta::pure::functions::date::tests::min::testMin_DateArray_Function_1__Boolean_1_", "LIST_MIN over Bottom[] reached Postgres: a list of unknown element type"),
-            one("meta::pure::functions::date::tests::min::testMin_DateTimeArray_Function_1__Boolean_1_", "LIST_MIN over Bottom[] reached Postgres: a list of unknown element type"),
-            one("meta::pure::functions::date::tests::min::testMin_StrictDateArray_Function_1__Boolean_1_", "LIST_MIN over Bottom[] reached Postgres: a list of unknown element type"),
-            one("meta::pure::functions::math::tests::max::testMax_FloatsArray_Function_1__Boolean_1_", "LIST_MAX over Bottom[] reached Postgres: a list of unknown element type"),
-            one("meta::pure::functions::math::tests::max::testMax_IntegersArray_Function_1__Boolean_1_", "LIST_MAX over Bottom[] reached Postgres: a list of unknown element type"),
-            one("meta::pure::functions::math::tests::max::testMax_NumbersArray_Function_1__Boolean_1_", "LIST_MAX over Bottom[] reached Postgres: a list of unknown element type"),
-            one("meta::pure::functions::math::tests::min::testMin_FloatsArray_Function_1__Boolean_1_", "LIST_MIN over Bottom[] reached Postgres: a list of unknown element type"),
-            one("meta::pure::functions::math::tests::min::testMin_IntegersArray_Function_1__Boolean_1_", "LIST_MIN over Bottom[] reached Postgres: a list of unknown element type"),
-            one("meta::pure::functions::math::tests::min::testMin_NumbersArray_Function_1__Boolean_1_", "LIST_MIN over Bottom[] reached Postgres: a list of unknown element type"),
-            // refused by name: a construct the Postgres dialect does not spell yet
-            one("meta::pure::functions::hashCode::tests::testHashCode_Function_1__Boolean_1_", "signed 64-bit hashCode reached a dialect without a spelling"),
-            one("meta::pure::functions::math::hashCode::tests::testHashCodeAggregate_Function_1__Boolean_1_", "signed 64-bit hashCode reached a dialect without a spelling")
     );
 
     public static Test suite() {

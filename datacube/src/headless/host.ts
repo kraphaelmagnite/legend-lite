@@ -1,7 +1,7 @@
 // DataCube's side of an embedding host: Python's V8, where DataCube's non-screen code runs with no browser and no
 // WebAssembly (docs/DATACUBE_HEADLESS_PYTHON_DESIGN_2026_10_11.md §3). The host answers four calls, each asynchronous
 // (a call out of the engine is: mini-racer's only kind), and this module turns them into what DataCube's code already
-// takes: a planner worker (planner-protocol.ts, answered by legend-lite's native library) and a DuckDB connection
+// takes: a planner worker (engine-client's planner-protocol.ts, answered by legend-lite's native library) and a DuckDB connection
 // (engine-client's ArrowishConnection, answered by Python's DuckDB as Arrow IPC). Nothing here plans or queries.
 //
 // The host defines its calls as the global `legendLiteHost` BEFORE it loads a bundle, as a browser's globals are there
@@ -9,7 +9,7 @@
 
 import { arrowIpcTable } from '../../../engine-client/src/arrow-ipc.ts';
 import type { ArrowishConnection, ArrowishTable } from '../../../engine-client/src/duckdb.ts';
-import type { PlannerWorker, Request, Response } from '../planner-protocol.ts';
+import type { PlannerWorker, Request, Response } from '../../../engine-client/src/legend/planner-protocol.ts';
 import { hostCalls, type HostCalls } from './calls.ts';
 import { base64, fromBase64 } from './web.ts';
 

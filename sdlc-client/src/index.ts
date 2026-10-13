@@ -3,5 +3,6 @@
 
 export * from './wire.ts';
 export * from './client.ts';
+export { projectText } from './project-text.ts';
 export { BrowserRecords, MemoryRecords, DATABASE, type Records } from './records.ts';
 export { wasmSdlcServer, WASM_API, WASM_DEPOT_API, type SdlcModule, type WasmSdlc } from './wasm-server.ts';

@@ -10,7 +10,8 @@ import { openDatabase } from '#test-host';
 
 import { DuckDbEngine } from '../../engine-client/src/duckdb.ts';
 import { sampleById, sampleFileName } from '../src/samples.ts';
-import { fileBytes, fileParts, forgetUpload, ingestFile, type DuckDbFiles } from '../src/upload.ts';
+import { gzipSync } from 'node:zlib';
+import { fileBytes, fileParts, forgetUpload, formatOf, ingestFile, tableNameOf, type DuckDbFiles } from '../src/upload.ts';
 import type { QueryEngine } from '../../engine-client/src/engine.ts';
 import { plannerFor } from './catalog-builder.ts';
 
@@ -179,7 +180,7 @@ describe('ingestFile with JSON', () => {
   });
 });
 
-describe('a text file reads as the tab has always read it: the bytes every host\'s DuckDB is given (fileParts, fileBytes)', () => {
+describe('a text file read by its encoding: the bytes every host\'s DuckDB is given (fileParts, fileBytes; G4)', () => {
   /** A picked file of these bytes. */
   function pickedBytes(name: string, bytes: Uint8Array): File {
     return new File([bytes.slice()], name);
@@ -192,14 +193,51 @@ describe('a text file reads as the tab has always read it: the bytes every host\
     return out;
   }
 
-  it('a Latin-1 CSV opens, its letters as the decoding replaced them, as it always has', async () => {
+  it('a Latin-1 CSV opens with its letters: a file whose first bytes are not UTF-8 is read as Latin-1', async () => {
     // "name,city\nJosé,München\n" in Latin-1: é and ü are single bytes no UTF-8 reader takes
     const latin1 = Uint8Array.from([...'name,city\nJos'].map((c) => c.charCodeAt(0)).concat(
       [0xe9], [...',M'].map((c) => c.charCodeAt(0)), [0xfc], [...'nchen\n'].map((c) => c.charCodeAt(0))));
     const r = await ingestFile(engine, files, pickedBytes('latin1.csv', latin1), writer);
     assert.equal(r.rowCount, 1);
     const row = await engine.run(`SELECT name, city FROM "${r.table}"`, 0);
-    assert.deepEqual(row.columns.map((c) => c.values[0]), ['Jos\uFFFD', 'M\uFFFDnchen']);
+    assert.deepEqual(row.columns.map((c) => c.values[0]), ['José', 'München']);
+  });
+
+  it('UTF-16 by its mark, either order; a gzipped file unpacked first, whatever is inside', async () => {
+    const text = 'name,city\nJosé,München\n';
+    const le = new Uint8Array([0xff, 0xfe, ...[...text].flatMap((c) => [c.charCodeAt(0) & 0xff, c.charCodeAt(0) >> 8])]);
+    const be = new Uint8Array([0xfe, 0xff, ...[...text].flatMap((c) => [c.charCodeAt(0) >> 8, c.charCodeAt(0) & 0xff])]);
+    for (const [name, bytes] of [['le.csv', le], ['be.csv', be], ['zipped.csv.gz', gzipSync(new TextEncoder().encode(text))],
+      ['zipped16.csv.gz', gzipSync(le)]] as const) {
+      assert.deepEqual([...await fileBytes(pickedBytes(name, bytes))], [...new TextEncoder().encode(text)], name);
+    }
+    const json = gzipSync(new TextEncoder().encode('[{"a": 1}, {"a": 2}]'));
+    const r = await ingestFile(engine, files, pickedBytes('records.json.gz', json), writer);
+    assert.equal(r.rowCount, 2);
+    assert.equal(r.table, 'records');
+    // a gzipped file's format and table are its name's within
+    assert.deepEqual([formatOf('a.parquet.gz'), formatOf('b.jsonl.gz'), formatOf('c.csv.gz'), tableNameOf('trades.csv.gz')],
+      ['parquet', 'json', 'csv', 'trades']);
+  });
+
+  it('a UTF-8 file with a stray byte stays UTF-8: its letters kept, the stray byte replaced, never read as Latin-1', async () => {
+    const text = new Uint8Array([...new TextEncoder().encode('name\nJosé\n'), 0xe9, 0x0a]);
+    assert.deepEqual([...await fileBytes(pickedBytes('mixed.csv', text))], [...new TextEncoder().encode('name\nJosé\n\uFFFD\n')]);
+  });
+
+  it('a character cut at the first 64 KB\'s end is not a fault of the file\'s: it stays UTF-8', async () => {
+    const lead = new TextEncoder().encode('a\n' + 'x'.repeat(64 * 1024 - 3));
+    const bytes = new Uint8Array([...lead, ...new TextEncoder().encode('é\n')]);
+    assert.equal(lead.length, 64 * 1024 - 1, 'é begins on the sample\'s last byte');
+    assert.deepEqual([...await fileBytes(pickedBytes('edge.csv', bytes))], [...bytes]);
+  });
+
+  it('UTF-8 by its first 64 KB: a Latin-1 byte after them is replaced, as a File\'s text() replaces it', async () => {
+    const head = new TextEncoder().encode(`a\n${'x'.repeat(70 * 1024)}\n`);
+    const tail = new Uint8Array([...new TextEncoder().encode('caf'), 0xe9, 0x0a]);
+    const both = new Uint8Array([...head, ...tail]);
+    const read = await fileBytes(pickedBytes('late.csv', both));
+    assert.deepEqual([...read.subarray(head.length)], [...new TextEncoder().encode('caf\uFFFD\n')]);
   });
 
   it('a JSON array with a byte-order mark reads as its records\' columns', async () => {
@@ -238,8 +276,9 @@ describe('an upload overtaken before it was used is forgotten', () => {
   it('drops its table and lets go of its file bytes', async () => {
     const sql: string[] = [];
     const dropped: string[] = [];
-    const engine = { run: async (q: string) => { sql.push(q); return { columns: [], rowCount: 0 }; } } as unknown as QueryEngine;
-    await forgetUpload(engine, {
+    const engine = { databaseType: 'DuckDB', run: async (q: string) => { sql.push(q); return { columns: [], rowCount: 0 }; } } as unknown as
+      QueryEngine & { readonly databaseType: string };
+    await forgetUpload(engine, writer, {
       registerFileText: async () => {},
       registerFileBuffer: async () => {},
       dropFile: async (name) => { dropped.push(name); },

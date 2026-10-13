@@ -115,3 +115,33 @@ tests:
     sql: "SELECT id, bool_and(age) OVER () AS a FROM persons ORDER BY id"
   - id: window_corr_is_refused
     sql: "SELECT id, corr(salary, age) OVER (PARTITION BY dept_id) AS c FROM persons ORDER BY id"
+  # FILTER on a window aggregate; DISTINCT and FILTER where Postgres has neither
+  - id: window_aggregates_with_a_filter
+    sql: "SELECT id, sum(salary) FILTER (WHERE active) OVER (PARTITION BY dept_id) AS s, count(*) FILTER (WHERE age > 30) OVER (ORDER BY id) AS c, max(age) FILTER (WHERE dept_id = 1) OVER () AS m, avg(age) FILTER (WHERE salary > 60000) OVER (ORDER BY id ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING) AS a FROM persons ORDER BY id"
+  - id: window_filter_of_a_ranking_is_an_error
+    sql: "SELECT id, row_number() FILTER (WHERE active) OVER (ORDER BY id) AS r FROM persons ORDER BY id"
+  - id: window_distinct_is_an_error
+    sql: "SELECT id, count(DISTINCT dept_id) OVER () AS c FROM persons ORDER BY id"
+  # EXCLUDE
+  - id: exclude_current_row_of_sliding_frames_with_nulls
+    sql: "SELECT id, sum(age) OVER (ORDER BY id ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING EXCLUDE CURRENT ROW) AS s, avg(age) OVER (ORDER BY id ROWS BETWEEN 2 PRECEDING AND CURRENT ROW EXCLUDE CURRENT ROW) AS a, count(age) OVER (ORDER BY id ROWS BETWEEN CURRENT ROW AND 1 FOLLOWING EXCLUDE CURRENT ROW) AS c, sum(salary) OVER (PARTITION BY dept_id ORDER BY id ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW EXCLUDE CURRENT ROW) AS p FROM persons ORDER BY id"
+  - id: exclude_current_row_of_a_frame_without_it
+    sql: "SELECT id, sum(age) OVER (ORDER BY id ROWS BETWEEN 2 PRECEDING AND 1 PRECEDING EXCLUDE CURRENT ROW) AS s FROM persons ORDER BY id"
+  - id: exclude_group_and_ties_with_nulls
+    sql: "SELECT id, sum(age) OVER (PARTITION BY active ORDER BY dept_id ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING EXCLUDE GROUP) AS g, count(age) OVER (ORDER BY dept_id ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING EXCLUDE TIES) AS t, avg(salary) OVER (ORDER BY dept_id RANGE BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING EXCLUDE TIES) AS a, count(*) OVER (RANGE BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING EXCLUDE GROUP) AS n FROM persons ORDER BY id"
+  - id: exclude_current_row_min_and_max_with_ties
+    sql: "SELECT id, min(dept_id) OVER (ORDER BY id ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING EXCLUDE CURRENT ROW) AS mn, max(age) OVER (PARTITION BY dept_id ORDER BY id ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING EXCLUDE CURRENT ROW) AS mx, min(name) OVER (RANGE BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING EXCLUDE CURRENT ROW) AS n FROM persons ORDER BY id"
+  - id: exclude_group_of_a_minimum_is_refused
+    sql: "SELECT id, min(age) OVER (ORDER BY dept_id ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING EXCLUDE GROUP) AS m FROM persons ORDER BY id"
+  - id: exclude_of_a_partial_range_frame_is_refused
+    sql: "SELECT id, sum(age) OVER (ORDER BY age RANGE BETWEEN 5 PRECEDING AND CURRENT ROW EXCLUDE CURRENT ROW) AS s FROM persons ORDER BY id"
+  - id: exclude_current_row_of_range_frames
+    sql: "SELECT id, sum(age) OVER (ORDER BY dept_id RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW EXCLUDE CURRENT ROW) AS s, count(*) OVER (ORDER BY age RANGE BETWEEN 5 PRECEDING AND 5 FOLLOWING EXCLUDE CURRENT ROW) AS c, avg(salary) OVER (ORDER BY age RANGE BETWEEN 10 PRECEDING AND 3 FOLLOWING EXCLUDE CURRENT ROW) AS a FROM persons ORDER BY id"
+  - id: exclude_current_row_of_a_range_frame_before_the_row_is_refused
+    sql: "SELECT id, avg(salary) OVER (ORDER BY age RANGE BETWEEN 10 PRECEDING AND 3 PRECEDING EXCLUDE CURRENT ROW) AS a FROM persons ORDER BY id"
+  - id: window_sum_of_a_star_with_a_filter_is_an_error
+    sql: "SELECT id, sum(*) FILTER (WHERE active) OVER () AS s FROM persons ORDER BY id"
+  - id: exclude_of_a_sum_of_doubles_is_refused
+    sql: "SELECT id, sum(float_val) OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING EXCLUDE CURRENT ROW) AS s FROM numbers ORDER BY id"
+  - id: window_max_of_a_boolean_is_an_error
+    sql: "SELECT id, max(active) OVER () AS m FROM persons ORDER BY id"

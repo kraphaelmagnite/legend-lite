@@ -764,3 +764,185 @@ here and fails in the engine, with no word.
 **When.** Not scheduled; a small landing of its own, the user's call.
 
 **Anchor.** `sig < 0 ? funcRef : funcRef.substring(0, sig)` in `MappingFromProtocol.java`: the signature cut away.
+
+## PARK-29 — an Iceberg table on Python is checked once, before its view, not on every read
+
+**Recorded** 2026-10-13 by the DataCube + Python line, with G5 (`docs/ONE_PLATFORM_PROGRAM_2026_10_12.md`: Iceberg files
+on Python, every file remote). An Iceberg table's metadata names its files by path, so a remote table could make
+Python's DuckDB read this machine's files (R4).
+
+**What happens today.** Before a page's Iceberg table is mounted, `Engine._iceberg_refusal` (`python/legend_lite/
+engine.py`) reads the manifest lists its snapshots name, the manifests those name, and the files its current snapshot
+reads, each level only once the level naming it is checked, and refuses the table unless every one is a remote URL
+(`remote_url`). Two things remain:
+1. **The check holds when it runs, not afterwards.** A server that answers differently later, or a table written again
+   after the page opened it, can name a file on this machine at the view's next read. Pinning the snapshot would not
+   close it: the snapshot's metadata is read again on every scan, and DuckDB finds the current metadata file by its
+   own rule (`version-hint.text`, `version_name_format`), which Python would have to copy.
+2. **DuckDB 1.5.5's `iceberg_scan` ends the process when a manifest cannot be read** (an uncaught exception: measured
+   2026-10-13 with a manifest answering 404, and with a missing local one), where `iceberg_metadata` and `read_avro`
+   report the same failure. The check reads every manifest through those first, so a table that fails them is
+   refused; one whose manifest stops answering between the check and the view still ends the process. The tab's
+   DuckDB (WebAssembly) is likely the same; not measured.
+3. **A refused table keeps its keys.** The page's S3 keys are put on the shared connection before the check (the
+   mount's access step), scoped to the table's own URL, and are not taken off when it is refused, as a mount that fails
+   leaves them (the audit's S5).
+
+**The fix.** DuckDB itself refusing this machine's paths on the connection legend-lite owns, for every read
+(`enable_external_access = false` with `allowed_directories` naming the remote schemes and the headless engine's own
+folder, once DuckDB's rules for remote prefixes there are measured), so no check is needed; and the abort reported to
+DuckDB's iceberg extension, the pin moved when it is fixed.
+
+**Acceptance.** `python/tests/test_headless.py`'s `Remote` cases, with a table that names a file on this machine only
+in a snapshot written after the mount, refused at the read; a manifest answering 404 at the view's read is an error,
+not the process's end.
+
+**Why parked.** Turning external access off changes what every query on Python's shared connection may read (a
+person's own use of it included) and cannot be turned back on for that connection; it takes a design of its own. The
+cost while parked: a table that changes between the check and a read, or a server that answers so on purpose.
+
+**When.** With G6 (a connection per page on Python), which gives the place to turn it off for a page's reads alone.
+
+**Anchor.** `def _iceberg_refusal(` in `python/legend_lite/engine.py` (ParkedWorkLedgerTest reads core only; this row's
+anchor is checked by hand).
+
+## PARK-30 — a headless grid on Python plans with Python's own planner, whatever the session chose
+
+**Recorded** 2026-10-13 by the DataCube + Python line, with G1 (`docs/ONE_PLATFORM_PROGRAM_2026_10_12.md`: a server
+planning for Python's pages). A session chooses where it plans once (`ll.planner()`, `ll.show(..., planner=...,
+server=...)`), and a page's grids, and Python's own `Table.plan` and `execute`, are planned there.
+
+**What happens today.** A page's grid read headless (`Grid.view()`, `grid.relation`, `grid.to_pandas()`: DataCube's own
+code in V8, `legend_lite/_headless.py`) plans through the bundle's planner worker, which Python answers with the native
+library (`_planner.py`), so on a session planning on a server a headless grid's numbers are legend-lite's in this
+process where its page's are the server's.
+
+**The fix.** The headless bundle's planner on the session's plane: on a server's, the tab's `UpstreamPlanner` over the
+host's fetch (the headless design's R6), asking Python's own `pure/v1` as the page does, and the grid's rows through
+plan-and-run, as the page's are.
+
+**Acceptance.** `python/tests/test_upstream.py`: a headless grid's view on a session planning on legend-lite's server
+answers as its page does, its SQL the server's.
+
+**Why parked.** The page's planning was the step; the headless bundle has no fetch of its own to a server yet.
+
+**When.** With D (headless pages), which runs the page's actions headless.
+
+**Anchor.** `with the native library (PARK-30)` in `python/legend_lite/engine.py`'s `Planner` (ParkedWorkLedgerTest reads
+core only; checked by hand).
+
+## PARK-31 — a server planning for Python: what its one query may read, and the threads its answer holds
+
+**Recorded** 2026-10-13 by the DataCube + Python line, from the audit of G1 (`docs/ONE_PLATFORM_PROGRAM_2026_10_12.md`:
+a server planning for Python's pages). On a server's plane, the server writes the SQL Python's DuckDB runs (R4 as
+amended that day: the planner the person chose writes it).
+
+**What happens today.**
+1. **One query, but any query.** `upstream.runnable` runs a server's plan only as one SELECT (DuckDB runs every
+   statement of a text, so a server could otherwise write files, attach databases or replace a frame's view). That one
+   SELECT may still read this machine's files (`read_csv('/...')`), and on plain `http://` with no sign-in (G10) so may
+   anyone between Python and the server. In the tab the same SQL runs inside the browser's sandbox.
+2. **A server's answer is awaited on a compiler thread.** Plan-and-run runs on the compiler's pool of four threads
+   (`engine.py` `_workers`), and on a server's plane its HTTP call is made there, for up to a minute (`_TIMEOUT`): a
+   server that hangs ties up those threads. The frames' lock is not held while it waits (the audit's S2, fixed).
+3. **Python's own results keep a server's types as it gives them.** On legend-engine's plane, `Table.execute` and
+   `to_pandas` carry precise types (`meta::pure::precisePrimitives::Int`) and a BIT column's TinyInt; the page reads
+   them by legend-lite's lattice (relation-type.ts), which Python has no copy of.
+
+**The fix.** For 1: PARK-29's (DuckDB refusing this machine's paths on legend-lite's connection, with G6), and
+sign-in over TLS (G10). For 2: plan-and-run on a server's plane made on the connection's own thread, the compiler's
+threads asked only for the compiler's own calls (holding a model, reading the plan), which needs the frames' lock and
+the pool kept apart. For 3: the one typing table (G9), which Python and the tab read alike.
+
+**Acceptance.** `python/tests/test_upstream.py`: a server's SQL reading a local file refused at the read; a hung
+server holds no compiler thread (four plan-and-runs against it, then a local one answered at once); on legend-engine's
+plane an Integer column an int64 and a BIT column a boolean in `to_pandas()`.
+
+**Why parked.** Each needs a design of its own (the connection's access, the pool's ownership, the typing table); G1
+lands the plane, its one-query guard and its lock fix.
+
+**When.** 1 with G6 and G10; 2 with G2 (streaming results back, which changes how plan-and-run answers); 3 with G9.
+
+**Anchor.** `def runnable(` in `python/legend_lite/upstream.py` (ParkedWorkLedgerTest reads core only; checked by hand).
+
+## PARK-32 — a page's charts are not drawn headless, so Python exports a grid, not a board
+
+**Recorded** 2026-10-13 by the DataCube + Python line, with D (`docs/ONE_PLATFORM_PROGRAM_2026_10_12.md`: headless
+pages). A grid's Export is one core (`datacube/src/export-render.ts`), the screen's menu and Python's `grid.export()`
+alike; on the screen, a page with charts exports its whole board, each chart as its picture where the board puts it.
+
+**What happens today.** `grid.export(kind)` (headless `gridExport`) writes the grid as its Export menu does --
+formats, appearance, heatmaps -- but carries no chart: DataCube draws a chart's picture through the page's own canvas
+(echarts on the board), which V8 inside Python has none of. Python has no `page.export()`.
+
+**The fix.** A chart drawn headless (echarts' server-side SVG rendering, which needs no canvas), the board laid out as
+the screen lays it out (`page.exportPage()`'s tiles), and `page.export(kind)` over it.
+
+**Acceptance.** `python/tests/test_headless.py`: a page of a grid and a chart exported as HTML carries the chart as an
+SVG where the board puts it, and as PDF and Excel as the screen's export does.
+
+**Why parked.** Drawing charts headless is a dependency and a design of its own (fonts, sizes); the grid's export is
+what stands alone.
+
+**When.** With F1 (dashboards on classes), which reworks the board.
+
+**Anchor.** `PARK-32` in `datacube/src/headless/grid.ts` (`gridExport`) (ParkedWorkLedgerTest reads core only; checked
+by hand).
+
+## PARK-34 — an execute over a column whose relational spelling is unprobed is refused
+
+**Recorded** 2026-10-13 by the DataCube + Python line, with C1 (`docs/ONE_PLATFORM_PROGRAM_2026_10_12.md`: the tab's
+execute answered by the Java the server and Python use; its audit). Execute's TDS answer names each column's relational
+type (`builder.columns[].relationalType`, `UpstreamRelationType.relationalSpelling`), which knows the spellings measured
+against legend-engine 4.145.0 -- Integer, Float, Decimal, Number, String, Boolean, StrictDate, DateTime, Date and
+enumerations -- and refuses any other ("the relational spelling of ... is unprobed").
+
+**What happens today.** An execute whose result has a column of another type -- a Variant (a `SEMISTRUCTURED` store
+column) is the one a page meets -- is refused 500, on legend-lite's server since E8 and in the tab since C1: before C1
+the tab typed its rows itself and never asked the spelling, so such a query ran there. Python's ARROW_IPC answer names
+the same builder, so it refuses alike. Planning (DataCube's grids, `planJson`) is not affected.
+
+**The fix.** Ask legend-engine what its TDS builder spells a Variant column (and each other type a store column can
+have that is not measured), and add it to `relationalSpelling` beside the others, with the probe's date.
+
+**Acceptance.** `PureV1ApiTest`: an execute over a Variant column answers the engine's builder, its relationalType the
+probed spelling; `//datacube:python_execute_test` and the tab agree on it.
+
+**Why parked.** It needs legend-engine run (the L line's), and refusing an unmeasured spelling is the rule (do not
+guess); C1 moved the tab onto the server's answer, which already refused it.
+
+**When.** With L1 (the differential against legend-engine), which runs the engine.
+
+**Anchor.** `is unprobed -- probe legend-engine, do not guess` in `core/src/main/java/com/legend/plan/UpstreamRelationType.java`
+(ParkedWorkLedgerTest).
+
+## PARK-36 — a page on Python reads a query's rows whole, never as they come
+
+**Recorded** 2026-10-13 by the DataCube + Python line, at the user's ruling on the program's G2
+(`docs/ONE_PLATFORM_PROGRAM_2026_10_12.md` §5 G2): "is this chunking thing worth it - seems like we've spent too much
+time and ended up in bit of hack solution instead of true streaming"; "drop it".
+
+**What happens today.** Python's plan-and-run reads a result whole into memory and answers it whole, and the page's
+`pythonRunner` hands it to the cube as one chunk. The tab's own DuckDB streams its batches.
+
+**Why the first attempt was dropped.** Built and dropped the same day:
+- it still read a frame's result whole under the frames' lock, then sent it in parts, so it saved no memory;
+- only a warehouse table's chunks were passed through as they came;
+- a stream cut short looked complete (an HTTP/1.0 body ends at the connection's close), and was fixed only by counting
+  rows on the page: a patch over a transport that says no end.
+
+**The fix, a design of its own:**
+- read from DuckDB as it goes (a record batch reader), on a connection of the query's own (G6: Python's one shared
+  connection would hold every other query for the duration);
+- a transport that says its end (HTTP/1.1 chunked, its last chunk), so a cut answer fails as a cut answer;
+- the grid drawing rows as they come, without which the gain is not felt.
+
+**Acceptance.** A result larger than Python's memory reaches the page, its first rows shown before its last are read;
+a stream cut in Python fails on the page in words.
+
+**Cost while parked.** A large result's first row waits for its last on Python's pages; memory holds the whole result.
+
+**When.** When a result too large for memory, or a slow first row from a large warehouse table, makes it worth it.
+
+**Anchor.** `the whole result as one chunk: streamed back in chunks is a follow-up` in
+`datacube/src/services/python-host.ts` (ParkedWorkLedgerTest reads core only; checked by hand).

@@ -15,7 +15,11 @@ load("//tools/teavm:defs.bzl", "teavm_wasm")
 legend_java_library(
     name = "rules",
     srcs = glob(["src/main/java/com/legend/sdlc/*.java"]),
-    visibility = ["//sdlc-server/grammar:__pkg__"],
+    # Python's model home (//native: docs/ONE_PLATFORM_PROGRAM_2026_10_12.md B3) runs these rules too, a third build
+    visibility = [
+        "//native:__pkg__",
+        "//sdlc-server/grammar:__pkg__",
+    ],
     deps = [
         "//base",
         # Depot's interface and resolver: SDLC asks Depot (as upstream's does), never the reverse
@@ -24,11 +28,27 @@ legend_java_library(
     ],
 )
 
+# A git repository on disk as the rules' Storage (design S16): the server's, and Python's model home's (//native: the
+# same keys on disk, docs/ONE_PLATFORM_PROGRAM_2026_10_12.md B3). Files and zlib only: no sockets, no git binary.
+legend_java_library(
+    name = "git_storage",
+    srcs = ["src/main/java/com/legend/sdlc/server/GitStorage.java"],
+    visibility = ["//native:__pkg__"],
+    deps = [
+        ":rules",
+        "//base",
+    ],
+)
+
 # THE SERVER (JVM only): the rules behind the JDK's HTTP server, over a git repository on disk.
 legend_java_library(
     name = "server_lib",
-    srcs = glob(["src/main/java/com/legend/sdlc/server/*.java"]),
+    srcs = glob(
+        ["src/main/java/com/legend/sdlc/server/*.java"],
+        exclude = ["src/main/java/com/legend/sdlc/server/GitStorage.java"],
+    ),
     deps = [
+        ":git_storage",
         ":rules",
         "//base",
         "//depot-server:rules",
@@ -50,17 +70,6 @@ legend_java_binary(
     runtime_deps = [":server_lib"],
 )
 
-# TeaVM's annotations, at compile time only (as //wasm:teavm_api).
-legend_java_library(
-    name = "teavm_api",
-    neverlink = True,
-    nullaway = False,  # no sources: only exports
-    exports = [
-        "@maven_teavm//:org_teavm_teavm_core",
-        "@maven_teavm//:org_teavm_teavm_jso",
-    ],
-)
-
 legend_java_library(
     name = "page_boundary",
     srcs = glob(["src/main/java/com/legend/sdlc/page/*.java"]),
@@ -68,10 +77,11 @@ legend_java_library(
     resources = ["src/main/resources/META-INF/services/org.teavm.classlib.ResourceSupplier"],
     deps = [
         ":rules",
-        ":teavm_api",
         "//depot-server:rules",
         "//json",
         "//sdlc-server/grammar",
+        # TeaVM's annotations, at compile time only
+        "//tools/teavm:api",
     ],
 )
 
@@ -103,6 +113,7 @@ junit_test(
     srcs = ["src/test/java/com/legend/sdlc/server/GitRepositoryTest.java"],
     select = ["--select-class=com.legend.sdlc.server.GitRepositoryTest"],
     deps = [
+        ":git_storage",
         ":rules",
         ":server_lib",
         "//json",

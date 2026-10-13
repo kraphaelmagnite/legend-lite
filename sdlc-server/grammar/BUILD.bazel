@@ -9,7 +9,11 @@ load("//tools/java:defs.bzl", "legend_java_library")
 legend_java_library(
     name = "grammar",
     srcs = glob(["src/main/java/com/legend/sdlc/grammar/*.java"]),
-    visibility = ["//sdlc-server:__pkg__"],
+    # the server, the page, and Python's model home (//native: docs/ONE_PLATFORM_PROGRAM_2026_10_12.md B3)
+    visibility = [
+        "//native:__pkg__",
+        "//sdlc-server:__pkg__",
+    ],
     deps = [
         # the text-to-JSON conversion and the whole-model compile: the plan side, no database and no driver
         "//core:plan_side",

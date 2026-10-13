@@ -16,8 +16,8 @@ Where queries run is the page's config (`?config=<file>`, default `config.json`)
 
 | config | where queries run | saved queries |
 |---|---|---|
-| `config.json` | **in the browser**: legend-lite's planner (WebAssembly, in a worker) writes the SQL, DuckDB-WASM in the tab runs it, seeded from `demo/models/trading-seed.sql`. No server. | this browser (IndexedDB) |
-| `config-warehouse.json` | the warehouse's DuckDB, as the user you sign in as (DataCube's Live plane) | this browser |
+| `config.json` | **in the browser**: legend-lite's planner (WebAssembly, in a worker) writes the SQL, DuckDB-WASM in the tab runs it, over the project's Data rows (`demo/models/trading-data.pure`, in a database of the project's own). No server. | this browser (IndexedDB) |
+| `config-warehouse.json` | the warehouse's DuckDB, as the user you sign in as (DataCube's Live plane), seeded with its fixture `demo/models/trading-seed.sql` | this browser |
 | `config-server.json` | **legend-lite's server** (`bazel run //core:server -- 8090 --query-store DIR`): it plans and executes | the server's store |
 
 It looks and lays out as upstream Legend Query does (legend-studio's tokens, type, icons and

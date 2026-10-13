@@ -9,6 +9,18 @@ load("@bazel_skylib//rules:build_test.bzl", "build_test")
 load("//tools/browser:defs.bzl", "browser_test")
 load("@bazel_lib//lib:copy_to_directory.bzl", "copy_to_directory")
 load("//tools/guards:defs.bzl", "guards_package")
+load("//tools/java:defs.bzl", "legend_java_library")
+
+# THE MEDIA TYPES OF THE SITES (docs/ONE_PLATFORM_PROGRAM_2026_10_12.md C4): one table, which every host that serves a
+# site answers with -- the warehouse's server, and Python's engine through the native library. No dependencies.
+legend_java_library(
+    name = "types",
+    srcs = ["src/main/java/com/legend/site/SiteTypes.java"],
+    visibility = [
+        "//native:__pkg__",
+        "//warehouse:__pkg__",
+    ],
+)
 
 # `bazel build //site:dist`: the folder for any static host -- every app, no backend.
 copy_to_directory(

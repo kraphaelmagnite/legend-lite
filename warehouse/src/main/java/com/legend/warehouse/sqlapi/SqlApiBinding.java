@@ -56,6 +56,9 @@ public interface SqlApiBinding {
 
     HttpCall login(String user, String password);
 
+    /** The single-user app's sign-in, by the launch key the warehouse printed; {@link #token} reads the reply. */
+    HttpCall loginWithKey(String key);
+
     Token token(HttpResult result);
 
     /** A still-valid token for a fresh one, same user; {@link #token} reads the reply. */
@@ -65,6 +68,9 @@ public interface SqlApiBinding {
 
     /** The step after a submit's or a poll's result. */
     Step next(HttpResult result, String token);
+
+    /** A statement not finished: the long poll for its next state ({@link #next} reads the reply). */
+    HttpCall poll(String statementId, String token);
 
     HttpCall fetchChunk(String statementId, int index, String token);
 

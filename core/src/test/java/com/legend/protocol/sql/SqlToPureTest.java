@@ -240,9 +240,10 @@ class SqlToPureTest {
                 refusal("select sum(rank() over (order by ID)) over () from tb('s::DB.T')").getMessage());
         assertEquals("window function rank requires an OVER clause",
                 refusal("select rank() from tb('s::DB.T')").getMessage());
-        assertEquals("EXCLUDE CURRENT ROW is not supported yet", refusal("select sum(age) over (order by ID rows"
-                + " between unbounded preceding and unbounded following exclude current row) from tb('s::DB.T')")
-                .getMessage());
+        // EXCLUDE is read for count, sum, avg, min and max (aggregateAndWindowPermutationsArePostgresDefinitions)
+        assertEquals("EXCLUDE CURRENT ROW of stddev(...) is not supported yet", refusal("select stddev(age) over"
+                + " (order by ID rows between unbounded preceding and unbounded following exclude current row) from"
+                + " tb('s::DB.T')").getMessage());
     }
 
     // ------------------------------------------------------------------ functions and casts
@@ -321,6 +322,105 @@ class SqlToPureTest {
     }
 
     @Test
+    void theLongTailOfTextAndNumbersIsPostgresDefinitionStepByStep() {
+        // translate: each character replaced before any that becomes it, so that no replacement is replaced again
+        assertEquals("#>{s::DB.T}#->extend(~[t:r|$r.dept->replace('c', 'd')->replace('b', 'c')->replace('a', 'b')])"
+                + "->select(~[t])", pure("select translate(dept, 'abc', 'bcd') as t from tb('s::DB.T')"));
+        assertEquals("translate(...) whose characters replace one another in a cycle is not supported yet",
+                refusal("select translate(dept, 'ab', 'ba') as t from tb('s::DB.T')").getMessage());
+        // concat_ws: each value present after a separator, the first separator taken off
+        assertEquals("#>{s::DB.T}#->extend(~[c:r|substring(if($r.firstName->isEmpty(), |'', |', ' + $r.firstName"
+                + "->toOne()) + (', ' + $r.dept), length(', ') + 1)])->select(~[c])",
+                pure("select concat_ws(', ', firstName, dept) as c from tb('s::DB.T')"));
+        // overlay: substring(s, 1, n - 1) || r || substring(s, n + m)
+        assertEquals("#>{s::DB.T}#->extend(~[o:r|$r.dept->substring(1, 1) + 'XX' + $r.dept->substring(5)])"
+                + "->select(~[o])", pure("select overlay(dept placing 'XX' from 2 for 3) as o from tb('s::DB.T')"));
+        assertEquals("unrecognized format() type specifier \"d\"",
+                refusal("select format('%d', ID) as f from tb('s::DB.T')").getMessage());
+        // width_bucket of an integer with integer bounds is Postgres's double one; with a numeric bound, the numeric
+        // one, its floor exact from the remainder
+        assertTrue(pure("select width_bucket(ID, 0, 10, 2) as w from tb('s::DB.T')").contains(
+                "floor(toFloat(2) * (($r.ID->toFloat() - toFloat(0D)) / (toFloat(10D) - toFloat(0D))))"));
+        assertTrue(pure("select width_bucket(ID, 0.0, 10, 2) as w from tb('s::DB.T')").contains(
+                "round(((($r.ID - 0.0D) * 2) - rem(($r.ID - 0.0D) * 2, 10D - 0.0D)) / (10D - 0.0D)) + 1"));
+        // a numeric's power is exact for an integer base only (Postgres rounds others to about 16 digits)
+        assertEquals("#>{s::DB.T}#->extend(~[p:r|$r.ID->toDecimal() * $r.ID->toDecimal() * $r.ID->toDecimal()])"
+                + "->select(~[p])", pure("select power(ID::numeric, 3) as p from tb('s::DB.T')"));
+        assertEquals("power(...) of numeric values other than an integer to a whole power from 0 to 16 is not"
+                + " supported yet (Postgres rounds a numeric's power to about 16 significant digits)",
+                refusal("select power(2.5, 2) as p from tb('s::DB.T')").getMessage());
+        // the remainder of numerics is exact: Pure's rem
+        assertEquals("#>{s::DB.T}#->extend(~[m:r|$r.ID->rem(2.5D)])->select(~[m])",
+                pure("select mod(ID, 2.5) as m from tb('s::DB.T')"));
+    }
+
+    @Test
+    void aggregateAndWindowPermutationsArePostgresDefinitions() {
+        // ORDER BY inside an aggregate whose answer has no order is dropped; under DISTINCT it must be the argument
+        assertEquals(pure("select sum(age) as s from tb('s::DB.T')"),
+                pure("select sum(age order by dept) as s from tb('s::DB.T')"));
+        assertEquals("in an aggregate with DISTINCT, ORDER BY expressions must appear in argument list",
+                refusal("select count(distinct age order by ID) as c from tb('s::DB.T')").getMessage());
+        // a regression's count: the pairs holding both values, each read as a double
+        assertEquals("#>{s::DB.T}#->aggregate(~[n:r|if(if($r.age->isEmpty(), |[], |$r.age->toOne()->toFloat())"
+                + "->isEmpty(), |[], |$r.ID->toFloat()):y|$y->count()])->select(~[n])",
+                pure("select regr_count(age, ID) as n from tb('s::DB.T')"));
+        // FILTER on a window aggregate: the aggregate of CASE WHEN c THEN x END
+        assertEquals("#>{s::DB.T}#->extend(~[_sql_1:r|if($r.age->isNotEmpty() && ($r.age->toOne() > 3), |1, |[])])"
+                + "->extend(over([]), ~c:{p, w, r|$r._sql_1}:y|$y->count())->select(~[ID, c])",
+                pure("select ID, count(*) filter (where age > 3) over () as c from tb('s::DB.T')"));
+        assertEquals(SqlTranslationException.Kind.INVALID, refusal("select ID, row_number() filter (where age > 3)"
+                + " over () as c from tb('s::DB.T')").kind());
+        // EXCLUDE CURRENT ROW: the frame's count and sum less the row's own, NULL where no value remains
+        assertEquals("#>{s::DB.T}#->extend(over([], [~ID->ascending(meta::pure::functions::relation::NullOrder.LAST)],"
+                + " -1->rows(1)), ~_sql_1:{p, w, r|$r.age}:y|$y->count())->extend(over([], [~ID->ascending("
+                + "meta::pure::functions::relation::NullOrder.LAST)], -1->rows(1)), ~_sql_2:{p, w, r|$r.age}:y|$y"
+                + "->sum())->extend(~s:r|if($r._sql_1 - if($r.age->isEmpty(), |0, |1) == 0, |[], |if($r._sql_2"
+                + "->isEmpty(), |0, |$r._sql_2->toOne()) - if($r.age->isEmpty(), |0, |$r.age->toOne())))"
+                + "->select(~[ID, s])", pure("select ID, sum(age) over (order by ID rows between 1 preceding and 1"
+                + " following exclude current row) as s from tb('s::DB.T')"));
+        // EXCLUDE TIES of a whole partition: the partition's count less the peers', the row's own back
+        assertEquals("#>{s::DB.T}#->extend(over([]), ~_sql_1:{p, w, r|$r.age}:y|$y->count())->extend(over(~[dept]),"
+                + " ~_sql_2:{p, w, r|$r.age}:y|$y->count())->extend(~s:r|($r._sql_1 - $r._sql_2) + if($r.age"
+                + "->isEmpty(), |0, |1))->select(~[ID, s])", pure("select ID, count(age) over (order by dept rows"
+                + " between unbounded preceding and unbounded following exclude ties) as s from tb('s::DB.T')"));
+        // min over a partial frame, and a RANGE frame not bracketing the row (a NULL key's frame is its peers'),
+        // are refused
+        assertEquals("EXCLUDE CURRENT ROW of min(...) over this frame is not supported yet", refusal("select ID,"
+                + " min(age) over (order by age rows between 1 preceding and 1 following exclude current row) as s"
+                + " from tb('s::DB.T')").getMessage());
+        assertEquals("EXCLUDE CURRENT ROW of sum(...) over this frame is not supported yet", refusal("select ID,"
+                + " sum(age) over (order by age range between 3 preceding and 1 preceding exclude current row) as s"
+                + " from tb('s::DB.T')").getMessage());
+    }
+
+    @Test
+    void theReviewsFindingsOnTheLongTailStayFixed() {
+        // log to the constant base 10 is log10, exact at 10's powers; another base is refused (ln(x) / ln(b) misses
+        // them: log(10, 1000) by natural logarithms is 2.9999999999999996)
+        assertEquals("#>{s::DB.T}#->extend(~[l:r|$r.ID->log10()])->select(~[l])",
+                pure("select log(10::numeric, ID) as l from tb('s::DB.T')"));
+        assertEquals(SqlTranslationException.Kind.UNSUPPORTED,
+                refusal("select log(2, ID) as l from tb('s::DB.T')").kind());
+        // split_part steps over a delimiter by its characters, not its UTF-16 units
+        assertTrue(pure("select split_part(dept, '\uD83C\uDF89', 2) as p from tb('s::DB.T')").contains(
+                "->indexOf('\\uD83C\\uDF89') + 1)"));
+        // only count takes *, FILTER or not; min and max of booleans are Postgres's errors
+        assertEquals("sum(*) is not a function; only count(*) is", refusal("select ID, sum(*) filter (where age > 1)"
+                + " over () as s from tb('s::DB.T')").getMessage());
+        List<Col> flagged = List.of(new Col("ID", "Integer", false), new Col("flag", "Boolean", true));
+        assertEquals("function max(boolean) does not exist",
+                refusal("select max(flag) as m from tb('s::DB.T')", flagged).getMessage());
+        assertEquals("function min(boolean) does not exist",
+                refusal("select ID, min(flag) over () as m from tb('s::DB.T')", flagged).getMessage());
+        // a sum of doubles less the row's own loses digits: EXCLUDE of it is refused
+        List<Col> doubles = List.of(new Col("ID", "Integer", false), new Col("f", "Float", true));
+        assertEquals(SqlTranslationException.Kind.UNSUPPORTED, refusal("select ID, sum(f) over (rows between"
+                + " unbounded preceding and unbounded following exclude current row) as s from tb('s::DB.T')",
+                doubles).kind());
+    }
+
+    @Test
     void dateArithmeticIsPostgresDaysIntervalsAndTruncation() {
         List<Col> dated = List.of(new Col("d", "StrictDate", false), new Col("ts", "DateTime", false));
         // months, then days, then seconds, as Postgres adds an interval; a date is a timestamp at midnight first
@@ -393,9 +493,13 @@ class SqlToPureTest {
                 pure("select ID ^ 2 as p from tb('s::DB.T')"));
         assertEquals("#>{s::DB.T}#->extend(~[p:r|if($r.age->isEmpty(), |[], |$r.age->toOne()->pow(2))])"
                 + "->select(~[p])", pure("select age ^ 2 as p from tb('s::DB.T')"));
-        // Postgres computes numeric ^ exactly; pow is a Float
-        assertEquals("^ on numeric values (exact in Postgres) is not supported yet",
+        // Postgres computes numeric ^ exactly (rounded to about 16 digits); pow is a Float. An integer base to a
+        // whole constant is exact: a product
+        assertEquals("^ of numeric values other than an integer to a whole power from 0 to 16 is not supported yet"
+                + " (Postgres rounds a numeric's power to about 16 significant digits)",
                 refusal("select 2.5 ^ ID from tb('s::DB.T')").getMessage());
+        assertEquals("#>{s::DB.T}#->extend(~[p:r|$r.ID->toDecimal() * $r.ID->toDecimal()])->select(~[p])",
+                pure("select ID ^ 2.0 as p from tb('s::DB.T')"));
     }
 
     @Test
@@ -526,8 +630,11 @@ class SqlToPureTest {
         List<Col> dated = List.of(new Col("d", "StrictDate", false));
         assertEquals("#>{s::DB.T}#->filter(r|$r.d >= %2024-01-31)->select(~[d])",
                 pure("select d from tb('s::DB.T') where d >= '2024-01-31'", dated));
+        // Postgres's other spellings are read by its rules (PostgresDateTime); a time zone's name is refused
+        assertEquals("#>{s::DB.T}#->filter(r|$r.d >= %1999-01-08)->select(~[d])",
+                pure("select d from tb('s::DB.T') where d >= 'January 8, 1999'", dated));
         assertEquals(SqlTranslationException.Kind.UNSUPPORTED, assertThrows(SqlTranslationException.class,
-                () -> pure("select d from tb('s::DB.T') where d >= 'January 8, 1999'", dated)).kind());
+                () -> pure("select d from tb('s::DB.T') where d >= 'January 8, 1999 PST'", dated)).kind());
     }
 
     @Test

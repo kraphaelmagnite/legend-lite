@@ -31,7 +31,8 @@ from .compiler import (
     table_model,
 )
 
-# Frames, Engine, show, DataCube and Page are not listed: `from legend_lite import *` would import duckdb through them.
+# Frames, Engine, show, planner, DataCube and Page are not listed: `from legend_lite import *` would import duckdb
+# through them.
 # Nor is home: it is the whole package's (//python:legend_lite, beside the engine that keeps its pages), not the
 # compiler's bindings'
 __all__ = [
@@ -52,6 +53,13 @@ def __getattr__(name: str):
     if name == 'show':
         from .datacube import show
         return show
+    if name == 'planner':
+        from .datacube import planner
+        return planner
+    if name in ('query', 'studio'):
+        # Legend Query and Studio served by this Python (E)
+        from . import datacube
+        return getattr(datacube, name)
     if name == 'DataCube':
         from .notebook import DataCube
         return DataCube

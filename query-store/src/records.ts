@@ -4,29 +4,52 @@
 
 import type { Query } from './wire.ts';
 
-/** The versions of each query, by id. */
+/**
+ * Each query's versions, by its id, as the rules write them: the JSON text, kept as written -- so a number keeps its
+ * spelling (`1.0`, a long beyond 2^53), as legend-lite's server keeps it in its file, where an object stored as a
+ * structured clone would not.
+ */
 export interface Records {
-  versions(id: string): Promise<Query[]>;
-  put(id: string, versions: readonly Query[]): Promise<void>;
-  all(): Promise<Query[][]>;
+  /**
+   * One call of the rules: `f` is handed every query's versions by id (in id order) and answers the ones it wrote,
+   * with its answer -- all in one transaction, so no other tab writes between the read and the writes (`f` runs
+   * synchronously inside it).
+   */
+  call<T>(f: (held: ReadonlyMap<string, string>) => Called<T>): Promise<T>;
+}
+
+/** What a call answers: the queries it wrote (their versions' text, by id), and its own answer. */
+export interface Called<T> {
+  readonly changed: ReadonlyMap<string, string>;
+  readonly answer: T;
 }
 
 export class MemoryRecords implements Records {
-  readonly #data = new Map<string, Query[]>();
-  async versions(id: string): Promise<Query[]> { return [...(this.#data.get(id) ?? [])]; }
-  async put(id: string, versions: readonly Query[]): Promise<void> { this.#data.set(id, [...versions]); }
-  async all(): Promise<Query[][]> { return [...this.#data.values()].map((v) => [...v]); }
+  readonly #data = new Map<string, string>();
+
+  async call<T>(f: (held: ReadonlyMap<string, string>) => Called<T>): Promise<T> {
+    const said = f(new Map([...this.#data].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))));
+    for (const [id, text] of said.changed) this.#data.set(id, text);
+    return said.answer;
+  }
 }
 
 /** The database every app on this origin shares: one name, one layout, defined here only. */
 export const DATABASE = 'legend-query';
 const STORE = 'queries';
 /**
- * 2: each version is the record itself (`validUntil`, `deletedAt` on it), as legend-lite keeps
- * them. 1 (the Query app's first layout) wrapped it: `{query, validUntil, deletedAt}` -- moved
- * over on upgrade, never dropped.
+ * 3: each query's versions as the JSON text the rules wrote. 2 kept them as objects (structured clones, which lose a
+ * number's spelling), and 1 (the Query app's first layout) wrapped each version: `{query, validUntil, deletedAt}`
+ * -- both moved over on upgrade, never dropped.
  */
-const LAYOUT = 2;
+const LAYOUT = 3;
+
+/** A version as layout 1 kept it. */
+interface Wrapped {
+  readonly query: Query;
+  readonly validUntil: number | null;
+  readonly deletedAt: number | null;
+}
 
 /** Where a write to this origin's store is announced: every app's open tabs hear it. */
 export const CHANNEL = 'legend-query-store';
@@ -42,6 +65,10 @@ export function watchBrowserStore(onChange: () => void): () => void {
   return () => channel.close();
 }
 
+const upgraded = (e: unknown): Error =>
+  // closed by a newer layout elsewhere (onversionchange)
+  new Error(`the saved queries were upgraded by another tab: reload this page (${e instanceof Error ? e.message : String(e)})`);
+
 export class BrowserRecords implements Records {
   readonly #db: Promise<IDBDatabase>;
 
@@ -54,17 +81,16 @@ export class BrowserRecords implements Records {
           db.createObjectStore(STORE);
           return;
         }
-        if (e.oldVersion < 2) {
-          const store = open.transaction!.objectStore(STORE);
-          const cursor = store.openCursor();
-          cursor.onsuccess = () => {
-            const c = cursor.result;
-            if (!c) return;
-            const old = c.value as readonly { query: Query; validUntil: number | null; deletedAt: number | null }[];
-            c.update(old.map((v) => ({ ...v.query, validUntil: v.validUntil, deletedAt: v.deletedAt })));
-            c.continue();
-          };
-        }
+        const cursor = open.transaction!.objectStore(STORE).openCursor();
+        cursor.onsuccess = () => {
+          const c = cursor.result;
+          if (!c) return;
+          const versions = e.oldVersion < 2
+            ? (c.value as readonly Wrapped[]).map((v) => ({ ...v.query, validUntil: v.validUntil, deletedAt: v.deletedAt }))
+            : c.value as readonly Query[];
+          c.update(JSON.stringify(versions));
+          c.continue();
+        };
       };
       // ANOTHER APP on this origin opening a newer layout: let it, rather than block it until
       // this tab closes; this tab's next call says the store must be reloaded
@@ -78,36 +104,41 @@ export class BrowserRecords implements Records {
     });
   }
 
-  async #request<T>(mode: IDBTransactionMode, f: (s: IDBObjectStore) => IDBRequest<T>): Promise<T> {
+  async call<T>(f: (held: ReadonlyMap<string, string>) => Called<T>): Promise<T> {
     const db = await this.#db;
-    return new Promise((resolve, reject) => {
-      let r: IDBRequest<T>;
+    return new Promise<T>((resolve, reject) => {
+      let tx: IDBTransaction;
       try {
-        r = f(db.transaction(STORE, mode).objectStore(STORE));
+        tx = db.transaction(STORE, 'readwrite');
       } catch (e) {
-        // closed by a newer layout elsewhere (onversionchange)
-        reject(new Error(`the saved queries were upgraded by another tab: reload this page (${e instanceof Error ? e.message : String(e)})`));
+        reject(upgraded(e));
         return;
       }
-      r.onsuccess = () => resolve(r.result);
-      r.onerror = () => reject(r.error ?? new Error('IndexedDB request failed'));
+      let said: Called<T> | undefined;
+      let failed: unknown;
+      tx.oncomplete = () => {
+        // every app's open tabs hear of a write
+        if (said!.changed.size > 0 && typeof BroadcastChannel !== 'undefined') {
+          const channel = new BroadcastChannel(CHANNEL);
+          channel.postMessage({ ids: [...said!.changed.keys()] });
+          channel.close();
+        }
+        resolve(said!.answer);
+      };
+      tx.onabort = () => reject(failed ?? tx.error ?? new Error('IndexedDB transaction aborted'));
+      const store = tx.objectStore(STORE);
+      // the ids and the texts, in key order, of the one transaction: read, the rules run, their writes made
+      const ids = store.getAllKeys();
+      const texts = store.getAll();
+      texts.onsuccess = () => {
+        try {
+          said = f(new Map(ids.result.map((id, i) => [String(id), texts.result[i] as string])));
+          for (const [id, text] of said.changed) store.put(text, id);
+        } catch (e) {
+          failed = e;
+          tx.abort();
+        }
+      };
     });
-  }
-
-  async versions(id: string): Promise<Query[]> {
-    return ((await this.#request('readonly', (s) => s.get(id))) as Query[] | undefined) ?? [];
-  }
-
-  async put(id: string, versions: readonly Query[]): Promise<void> {
-    await this.#request('readwrite', (s) => s.put(versions, id));
-    if (typeof BroadcastChannel !== 'undefined') {
-      const channel = new BroadcastChannel(CHANNEL);
-      channel.postMessage({ id });
-      channel.close();
-    }
-  }
-
-  async all(): Promise<Query[][]> {
-    return (await this.#request('readonly', (s) => s.getAll())) as Query[][];
   }
 }

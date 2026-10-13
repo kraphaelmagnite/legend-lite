@@ -37,6 +37,13 @@ class Column:
     type: str
     raw: dict[str, Any] = field(hash=False, compare=False)
 
+    @property
+    def sql_type(self) -> str | None:
+        """Its SQL type, when the plan says it (a server's ``tdsColumns`` carry ``relationalType``: the one typing
+        table's pair, the program's G9)."""
+        found = self.raw.get('relationalType') if isinstance(self.raw, dict) else None
+        return found if isinstance(found, str) else None
+
 
 @dataclass(frozen=True)
 class Answer:
@@ -108,6 +115,12 @@ def relation_type(model: str, tree: Tree) -> tuple[Column, ...]:
     (``compilation/lambdaRelationType``)."""
     request = {'model': {'_type': 'text', 'code': model}, 'lambda': tree}
     return _columns(_json.loads(_engine('/api/pure/v1/compilation/lambdaRelationType', '', _json.dumps(request))))
+
+
+def read_planned(answer: str) -> Plan:
+    """The planner's tagged answer (``OK`` and its plan, or ``ERR``, its kind and message) as a Plan, its refusal raised
+    (``LegendError``): what the plan function the tab's worker calls answers (``lite_plan_json_held``)."""
+    return read_plan(_answer(answer))
 
 
 def read_plan(answer: str) -> Plan:
@@ -206,6 +219,22 @@ def session_setup(database_type: str) -> list[str]:
     return _json.loads(_answer(library().call('lite_session_setup', database_type)))
 
 
+def host_operations(database_type: str, operations: list[dict[str, Any]]) -> list[list[str]]:
+    """A host's named operations on its own database of the given type (docs/ONE_PLATFORM_PROGRAM_2026_10_12.md D5):
+    each operation's statements, in order -- what Python's host runs instead of spelling SQL (engine-client's
+    host-operations.ts writes the same operations). One the database has not is refused by name."""
+    return _json.loads(_answer(library().call('lite_host_operations', database_type, _json.dumps(operations))))
+
+
+def project_data(model: str, database_type: str) -> dict[str, Any]:
+    """A project's own database on a database of the given type (docs/ONE_PLATFORM_PROGRAM_2026_10_12.md C5): where
+    ``model``'s Data rows live on this host, named by what it holds (the model's Databases and Data rows: an edited row
+    is a fresh database). ``name``, and the statements of each step in order: ``open`` makes it, ``use`` points a
+    connection of its own at it, ``fill`` makes and fills every table a relational Data element fills (on that
+    connection), ``close`` drops it. A database without the operations is refused by name."""
+    return _json.loads(_answer(library().call('lite_project_data', model, database_type)))
+
+
 
 def pure_v1(path: str, query: str, body: str) -> Answer:
     """One call of legend-engine's ``pure/v1`` API, answered by legend-lite's server code (``PureV1Api``) --
@@ -219,6 +248,20 @@ def execute_plan(body: str, models: list[str]) -> Answer:
     (the only models this host runs), an answer whose body is ``{"sql", "metadata"}`` -- the SQL to run, and
     the Arrow schema metadata upstream's answer carries; any other answer is a refusal, to be sent as it is."""
     return _http(library().call('lite_execute_plan', body, _json.dumps(models)))
+
+
+def execute_json_plan(body: str, models: list[str]) -> Answer:
+    """The plan half of execute in legend-engine's JSON, for a host that runs the SQL on its own database (the tab's, and
+    Python's: docs/ONE_PLATFORM_PROGRAM_2026_10_12.md C1): an answer whose body is ``{"sql", "run", "builder", ...}`` --
+    ``run`` the SQL whose one value is the whole result as the database writes it (a relation's JSON wire); any other
+    answer is a refusal, to be sent as it is."""
+    return _http(library().call('lite_execute_json_plan', body, _json.dumps(models)))
+
+
+def execute_json_answer(plan: str, wire: str) -> Answer:
+    """Execute's answer in legend-engine's JSON: ``plan`` the plan half's body, ``wire`` the one value the database wrote
+    running its ``run`` SQL, arranged by legend-lite's server's own writers -- the server's answer text."""
+    return _http(library().call('lite_execute_json_answer', plan, wire))
 
 
 def refusal(message: str) -> Answer:

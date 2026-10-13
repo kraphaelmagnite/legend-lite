@@ -85,6 +85,9 @@ copy_to_directory(
     name = "vendor",
     srcs = [
         "//engine-client:node_modules/@duckdb/duckdb-wasm",
+        # its extensions, pinned (MODULE.bazel): ICU for the session's time zone; JSON, Parquet and httpfs when a
+        # page reads such a file
+        "//engine-client:duckdb_extensions",
         "//legend-art:fonts",
         "//legend-art:styles",
         "//query:cube_styles",
@@ -98,6 +101,7 @@ copy_to_directory(
         "wasm/planner/wasm-gc-module-runtime.js",
         "sdlc-server/page/classes.wasm",
         "sdlc-server/page/wasm-gc-module-runtime.js",
+        "engine-client/duckdb-extensions/**",
         "**/dist/duckdb-mvp.wasm",
         "**/dist/duckdb-eh.wasm",
         "**/dist/duckdb-browser-mvp.worker.js",
@@ -114,6 +118,7 @@ copy_to_directory(
         "query/demo/cube/**",
     ],
     replace_prefixes = {
+        "engine-client/duckdb-extensions/": "duckdb/duckdb-extensions/",
         "wasm/planner/": "planner/",
         "sdlc-server/page/": "sdlc/",
         "**/dist/": "duckdb/",
@@ -127,8 +132,12 @@ copy_to_directory(
 # Everything a browser fetches.
 filegroup(
     name = "site",
-    # served beside Query and DataCube from one origin (//site): they share the browser's stores (IndexedDB)
-    visibility = ["//site:__pkg__"],
+    # served beside Query and DataCube from one origin (//site): they share the browser's stores (IndexedDB); and by
+    # Python's engine, from the wheel (//python:wheel_studio_site; docs/ONE_PLATFORM_PROGRAM_2026_10_12.md E)
+    visibility = [
+        "//python:__pkg__",
+        "//site:__pkg__",
+    ],
     srcs = glob([
         "demo/*.html",
         "demo/*.json",

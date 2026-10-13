@@ -9,6 +9,7 @@ import type { QueryEngine } from '../../../engine-client/src/engine.ts';
 import { BrowserEngine } from '../../../engine-client/src/legend/browser-engine.ts';
 import { HttpEngine } from '../../../engine-client/src/legend/engine.ts';
 import { TabTables } from '../../../engine-client/src/tab-data.ts';
+import { ProjectDatabases, ProjectRunner } from '../../../engine-client/src/project-data.ts';
 import { WasmGrammar } from '../../../engine-client/src/legend/wasm-grammar.ts';
 import { Compiler, WorkerPort } from '../backend/planner.ts';
 import { queryBuilder, type BuilderSession } from '../backend/query-builder.ts';
@@ -109,11 +110,22 @@ function serverSession(api: string, user: string): RunSession & BuilderSession {
 
 /** A run in this tab: the planner writes the SQL, DuckDB here runs it on the model's own test data (plan A2, A3). */
 function inTabSession(grammar: WasmGrammar, duckdbVendor: string, user: string): RunSession & BuilderSession {
-  let enumerations = new Set<string>();
   type Started = { engine: BrowserEngine; sql: QueryEngine; tables: TabTables };
   let started: Promise<Started> | undefined;
-  const start = (): Promise<Started> => (started ??= startDuckDbInTab(duckdbVendor)
-    .then((tab) => ({ engine: new BrowserEngine(grammar, tab.engine, (t) => enumerations.has(t), user), sql: tab.engine, tables: new TabTables(tab.data, tab.engine, grammar) })));
+  const start = (): Promise<Started> => (started ??= startDuckDbInTab(duckdbVendor, grammar)
+    .then((tab) => {
+      // the workspace's model in a database of its own inside the tab's DuckDB (C5): every screen runs on `runner`,
+      // pointed there as the model loads
+      const runner = new ProjectRunner(tab.engine);
+      const projects = new ProjectDatabases({
+        databaseType: tab.engine.databaseType, run: (sql) => tab.engine.run(sql, 0), connect: () => tab.connect(),
+      }, grammar);
+      return {
+        engine: new BrowserEngine(grammar, runner, user),
+        sql: runner,
+        tables: new TabTables(projects, runner, tab.engine, tab.data, grammar),
+      };
+    }));
   return {
     modelJson: (text) => grammar.modelJson(text),
     lambdaJson: (text) => grammar.lambdaJson(text),
@@ -125,7 +137,6 @@ function inTabSession(grammar: WasmGrammar, duckdbVendor: string, user: string):
       return { execution: { kind: 'duckdb-wasm', user }, engine: tab.engine, planner: grammar, cubeRows: { kind: 'sql', engine: tab.sql }, user };
     },
     async loadData(model, text) {
-      enumerations = new Set(model.elements.filter((e) => e._type === 'Enumeration').map((e) => `${e.package}::${e.name}`));
       // the model's own rows, but a table a person's file fills keeps that file's (the Data panel)
       await (await start()).tables.load({ text, elements: model.elements as Parameters<TabTables['load']>[0]['elements'] });
     },

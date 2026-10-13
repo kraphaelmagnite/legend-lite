@@ -12,19 +12,19 @@
 // source, as the frame's model writes it), the one change made to it.
 //
 // Also: upstream's own Arrow answer (legend-engine 4.145.0's, recorded) read by the same reader; the compiler's other
-// answers (a query's types, parse, print) the same on both sides; an engine read as JSON, and a call without the
-// token, refused by name.
+// answers (a query's types, parse, print) the same on both sides; an engine read as JSON answering the rows it answers
+// in Arrow (docs/ONE_PLATFORM_PROGRAM_2026_10_12.md C1: Python answers legend-engine's JSON too), and a call without the
+// token refused by name.
 //
 // And A PAGE FROM PYTHON'S ENGINE (docs/DATACUBE_PYTHON_PAGES_DESIGN_2026_10_09.md, step 1): `__pythonPageDocument`
 // writes a page of two frames on two sheets with DataCube's own writers, for the harness to have Python serve it and a
 // tab open it (demo/engine.html?page=); `__readPythonPage` reads a page Python wrote with DataCube's own reader.
 
-import { DuckDbEngine, type ArrowishConnection } from '../../../engine-client/src/duckdb.ts';
-import * as duckdb from '../../../engine-client/src/duckdb-wasm.ts';
+import { startDuckDbInTab } from '../../../engine-client/src/duckdb-tab.ts';
 import { arrowResultTable, LegendEngineExecutor } from '../../../engine-client/src/engine-remote.ts';
 import { arrowIpcStream } from '../../../engine-client/src/pure-v1.ts';
 import type { ResultTable } from '../../../engine-client/src/result.ts';
-import type { Lambda } from '../../../pure-protocol/src/index.ts';
+import { from, type Lambda } from '../../../pure-protocol/src/index.ts';
 import { PlanThenRun, RemoteRun, type PlanAndRun } from '../../src/runner.ts';
 import type { CubeSnapshot } from '../../src/snapshot.ts';
 import { defaultChart } from '../../src/chart-spec.ts';
@@ -35,9 +35,10 @@ import { sourceColumns } from '../../src/source-columns.ts';
 import { TreeState } from '../../src/tree.ts';
 import { LitePlanner } from '../../src/lite-planner.ts';
 import { CASES, queries } from '../wasm-differential/cases.ts';
-import { askedOffers, pythonDatabase, pythonRunner, type PythonLink } from '../../src/services/python-host.ts';
+import { askedOffers, askedSettings, pythonDatabase, pythonRunner, pythonServices, type PythonLink } from '../../src/services/python-host.ts';
+import { browserBasics } from '../../src/services/browser-basics.ts';
+import type { Services } from '../../src/app/services.ts';
 import { ingestFile } from '../../src/upload.ts';
-import { setUpSession } from '../../src/services/browser.ts';
 
 /** What the harness hands the page: the engine, and the frame it serves. */
 interface Served {
@@ -47,6 +48,8 @@ interface Served {
   readonly source: unknown;
   readonly columns: readonly string[];
   readonly rows: readonly (readonly (string | number | null)[])[];
+  /** A warehouse the harness started and seeded (python-engine.mjs): the page reads it through Python (C3). */
+  readonly warehouse: string;
 }
 
 interface Outcome {
@@ -160,21 +163,14 @@ async function run(): Promise<void> {
 
   // the tab: the same compiler in its worker, DuckDB-WASM over the same rows, in a table the frame's model reads
   window.__pythonEngineStage = 'starting the tab\'s DuckDB and the compiler';
-  // as startDuckDbInTab starts it, the database kept too: the tab reads a person's file into it (upload.ts)
-  const asset = (f: string): string => new URL(f, new URL('vendor/', location.href)).href;
-  const bundle = await duckdb.selectBundle({
-    mvp: { mainModule: asset('duckdb-mvp.wasm'), mainWorker: asset('duckdb-browser-mvp.worker.js') },
-    eh: { mainModule: asset('duckdb-eh.wasm'), mainWorker: asset('duckdb-browser-eh.worker.js') },
-  });
-  const db = new duckdb.AsyncDuckDB(new duckdb.ConsoleLogger(duckdb.LogLevel.WARNING), new Worker(bundle.mainWorker!));
-  await db.instantiate(bundle.mainModule, bundle.pthreadWorker);
-  const local = new DuckDbEngine((await db.connect()) as unknown as ArrowishConnection);
+  const planner = new LitePlanner({ ...engine, workerUrl: new URL('planner-worker.js', location.href).href });
+  // the one start of a tab's DuckDB (engine-client's startDuckDbInTab), set up by the planner's rules before anything is
+  // written to it (this browser is in New York: python-engine.mjs); the database kept too, which a person's file is
+  // read into (upload.ts)
+  const { db, engine: local } = await startDuckDbInTab('./vendor/', planner);
   await local.run(`CREATE TABLE trades (region VARCHAR, desk VARCHAR, book VARCHAR, year INTEGER, qtr VARCHAR,
     notional DOUBLE, pnl DOUBLE, qty INTEGER)`, 0);
   await local.run(`INSERT INTO trades VALUES ${served.rows.map((r) => `(${r.map(sqlValue).join(', ')})`).join(', ')}`, 0);
-  const planner = new LitePlanner({ ...engine, workerUrl: new URL('planner-worker.js', location.href).href });
-  // set up as the tab sets its DuckDB up (services/browser.ts): this browser is in New York (python-engine.mjs)
-  await setUpSession(local, planner);
   const tab = new PlanThenRun(planner, local);
 
   await check('every cube case answers the same on Python\'s engine and in the tab', async () => {
@@ -222,8 +218,8 @@ async function run(): Promise<void> {
 
   // THE READER'S FILES (§15.6): each read by DataCube's own reader (upload.ts) into the tab's DuckDB and into Python's
   // (the page hands Python the bytes the tab's DuckDB is given, fileBytes), then every row planned and run on each
-  // host -- the same columns, types and values. A text file is read as the tab has always read it: a byte-order mark
-  // dropped, CRLF lines, a Latin-1 byte the replacement character; and a file larger than one part.
+  // host -- the same columns, types and values. A text file is read as the page reads it: a byte-order mark
+  // dropped, CRLF lines, a Latin-1 file read as Latin-1 (G4); and a file larger than one part.
   await check('every reader file reads the same on Python\'s page and in the tab', async () => {
     const link: PythonLink = { baseUrl: location.origin, fetch: (i, init) => fetch(i, init), authorization: served.authorization };
     const python = pythonDatabase(link, await askedOffers(link));
@@ -281,6 +277,62 @@ async function run(): Promise<void> {
     equal(Math.abs(here - there) < 60_000, true, `now() in the tab ${new Date(here).toISOString()}, on Python ${new Date(there).toISOString()}:`);
   });
 
+  // THE PAGE'S SETTINGS, KEPT BY PYTHON (docs/ONE_PLATFORM_PROGRAM_2026_10_12.md B2): written by the page's browser
+  // service to Python, which keeps them in this user's folder; the next page Python opens reads them -- as another run
+  // or another notebook would, where the browser's storage is the address's, and Python's address is new each run
+  await check('the page\'s settings are kept by Python, for the next page it opens', async () => {
+    const link: PythonLink = { baseUrl: location.origin, fetch: (i, init) => fetch(i, init), authorization: served.authorization };
+    const offers = await askedOffers(link);
+    const open = async (): Promise<Services> => {
+      const kept = await askedSettings(link);
+      return pythonServices({ link, shows: { frame: 'trades' }, offers, ...(kept ? { settings: kept } : {}),
+        watch: () => () => undefined, browser: browserBasics });
+    };
+    const first = await open();
+    first.browser.writeSettings({ 'dataCube.grid.rowBuffer': 30 });
+    equal(first.browser.readSettings()?.['dataCube.grid.rowBuffer'], 30, 'this page\'s reading of what it wrote:');
+    const until = performance.now() + 5000;
+    while ((await askedSettings(link))?.['dataCube.grid.rowBuffer'] !== 30) {
+      if (performance.now() > until) throw new CheckFailed('Python did not keep the page\'s settings');
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    equal((await open()).browser.readSettings()?.['dataCube.grid.rowBuffer'], 30, 'the next page\'s:');
+  });
+
+  // A WAREHOUSE TABLE ON PYTHON'S PAGE (docs/ONE_PLATFORM_PROGRAM_2026_10_12.md C3): Python signs in as the person
+  // (rita), lists what she may read, writes and holds the table's model with the tab's own writer, and plans and runs
+  // the grid's queries Live there -- the page sends Pure, and never holds the warehouse's token
+  await check('a warehouse table read on Python\'s page: signed in there, its model Python\'s, its rows Live from the warehouse, and snapped into Python\'s DuckDB', async () => {
+    const link: PythonLink = { baseUrl: location.origin, fetch: (i, init) => fetch(i, init), authorization: served.authorization };
+    const offers = await askedOffers(link);
+    equal(offers.warehouse, true, 'Python offers a warehouse:');
+    const services = pythonServices({ link, shows: { frame: 'trades' }, offers, watch: () => () => undefined, browser: browserBasics });
+    const warehouse = services.warehouse!;
+    await rejects(warehouse.connect(served.warehouse, 'rita', 'wrong'), /sign-in failed — AUTH_INVALID: wrong user or password/);
+    const { session, objects } = await warehouse.connect(served.warehouse, 'rita', 'rita-pw');
+    deepEqual([session.principal, session.token], ['rita', ''], 'the session, without its token:');
+    deepEqual(objects.map((o) => o.name), ['POSITIONS'], 'what rita may read, and only that:');
+    const m = await warehouse.table!(session, objects[0]!);
+    const rows = services.engine.rows(m.model, m.runtime, { bitColumns: m.bitColumns });
+    const columns = await sourceColumns(rows.runner!, m.source);
+    deepEqual(columns.map((c) => `${c.name}:${c.type}`), ['desk:String', 'qty:Integer', 'px:Decimal'], 'its columns, as Python\'s model types them:');
+    const read = await rows.runner!.run(from(m.source).select(['desk', 'qty']).lambda(), { epoch: 0 } as CubeSnapshot);
+    equal(shape(read.rows, false), 'desk:String,qty:Integer\n["EQ",5]\n["FX",10]\n["FX",3]', 'its rows, read Live through Python:');
+    // a table it did not list is not one Python opens
+    await rejects(warehouse.table!(session, { ...objects[0]!, name: 'secret' }), /not a table rita may read/);
+    // SNAP, on Python: the pull sent as Pure, counted and copied there; the copy read through the snap runtime, by
+    // Python's DuckDB; released, the copy is gone, and reading it is refused
+    const copy = services.engine.rows(m.model, m.snapRuntime, { bitColumns: m.bitColumns }).runner!;
+    const two = from(m.source).select(['desk', 'qty']).lambda();
+    await rejects(copy.run(two, { epoch: 0 } as CubeSnapshot), /read on its warehouse, through its own runtime, or snapped/);
+    const frozen = await warehouse.snap!(m.model, from(m.source).select(['desk', 'qty', 'px']).lambda());
+    deepEqual([frozen.rowCount, frozen.pulledBy?.as, frozen.pulledBy?.serverRows], [3, 'rita', 3], 'what Python froze:');
+    equal(shape((await copy.run(two, { epoch: 0 } as CubeSnapshot)).rows, false), 'desk:String,qty:Integer\n["EQ",5]\n["FX",10]\n["FX",3]',
+      'the copy\'s rows, read in Python\'s DuckDB:');
+    await warehouse.release!(m.model);
+    await rejects(copy.run(two, { epoch: 0 } as CubeSnapshot), /read on its warehouse, through its own runtime, or snapped/);
+  });
+
   await check('a query\'s types, parse and print: the same compiler\'s answers', async () => {
     const source = { _type: 'lambda', parameters: [], body: [served.source] } as unknown as Lambda;
     deepEqual(await remote.relationType(source), await tab.relationType(source), 'the source\'s columns:');
@@ -298,11 +350,15 @@ async function run(): Promise<void> {
     equal(activities.length, 1, 'its activities:');
   });
 
-  await check('an engine read as JSON, a JSON answer to an Arrow request, and a call without the token, are refused by name', async () => {
+  await check('an engine read as JSON answers the rows it answers in Arrow; a JSON answer to an Arrow request, and a call without the token, are refused by name', async () => {
     const asJson = new RemoteRun(new LegendEngineExecutor({ ...engine, authorization: served.authorization }));
+    const asArrow = new RemoteRun(new LegendEngineExecutor({ ...engine, serializationFormat: 'ARROW_IPC', authorization: served.authorization }));
     const first = { name: CASES[0]!.name, snapshot: onTheFrame(CASES[0]!.snapshot, served.source) };
     const q = onTheFrame(queries()[0]!.query, served.source);
-    await rejects(asJson.run(q, first.snapshot), /ARROW_IPC/);
+    const viaJson = await asJson.run(q, first.snapshot);
+    const viaArrow = await asArrow.run(q, first.snapshot);
+    deepEqual(viaJson.rows.columns.map((c) => [c.name, c.type, c.values]), viaArrow.rows.columns.map((c) => [c.name, c.type, c.values]),
+      'the rows, as JSON and as Arrow:');
     const without = new RemoteRun(new LegendEngineExecutor({ ...engine, serializationFormat: 'ARROW_IPC' }));
     await rejects(without.run(q, first.snapshot), /token/);
     // a server declared ARROW_IPC that does not serve it answers its JSON, 200: refused, never read as rows

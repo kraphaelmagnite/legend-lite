@@ -78,6 +78,16 @@ legend_java_library(name = "error", srcs = glob(["src/main/java/com/legend/error
 legend_java_library(name = "diagnostics", srcs = glob(["src/main/java/com/legend/diagnostics/*.java"]), deps = ["//base"], visibility = ["//parser-equivalence:__pkg__"])
 legend_java_library(name = "lexer", srcs = glob(["src/main/java/com/legend/lexer/*.java"]), deps = ["//base"])
 legend_java_library(name = "sql", srcs = glob(["src/main/java/com/legend/sql/*.java"]), deps = ["//base"])
+# legend-engine's query store's rules (/api/pure/v1/query) over a records interface
+# (docs/ONE_PLATFORM_PROGRAM_2026_10_12.md B5): the one implementation legend-lite's server, Python's native library
+# and the page's module answer with, the storage each host's own (a directory, or the page's records handed in).
+# //base and //json only: it compiles to WebAssembly (//query-store:page).
+legend_java_library(
+    name = "saved_queries",
+    srcs = glob(["src/main/java/com/legend/queries/*.java"]),
+    deps = ["//base", "//json"],
+    visibility = ["//native:__pkg__", "//query-store:__pkg__"],
+)
 # visible to //datacube: its catalog corpus and offer facts generators read the protocol directly
 legend_java_library(name = "protocol", srcs = glob(["src/main/java/com/legend/protocol/**/*.java"]), deps = ["//base", "//json", ":values"], visibility = ["//datacube:__pkg__"])
 legend_java_library(name = "model", srcs = glob(["src/main/java/com/legend/model/*.java"]), deps = ["//base", ":protocol"])
@@ -173,7 +183,7 @@ legend_java_library(
 legend_java_library(
     name = "setup",
     srcs = glob(["src/main/java/com/legend/setup/*.java"]),
-    deps = ["//base", ":compiler", ":execution_plan", ":model", ":sql", ":sql_dialect"],
+    deps = ["//base", ":cache", ":compiler", ":execution_plan", ":model", ":protocol", ":sql", ":sql_dialect"],
 )
 legend_java_library(
     name = "exec",
@@ -258,14 +268,14 @@ legend_java_library(
             "src/main/java/com/legend/server/PureV1Api.java",
         ],
     ),
-    deps = ["//base", "//json", ":cache", ":compiler", ":compiler_element_type", ":database", ":driver", ":error", ":exec", ":lowering", ":model", ":parser", ":plan", ":planner", ":protocol", ":pure_v1", ":sql_dialect"],
+    deps = ["//base", "//json", ":cache", ":compiler", ":compiler_element_type", ":database", ":driver", ":error", ":exec", ":lowering", ":model", ":parser", ":plan", ":planner", ":protocol", ":pure_v1", ":saved_queries", ":setup", ":sql_dialect"],
 )
 
 _CORE_TARGETS = [
     "//base", "//json", ":spi", ":cache", ":values", ":error", ":diagnostics", ":lexer", ":sql", ":protocol", ":model", ":parser",
     ":builtin", ":platform", ":compiler_element_type", ":sql_dialect", ":database", ":compiler", ":normalizer",
     ":lineage", ":validation", ":lowering", ":plan", ":resolver", ":setup", ":exec", ":probe", ":testdatagen",
-    ":execution_plan", ":planner", ":pure_v1", ":driver", ":ide", ":test", ":server_lib",
+    ":execution_plan", ":planner", ":pure_v1", ":saved_queries", ":driver", ":ide", ":test", ":server_lib",
 ]
 
 # THE PLAN SIDE (C2a, docs/PLAN_EXECUTION_SPLIT_AND_DATABASE_OWNER_2026_10_03.md): the planner and every library it
@@ -337,7 +347,14 @@ legend_java_binary(
         ":core",
         ":drivers",
     ],
-    visibility = ["//:__pkg__", "//fixtures/saved-queries:__pkg__", "//query:__pkg__", "//query-store:__pkg__"],
+    visibility = [
+        "//:__pkg__",
+        "//fixtures/saved-queries:__pkg__",
+        # Python's planner on a server, tested against this one (//python:upstream_test; the program's G1)
+        "//python:__pkg__",
+        "//query:__pkg__",
+        "//query-store:__pkg__",
+    ],
 )
 
 # every file a core test reads by path, declared, so it exists in runfiles and
@@ -361,14 +378,15 @@ legend_java_library(
     # not yet written to the null discipline (Bazel workplan P1-20: NullAway forced on everywhere, 2026-10-04, found 792 errors in the first wave)
     nullaway = False,
     testonly = True,
-    # PostgresArmTest and SqlIslandPostgresTest are their own targets' alone: they need the embedded Postgres in their
-    # runfiles
+    # PostgresArmTest, SqlIslandPostgresTest, SqlParityPostgresTest and HostOperationsPostgresTest are their own
+    # targets' alone: they need the embedded Postgres in their runfiles
     srcs = glob(
         ["src/test/java/**/*.java"],
         exclude = [
             "src/test/java/com/legend/server/PostgresArmTest.java",
             "src/test/java/com/legend/server/SqlIslandPostgresTest.java",
             "src/test/java/com/legend/server/SqlParityPostgresTest.java",
+            "src/test/java/com/legend/sql/dialect/HostOperationsPostgresTest.java",
             "src/test/java/com/legend/integration/SqlParityTest.java",
             # the shared test cases are :test_cases's
             "src/test/java/com/legend/testcases/*.java",
@@ -593,6 +611,29 @@ junit_test(
     deps = [
         ":core",
         ":test_cases",
+        "//testing",
+        "@maven_test//:org_junit_jupiter_junit_jupiter_api",
+    ],
+    visibility = ["//gates:__pkg__"],
+)
+
+# Snap's preflight count as Postgres's host operations write it (docs/ONE_PLATFORM_PROGRAM_2026_10_12.md D5), run on the
+# embedded Postgres 16: the count a warehouse whose catalog is Postgres answers before a copy
+junit_test(
+    name = "host_operations_postgres_test",
+    memory_mb = 768,
+    size = "medium",
+    srcs = ["src/test/java/com/legend/sql/dialect/HostOperationsPostgresTest.java"],
+    data = [
+        "@embedded_postgres//:pg/PG_ROOT",
+        "@embedded_postgres//:postgres",
+    ],
+    jvm_flags = ["-Dembedded.postgres.root=$(rlocationpath @embedded_postgres//:pg/PG_ROOT)"],
+    select = ["--select-class=com.legend.sql.dialect.HostOperationsPostgresTest"],
+    runtime_deps = [":drivers"],
+    target_compatible_with = EMBEDDED_POSTGRES_COMPATIBLE,
+    deps = [
+        ":core",
         "//testing",
         "@maven_test//:org_junit_jupiter_junit_jupiter_api",
     ],

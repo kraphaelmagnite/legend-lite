@@ -19,6 +19,12 @@ import java.util.List;
  * The API's records on the wire, both ways: the ONE codec the server and
  * every client share, so the two cannot drift. Built on core's strict
  * RFC 8259 parser.
+ *
+ * <p>An answer's reader checks every value's kind before it reads it (the
+ * shape helpers at the end), and refuses an answer that is not the API's
+ * with an {@link IllegalArgumentException}: the readers run in WebAssembly
+ * too (the page's module, {@code SqlApiCalls}), where a failed cast is a trap,
+ * not an exception.
  */
 public final class ApiJson {
 
@@ -79,14 +85,20 @@ public final class ApiJson {
 
     public static SqlApi.Session parseSession(String body) {
         Json.Obj o = Json.parseObject(body);
-        return new SqlApi.Session(o.getString("sessionId"), o.getString("catalog"),
-                o.getString("engine"), o.getString("engineVersion"));
+        return new SqlApi.Session(str(o, "sessionId"), str(o, "catalog"), str(o, "engine"), str(o, "engineVersion"));
     }
 
     public static String login(String user, String password) {
         LinkedHashMap<String, Json.Node> f = new LinkedHashMap<>();
         f.put("user", Json.str(user));
         f.put("password", Json.str(password));
+        return Json.toCompact(new Json.Obj(f));
+    }
+
+    /** The single-user app's sign-in: the launch key the warehouse printed (docs/DATACUBE_APP_PLAN_2026_10_02.md). */
+    public static String loginKey(String key) {
+        LinkedHashMap<String, Json.Node> f = new LinkedHashMap<>();
+        f.put("key", Json.str(key));
         return Json.toCompact(new Json.Obj(f));
     }
 
@@ -102,7 +114,7 @@ public final class ApiJson {
 
     public static Token parseToken(String body) {
         Json.Obj o = Json.parseObject(body);
-        return new Token(o.getString("token"), o.getString("expiresAt"), o.getString("principal"));
+        return new Token(str(o, "token"), str(o, "expiresAt"), str(o, "principal"));
     }
 
     public static Json.Obj error(ApiError e) {
@@ -113,7 +125,7 @@ public final class ApiJson {
     }
 
     public static ApiError parseError(Json.Obj o) {
-        return new ApiError(ErrorCode.valueOf(o.getString("code")), o.getString("message"));
+        return new ApiError(ErrorCode.valueOf(str(o, "code")), str(o, "message"));
     }
 
     /** An error response body: {@code {"error": {...}}}. */
@@ -138,12 +150,12 @@ public final class ApiJson {
 
     public static Status parseStatus(String body) {
         Json.Obj o = Json.parseObject(body);
-        Json.Obj r = o.getObjOr("result", null);
-        Json.Obj e = o.getObjOr("error", null);
-        Json.Obj c = o.getObjOr("firstChunk", null);
+        Json.Obj r = objOr(o, "result");
+        Json.Obj e = objOr(o, "error");
+        Json.Obj c = objOr(o, "firstChunk");
         return new Status(
-                o.getString("statementId"),
-                State.ofWire(o.getString("state")),
+                str(o, "statementId"),
+                State.ofWire(str(o, "state")),
                 r == null ? null : parseResultMeta(r),
                 e == null ? null : parseError(e),
                 c == null ? null : parseChunk(c));
@@ -167,11 +179,12 @@ public final class ApiJson {
 
     public static ResultMeta parseResultMeta(Json.Obj o) {
         List<Column> cols = new ArrayList<>();
-        for (Json.Node n : o.getArr("columns").items()) {
-            Json.Obj c = (Json.Obj) n;
-            cols.add(new Column(c.getString("name"), c.getString("type"), c.getBoolOr("nullable", true)));
+        for (Json.Node n : arr(o, "columns").items()) {
+            Json.Obj c = obj(n, "a result column");
+            Json.Node nullable = c.getOr("nullable", null);
+            cols.add(new Column(str(c, "name"), str(c, "type"), !(nullable instanceof Json.Bool b) || b.value()));
         }
-        return new ResultMeta(cols, o.getLong("rowCount"), o.getInt("chunkCount"));
+        return new ResultMeta(cols, num(o, "rowCount").longValue(), (int) num(o, "chunkCount").longValue());
     }
 
     public static Json.Obj chunk(Chunk c) {
@@ -185,8 +198,11 @@ public final class ApiJson {
 
     public static Chunk parseChunk(Json.Obj o) {
         List<List<Json.Node>> rows = new ArrayList<>();
-        for (Json.Node r : o.getArr("rows").items()) rows.add(((Json.Arr) r).items());
-        return new Chunk(o.getInt("index"), rows);
+        for (Json.Node r : arr(o, "rows").items()) {
+            if (!(r instanceof Json.Arr row)) throw notTheApis("a chunk's row is not an array");
+            rows.add(row.items());
+        }
+        return new Chunk((int) num(o, "index").longValue(), rows);
     }
 
     public static Chunk parseChunk(String body) {
@@ -195,39 +211,121 @@ public final class ApiJson {
 
     public static List<SqlApi.HistoryEntry> parseHistory(String body) {
         List<SqlApi.HistoryEntry> out = new ArrayList<>();
-        for (Json.Node n : ((Json.Arr) Json.parse(body)).items()) {
-            Json.Obj o = (Json.Obj) n;
-            String rows = o.getStringOr("rowCount", null);
-            out.add(new SqlApi.HistoryEntry(o.getString("statementId"), o.getString("catalog"), o.getString("sql"),
-                    State.ofWire(o.getString("state")), o.getString("submittedAt"), o.getStringOr("finishedAt", null),
-                    rows == null ? null : Long.valueOf(rows), o.getStringOr("errorCode", null)));
+        for (Json.Node n : arr(Json.parse(body), "the history").items()) {
+            Json.Obj o = obj(n, "a history entry");
+            String rows = strOr(o, "rowCount");
+            out.add(new SqlApi.HistoryEntry(str(o, "statementId"), str(o, "catalog"), str(o, "sql"),
+                    State.ofWire(str(o, "state")), str(o, "submittedAt"), strOr(o, "finishedAt"),
+                    rows == null ? null : Long.valueOf(rows), strOr(o, "errorCode")));
         }
         return out;
     }
 
     public static List<SqlApi.CatalogObject> parseObjects(String body) {
         List<SqlApi.CatalogObject> out = new ArrayList<>();
-        for (Json.Node n : ((Json.Arr) Json.parse(body)).items()) {
-            Json.Obj o = (Json.Obj) n;
+        for (Json.Node n : arr(Json.parse(body), "the objects").items()) {
+            Json.Obj o = obj(n, "an object");
             List<SqlApi.CatalogColumn> columns = new ArrayList<>();
-            for (Json.Node c : o.getArr("columns").items()) {
-                Json.Obj col = (Json.Obj) c;
-                columns.add(new SqlApi.CatalogColumn(col.getString("name"), col.getString("type")));
+            for (Json.Node c : arr(o, "columns").items()) {
+                Json.Obj col = obj(c, "a column");
+                Json.Node notNull = col.getOr("notNull", null);
+                columns.add(new SqlApi.CatalogColumn(str(col, "name"), str(col, "type"), strOr(col, "logicalType"),
+                        intOr(col, "precision"), intOr(col, "scale"), notNull instanceof Json.Bool b && b.value()));
             }
-            out.add(new SqlApi.CatalogObject(o.getString("catalog"), o.getString("databaseType"), o.getString("schema"),
-                    o.getString("name"), o.getString("kind"), columns));
+            out.add(new SqlApi.CatalogObject(str(o, "catalog"), str(o, "databaseType"), str(o, "schema"),
+                    str(o, "name"), str(o, "kind"), columns));
         }
         return out;
+    }
+
+    /** The objects as the API writes them: what {@link #parseObjects} reads, every column's structured fields. */
+    public static Json.Arr objects(List<SqlApi.CatalogObject> objects) {
+        List<Json.Node> out = new ArrayList<>();
+        for (SqlApi.CatalogObject o : objects) {
+            List<Json.Node> columns = new ArrayList<>();
+            for (SqlApi.CatalogColumn c : o.columns()) {
+                LinkedHashMap<String, Json.Node> f = new LinkedHashMap<>();
+                f.put("name", Json.str(c.name()));
+                f.put("type", Json.str(c.type()));
+                String logical = c.logicalType();
+                Integer precision = c.precision(), scale = c.scale();
+                f.put("logicalType", logical == null ? Json.nil() : Json.str(logical));
+                f.put("precision", precision == null ? Json.nil() : Json.num(precision));
+                f.put("scale", scale == null ? Json.nil() : Json.num(scale));
+                f.put("notNull", Json.bool(c.notNull()));
+                columns.add(new Json.Obj(f));
+            }
+            LinkedHashMap<String, Json.Node> f = new LinkedHashMap<>();
+            f.put("catalog", Json.str(o.catalog()));
+            f.put("databaseType", Json.str(o.databaseType()));
+            f.put("schema", Json.str(o.schema()));
+            f.put("name", Json.str(o.name()));
+            f.put("kind", Json.str(o.kind()));
+            f.put("columns", new Json.Arr(columns));
+            out.add(new Json.Obj(f));
+        }
+        return new Json.Arr(out);
     }
 
     /** The error a failed call carried, if its body is one of ours. */
     public static @Nullable ApiError errorOf(String body) {
         try {
             Json.Obj o = Json.parseObject(body);
-            Json.Obj e = o.getObjOr("error", null);
+            Json.Obj e = objOr(o, "error");
             return e == null ? null : parseError(e);
-        } catch (RuntimeException notOurs) {
+        } catch (IllegalArgumentException notOurs) {
             return null;
         }
+    }
+
+    // -- shape: each value's kind checked before it is read ------------------
+
+    private static IllegalArgumentException notTheApis(String what) {
+        return new IllegalArgumentException("the warehouse's answer is not the API's: " + what);
+    }
+
+    private static Json.Obj obj(Json.Node n, String what) {
+        if (n instanceof Json.Obj o) return o;
+        throw notTheApis(what + " is not an object");
+    }
+
+    private static Json.Arr arr(Json.Node n, String what) {
+        if (n instanceof Json.Arr a) return a;
+        throw notTheApis(what + " is not an array");
+    }
+
+    private static Json.Arr arr(Json.Obj o, String key) {
+        if (o.getOr(key, null) instanceof Json.Arr a) return a;
+        throw notTheApis("'" + key + "' is not an array");
+    }
+
+    private static String str(Json.Obj o, String key) {
+        if (o.getOr(key, null) instanceof Json.Str s) return s.value();
+        throw notTheApis("'" + key + "' is not a string");
+    }
+
+    private static @Nullable String strOr(Json.Obj o, String key) {
+        Json.Node n = o.getOr(key, null);
+        if (n == null || n instanceof Json.Null) return null;
+        if (n instanceof Json.Str s) return s.value();
+        throw notTheApis("'" + key + "' is not a string");
+    }
+
+    private static Json.Num num(Json.Obj o, String key) {
+        if (o.getOr(key, null) instanceof Json.Num n && n.isInteger()) return n;
+        throw notTheApis("'" + key + "' is not a whole number");
+    }
+
+    private static @Nullable Integer intOr(Json.Obj o, String key) {
+        Json.Node n = o.getOr(key, null);
+        if (n == null || n instanceof Json.Null) return null;
+        if (n instanceof Json.Num v && v.isInteger()) return (int) v.longValue();
+        throw notTheApis("'" + key + "' is not a whole number");
+    }
+
+    private static @Nullable Json.Obj objOr(Json.Obj o, String key) {
+        Json.Node n = o.getOr(key, null);
+        if (n == null || n instanceof Json.Null) return null;
+        return obj(n, "'" + key + "'");
     }
 }

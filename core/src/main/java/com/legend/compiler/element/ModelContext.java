@@ -141,6 +141,12 @@ public interface ModelContext extends StoreLookups {
         return Optional.empty();
     }
 
+    /** Every {@code ###Data} element, in ingest order &mdash; what a project's own database is filled from
+     *  ({@code com.legend.setup.ProjectData}, docs/ONE_PLATFORM_PROGRAM_2026_10_12.md C5). */
+    default java.util.stream.Stream<com.legend.model.DataDefinition> dataElements() {
+        return java.util.stream.Stream.empty();
+    }
+
     /** Normalization-failure reason for {@code mapping::class}, when its
      * class mapping (the ROOT binding) was poisoned. */
     default Optional<String> mappingPoison(String mappingFqn, String classFqn) {

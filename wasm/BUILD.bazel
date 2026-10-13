@@ -17,18 +17,6 @@ js_library(
     visibility = ["//datacube:__pkg__"],
 )
 
-# The TeaVM surface the tab's adapter names at COMPILE time only: @JSExport
-# (jso) and the ResourceSupplier SPI (core, the compiler's). neverlink — on a JVM the
-# annotation is inert and nothing loads the SPI, so no JVM classpath carries them.
-legend_java_library(
-    name = "teavm_api",
-    neverlink = True,
-    exports = [
-        "@maven_teavm//:org_teavm_teavm_core",
-        "@maven_teavm//:org_teavm_teavm_jso",
-    ],
-)
-
 # THE BOUNDARY (planner.Boundary, docs/PROTOCOL_PROGRAM_2026_10_05.md invariant 5): the operations every embedded
 # host runs -- the tab and Python -- plain Java, no host's annotations, each once; and the one text encoding both
 # strings-only hosts answer with (planner.Folded). Built to WebAssembly through the tab's adapter, and native
@@ -40,6 +28,7 @@ legend_java_library(
     srcs = [
         "src/main/java/planner/Boundary.java",
         "src/main/java/planner/Folded.java",
+        "src/main/java/planner/HostOperationsJson.java",
     ],
     visibility = ["//native:__pkg__"],
     deps = [
@@ -65,8 +54,9 @@ legend_java_library(
     visibility = ["//parser-equivalence:__pkg__"],
     deps = [
         ":boundary",
-        ":teavm_api",
         "//core:plan_side",
+        # TeaVM's annotations, at compile time only
+        "//tools/teavm:api",
     ],
 )
 
@@ -201,7 +191,7 @@ node_test(
 legend_java_library(
     name = "conformance",
     srcs = glob(["src/main/java/conformance/*.java"]),
-    deps = [":teavm_api"],
+    deps = ["//tools/teavm:api"],
 )
 
 java_run(

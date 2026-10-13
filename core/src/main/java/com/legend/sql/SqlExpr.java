@@ -647,9 +647,12 @@ public sealed interface SqlExpr
     record OrderedListAgg(SqlExpr value, SqlExpr orderBy,
             TypeFact type) implements SqlExpr {
         public OrderedListAgg {
-            // §E3: an ordered aggregation over ZERO rows is NULL (the
-            // reducer node rule — probed string_agg/list empty -> NULL)
-            type = SqlTyping.nullable(SqlTyping.T_VARCHAR);
+            // the LIST reducer's type: a list of the value's (it was
+            // VARCHAR whatever it aggregated, 2026-10-12 -- Postgres,
+            // which holds a list by its element type, refused it). §E3:
+            // an ordered aggregation over ZERO rows is NULL (the reducer
+            // node rule — probed string_agg/list empty -> NULL)
+            type = SqlTyping.reducerType(SqlAgg.Fn.LIST, value.type());
         }
 
         public OrderedListAgg(SqlExpr value, SqlExpr orderBy) {

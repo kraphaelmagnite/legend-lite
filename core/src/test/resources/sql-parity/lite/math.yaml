@@ -1,0 +1,56 @@
+# legend-lite's own Postgres-judged cases over upstream's parity schema: the numeric functions of the long tail --
+# div, width_bucket in both its forms, log to a base, cot, and power of a numeric -- at negative values, bucket edges,
+# reversed bounds, the bigint's extremes and the errors Postgres raises.
+# Each answer is snapped from Postgres 16 with upstream's (postgres-answers.jsonl, key lite/math/<id>).
+tests:
+  # div: the quotient truncated toward zero, a numeric of scale 0
+  - id: div_truncates_toward_zero
+    sql: "SELECT id, div(int_val, 7) AS a, div(-int_val, 7) AS b, div(numeric_val, 3.0) AS c, div(numeric_val, -0.7) AS e, div(small_val, 2) / 2 AS g FROM numbers ORDER BY id"
+  - id: div_of_the_bigint_extremes
+    sql: "SELECT id, div(big_val, 7) AS a, div(big_val, -2) AS b, div(big_val, big_val - 1) AS c FROM numbers WHERE big_val NOT IN (0, 1) ORDER BY id"
+  - id: div_text_and_comparison
+    sql: "SELECT id, div(salary, 1000) AS a, div(salary, 1000)::text AS b FROM persons WHERE div(salary, 10000) >= 7 ORDER BY id"
+  - id: div_by_zero_is_an_error
+    sql: "SELECT div(int_val, 0) AS a FROM numbers WHERE id = 1"
+  - id: div_of_a_double_does_not_exist
+    sql: "SELECT div(float_val, 2) AS a FROM numbers WHERE id = 1"
+  # width_bucket
+  - id: width_bucket_of_doubles
+    sql: "SELECT id, width_bucket(float_val, -10.0, 10.0, 5) AS a, width_bucket(float_val, 3, -3, 4) AS b, width_bucket(float_val, 0.1, 0.3, 3) AS c, width_bucket(float_val, -0.1, 0.1, 2) AS e FROM numbers ORDER BY id"
+  - id: width_bucket_of_numerics
+    sql: "SELECT id, width_bucket(numeric_val, -100000.0, 100000.0, 10) AS a, width_bucket(numeric_val, 100, -100, 7) AS b, width_bucket(numeric_val, 0.00001, 333.33333, 3) AS c FROM numbers ORDER BY id"
+  - id: width_bucket_of_integers
+    sql: "SELECT id, width_bucket(int_val, 0, 100, 3) AS a, width_bucket(int_val, 0.0, 100, 3) AS b, width_bucket(small_val, -128, 127, 255) AS c FROM numbers ORDER BY id"
+  - id: width_bucket_of_salaries_and_ages
+    sql: "SELECT id, width_bucket(salary, 45000, 120000, 3) AS a, width_bucket(age, 20, 50, 3) AS b, width_bucket(age, 50, 20, 6) AS c FROM persons ORDER BY id"
+  - id: width_bucket_in_a_group
+    sql: "SELECT width_bucket(salary, 40000, 130000, 3) AS b, count(*) AS n FROM persons GROUP BY 1 ORDER BY 1"
+  - id: width_bucket_of_no_buckets_is_an_error
+    sql: "SELECT width_bucket(int_val, 0, 10, 0) AS a FROM numbers WHERE id = 1"
+  - id: width_bucket_of_equal_bounds_is_an_error
+    sql: "SELECT width_bucket(int_val, 5, 5, 3) AS a FROM numbers WHERE id = 1"
+  # log(b, x), cot
+  - id: log_to_a_base
+    sql: "SELECT id, log(10, int_val) AS a, log(10::numeric, abs(numeric_val) + 1) AS b, log(10, 1000) = 3 AS c, log(10.0, big_val) >= 6 AS e FROM numbers WHERE int_val > 0 AND big_val > 0 ORDER BY id"
+  - id: log_to_another_base_is_refused
+    sql: "SELECT log(2, 8) AS a FROM numbers WHERE id = 1"
+  - id: log_of_doubles_does_not_exist
+    sql: "SELECT log(2.0::float8, float_val) AS a FROM numbers WHERE id = 1"
+  - id: cot_of_doubles_and_integers
+    sql: "SELECT id, cot(float_val) AS a, cot(int_val) AS b, cot(numeric_val) AS c FROM numbers WHERE float_val <> 0 AND int_val <> 0 ORDER BY id"
+  # power of a numeric
+  - id: power_of_an_integer_read_as_a_numeric
+    sql: "SELECT id, power(small_val::numeric, 2) AS a, power(int_val, 3.0) AS b, power(small_val::numeric, 0) AS c, pow(big_val::numeric, 2) AS e FROM numbers ORDER BY id"
+  - id: power_of_a_numeric_with_a_fraction_is_refused
+    sql: "SELECT power(numeric_val, 2) AS a FROM numbers WHERE id = 1"
+  - id: caret_of_an_integer_read_as_a_numeric
+    sql: "SELECT id, small_val::numeric ^ 2 AS a, int_val ^ 2.0 AS b, big_val::numeric ^ 1 AS c FROM numbers ORDER BY id"
+  # mod and % of numerics: the remainder with the dividend's sign, the larger scale
+  - id: mod_of_numerics
+    sql: "SELECT id, mod(numeric_val, 7) AS a, numeric_val % 0.7 AS b, mod(int_val, 2.5) AS c, mod(-numeric_val, 3)::text AS e FROM numbers ORDER BY id"
+  - id: mod_of_salaries_and_sums
+    sql: "SELECT dept_id, mod(sum(salary), 1000) AS a, sum(age) % 7 AS b, (sum(age) % 3)::text AS c FROM persons GROUP BY dept_id ORDER BY dept_id"
+  - id: mod_of_a_double_does_not_exist
+    sql: "SELECT float_val % 2 AS a FROM numbers WHERE id = 1"
+  - id: log10_of_integers_and_numerics
+    sql: "SELECT id, log10(int_val) AS a, log10(numeric_val) AS b FROM numbers WHERE int_val > 0 AND numeric_val > 0 ORDER BY id"

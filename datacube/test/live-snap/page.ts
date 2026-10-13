@@ -25,7 +25,14 @@ import { startDuckDbInTab } from '../../../engine-client/src/duckdb-tab.ts';
 import type { DuckDbEngine } from '../../../engine-client/src/duckdb.ts';
 import type { ResultTable } from '../../../engine-client/src/result.ts';
 import { SnapManager } from '../../../engine-client/src/snap.ts';
-import { listObjects, SessionExpired, sessionExpired, signIn, WarehouseEngine } from '../../../engine-client/src/warehouse.ts';
+import {
+  listObjects,
+  loadWarehouseBinding,
+  SessionExpired,
+  sessionExpired,
+  signIn,
+  WarehouseEngine,
+} from '../../../engine-client/src/warehouse.ts';
 import { accessor, from } from '../../../pure-protocol/src/index.ts';
 import { levelLambda } from '../../src/query.ts';
 import { PlanThenRun } from '../../src/runner.ts';
@@ -143,14 +150,17 @@ async function check(name: string, body: () => Promise<void>): Promise<void> {
 
 async function run(): Promise<void> {
   window.__liveSnapStage = 'signing in, writing the tables';
-  const alice = await signIn(base, 'alice', 'alice-pw');
+  // the warehouse's API as the one binding speaks it, from the site's vendor/ (as DataCube and Query load it)
+  const binding = await loadWarehouseBinding(new URL('vendor/warehouse/', location.href).href);
+  const alice = await signIn(binding, base, 'alice', 'alice-pw');
   for (const sql of DDL) await asOwner(sql, alice.token);
-  const live = new WarehouseEngine(await signIn(base, 'rita', 'rita-pw'));
+  // the warehouse's own catalog, its DuckDB: the tables just written there
+  const live = new WarehouseEngine(binding, await signIn(binding, base, 'rita', 'rita-pw'), 'main', 'DuckDB');
   // the tab's own DuckDB, in its worker, from the site's vendor/ (as Query and Studio start theirs)
   window.__liveSnapStage = 'starting the tab\'s DuckDB';
-  const local: DuckDbEngine = (await startDuckDbInTab('vendor/')).engine;
   const worker = new URL('planner-worker.js', location.href).href;
   const planner = new LitePlanner({ model: MODEL, runtime: RUNTIME, workerUrl: worker });
+  const local: DuckDbEngine = (await startDuckDbInTab('vendor/', planner)).engine;
 
   await check('every cube case answers the same live on the warehouse and snapped in the tab', async () => {
     const liveRunner = new PlanThenRun(planner, live);
@@ -165,7 +175,7 @@ async function run(): Promise<void> {
     }
     // SNAP: exactly the rows the reader may read, through the real SnapManager
     const sourceSql = (await planner.plan(from(SOURCE).select(COLUMNS).lambda())).sql;
-    const snaps = new SnapManager(local, live);
+    const snaps = new SnapManager(local, live, planner);
     const info = await snaps.snap(sourceSql, 0, { target: { table: 'TRADES', source: SOURCE, conversions: [] } });
     equal(info.rowCount, 10, 'the snap holds every row the reader may read:');
     const refused: string[] = [];
@@ -192,7 +202,7 @@ async function run(): Promise<void> {
   });
 
   await check('a person\'s path: the catalog, a model from it, the same answer on both engines', async () => {
-    const objects = await listObjects({ baseUrl: base, token: (await signIn(base, 'rita', 'rita-pw')).token,
+    const objects = await listObjects(binding, { baseUrl: base, token: (await signIn(binding, base, 'rita', 'rita-pw')).token,
       principal: 'rita', expiresAt: '' });
     deepEqual(objects.map((o) => `${o.schema}.${o.name}`), ['main.TRADES'], 'the reader sees exactly what it was granted:');
     const trades = objects[0]!;
@@ -205,7 +215,7 @@ async function run(): Promise<void> {
       measures: [{ name: 'notional', column: 'notional', fn: 'sum' as const }], sorts: [{ column: 'region', direction: 'asc' as const }] };
     const pure = levelLambda(snapshot, { level: 1, parent: [] });
     const liveOut = await new PlanThenRun(own, live).run(pure, snapshot);
-    const snaps = new SnapManager(local, live);
+    const snaps = new SnapManager(local, live, planner);
     await snaps.snap((await own.plan(from(m.source).select(COLUMNS).lambda())).sql, 0,
       { target: { schema: trades.schema, table: trades.name, source: m.source, conversions: m.conversions } });
     const localOut = await new PlanThenRun(own, local).run(pure, snapshot);
@@ -232,7 +242,7 @@ async function run(): Promise<void> {
     // an id the server never issued is not on its record
     match(await live.check('00000000-0000-0000-0000-000000000000'), /^Not on the warehouse's record for rita/);
     const sourceSql = (await planner.plan(from(SOURCE).select(COLUMNS).lambda())).sql;
-    const snaps = new SnapManager(local, live);
+    const snaps = new SnapManager(local, live, planner);
     const info = await snaps.snap(sourceSql, 0, { target: { table: 'TRADES', source: SOURCE, conversions: [] } });
     equal(info.pulledBy?.as, 'rita');
     match(await info.pulledBy!.check!(), /^On the warehouse's record for rita/);
@@ -245,7 +255,9 @@ async function run(): Promise<void> {
 
   await check('a token the warehouse no longer honours is SessionExpired, and signing in again goes on as the same user', async () => {
     // What a restarted warehouse does to an open cube: its token is refused.
-    const stale = new WarehouseEngine({ baseUrl: base, token: 'cml0YXwx.bm90LWEtcmVhbC1zaWduYXR1cmU', principal: 'rita', expiresAt: '' });
+    const stale = new WarehouseEngine(binding, {
+      baseUrl: base, token: 'cml0YXwx.bm90LWEtcmVhbC1zaWduYXR1cmU', principal: 'rita', expiresAt: '',
+    }, 'main', 'DuckDB');
     const refused = await stale.run('SELECT 1 AS one', 0).catch((e: unknown) => e);
     const expired = sessionExpired(refused);
     ok(expired instanceof SessionExpired, `not a SessionExpired: ${String(refused)}`);
@@ -259,8 +271,8 @@ async function run(): Promise<void> {
   });
 
   await check('the token refreshes: on asking, and by itself before it expires', async () => {
-    const s = await signIn(base, 'rita', 'rita-pw');
-    const engine = new WarehouseEngine(s);
+    const s = await signIn(binding, base, 'rita', 'rita-pw');
+    const engine = new WarehouseEngine(binding, s, 'main', 'DuckDB');
     await engine.refreshToken();
     ok(Date.parse(engine.expiresAt) >= Date.parse(s.expiresAt), 'a refreshed token lives at least as long');
     const out = await engine.run('SELECT 1 AS one', 0);
@@ -271,7 +283,7 @@ async function run(): Promise<void> {
     const t0 = Date.now();
     const timers: { fn: () => void; ms: number }[] = [];
     const clock = { now: () => t0, setTimeout: (fn: () => void, ms: number) => timers.push({ fn, ms }), clearTimeout: () => {} };
-    const soon = new WarehouseEngine({ ...s, expiresAt: new Date(t0 + 1_500).toISOString() }, 'main', clock);
+    const soon = new WarehouseEngine(binding, { ...s, expiresAt: new Date(t0 + 1_500).toISOString() }, 'main', 'DuckDB', clock);
     const before = soon.expiresAt;
     equal(timers.at(-1)?.ms, 1_200, 'the refresh is scheduled at 80% of the token\'s life:');
     timers.at(-1)!.fn();

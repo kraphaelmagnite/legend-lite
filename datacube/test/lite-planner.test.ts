@@ -7,7 +7,7 @@ import {
   PlannerUnavailableError,
   LitePlanner,
 } from '../src/lite-planner.ts';
-import type { PlannerWorker } from '../src/planner-protocol.ts';
+import type { PlannerWorker } from '../../engine-client/src/legend/planner-protocol.ts';
 
 /** A module's OK answer: the SQL and its result type (here, typing nothing). */
 function ok(sql: string): string {
@@ -48,7 +48,7 @@ function fakeExports(
       models.set(handle, m);
       return `OK\n${handle}`;
     },
-    releaseModel: (h: number) => { log.releases.push(h); models.delete(h); return 1; },
+    releaseModelOrError: (h: number) => { log.releases.push(h); models.delete(h); return 'OK\n'; },
     planHeldOrError: over,
     planJsonHeldOrError: over,
     relationTypeHeldOrError: () => 'OK\n{"_type":"relationType","columns":[]}',
@@ -57,6 +57,12 @@ function fakeExports(
     pureV1OrError: () => 'ERR\nfake\nnot in this fake',
     testDataSqlOrError: () => 'ERR\nfake\nnot in this fake',
     sessionSetupOrError: () => 'ERR\nfake\nnot in this fake',
+    projectDataOrError: () => 'ERR\nfake\nnot in this fake',
+    hostOperationsOrError: () => 'ERR\nfake\nnot in this fake',
+    planJsonOrError: () => 'ERR\nfake\nnot in this fake',
+    executeJsonPlanOrError: () => 'ERR\nfake\nnot in this fake',
+    executeJsonAnswerOrError: () => 'ERR\nfake\nnot in this fake',
+    warmModelOrError: () => 'OK\n',
   };
 }
 
@@ -396,7 +402,7 @@ describe('LitePlanner off the main thread: the models its worker holds', () => {
     postMessage(msg: Record<string, unknown>): void {
       const x = this.exports;
       const answer = msg['kind'] === 'hold' ? (this.holds.push(msg['model'] as string), x.holdModelOrError(msg['model'] as string))
-        : msg['kind'] === 'release' ? (this.releases.push(msg['handle'] as number), x.releaseModel(msg['handle'] as number), 'OK\n')
+        : msg['kind'] === 'release' ? (this.releases.push(msg['handle'] as number), x.releaseModelOrError(msg['handle'] as number))
         : msg['kind'] === 'plan' ? x.planHeldOrError(msg['handle'] as number, msg['query'] as string, msg['runtime'] as string)
         : 'ERR\nfake\nnot in this fake';
       queueMicrotask(() => this.onmessage?.({ data: { id: msg['id'], ok: true, answer } }));

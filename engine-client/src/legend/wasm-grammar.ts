@@ -8,13 +8,15 @@ import type { Lambda } from '../../../pure-protocol/src/index.ts';
 import { toJson } from '../../../pure-protocol/src/index.ts';
 import type { PureModelContextData } from './pmcd.ts';
 import { EngineError, HttpEngine, type Grammar } from './engine.ts';
-import type { PlannerRequest, PlannerResponse } from './planner-worker.ts';
-import type { CompileResult, PureModelContext, RelationTypeAnswer } from './wire.ts';
+import type { RequestBody, Response as PlannerResponse } from './planner-protocol.ts';
+import type { CompileResult, ExecuteInput, PureModelContext, RelationTypeAnswer } from './wire.ts';
 import type { SeedTable, TableSeed } from '../model-data.ts';
+import type { ProjectDataStatements } from '../project-data.ts';
+import type { HostOperation } from '../host-operations.ts';
 
 /** Where a request goes: a worker, or (in tests) the module called directly. */
 export interface PlannerPort {
-  ask(request: PlannerRequest): Promise<string>;
+  ask(request: RequestBody): Promise<string>;
 }
 
 /** A worker running planner-worker.ts; `base` is where classes.wasm and its runtime live. */
@@ -36,7 +38,7 @@ export class WorkerPort implements PlannerPort {
     };
   }
 
-  ask(request: PlannerRequest): Promise<string> {
+  ask(request: RequestBody): Promise<string> {
     const id = this.#next++;
     return new Promise((resolve, reject) => {
       this.#pending.set(id, { resolve, reject });
@@ -74,18 +76,48 @@ export function plannerFetch(port: PlannerPort): typeof fetch {
     if (body !== undefined && body !== null && typeof body !== 'string') {
       throw new TypeError('the planner answers a pure/v1 request with a text body only');
     }
-    const answer = unfold(await port.ask({ kind: 'pureV1', path: url.pathname, query: url.search.slice(1), body: body ?? '' }));
+    const answer = httpAnswer(await port.ask({ kind: 'pureV1', path: url.pathname, query: url.search.slice(1), body: body ?? '' }));
     init?.signal?.throwIfAborted();
-    const first = answer.indexOf('\n');
-    const second = answer.indexOf('\n', first + 1);
-    if (first < 0 || second < 0) {
-      throw new EngineError(`the planner answered a pure/v1 call in no form it has: ${JSON.stringify(answer.slice(0, 120))}`, 500);
-    }
-    return new Response(answer.slice(second + 1), {
-      status: Number(answer.slice(0, first)),
-      headers: { 'Content-Type': answer.slice(first + 1, second) },
-    });
+    return new Response(answer.body, { status: answer.status, headers: { 'Content-Type': answer.type } });
   };
+}
+
+/** A pure/v1 answer's body when it is a 200; else the engine's refusal, in its words and status, as a server's is. */
+function answered(folded: string): string {
+  const answer = httpAnswer(folded);
+  if (answer.status === 200) return answer.body;
+  let message = answer.body || `${answer.status}`;
+  let errorType: string | undefined;
+  try {
+    const e = JSON.parse(answer.body) as { message?: string; errorType?: string };
+    if (typeof e.message === 'string') message = e.message;
+    errorType = e.errorType;
+  } catch { /* not JSON: the text is the message */ }
+  throw new EngineError(message, answer.status, errorType);
+}
+
+/** A pure/v1 answer the planner gives (`OK\n<status>\n<type>\n<body>`): its status, media type and body. */
+function httpAnswer(folded: string): { status: number; type: string; body: string } {
+  const answer = unfold(folded);
+  const first = answer.indexOf('\n');
+  const second = answer.indexOf('\n', first + 1);
+  if (first < 0 || second < 0) {
+    throw new EngineError(`the planner answered a pure/v1 call in no form it has: ${JSON.stringify(answer.slice(0, 120))}`, 500);
+  }
+  return { status: Number(answer.slice(0, first)), type: answer.slice(first + 1, second), body: answer.slice(second + 1) };
+}
+
+/**
+ * Execute's plan half in the engine's JSON (PureV1Api.jsonPlan; docs/ONE_PLATFORM_PROGRAM_2026_10_12.md C1): `run`, the
+ * SQL the tab runs -- a relation's JSON wire (the rows as the server's database writes them, one value), a graph
+ * fetch's objects' array -- and the answer's every part but its rows (its text, for the planner's executeAnswer).
+ */
+export interface ExecutePlan {
+  /** The plan's own SQL: what the answer's activity reports. */
+  readonly sql: string;
+  /** What the host runs: one value, the whole result as the database writes it. */
+  readonly run: string;
+  readonly builder: { readonly _type: string };
 }
 
 export class WasmGrammar implements Grammar {
@@ -123,14 +155,68 @@ export class WasmGrammar implements Grammar {
     return this.#pureV1.relationType(model, lambda);
   }
 
+  /** `compilation/lambdaReturnType`, answered in the tab as the server answers it (PureV1Api.route). */
+  returnType(model: PureModelContext, lambda: Lambda): Promise<string> {
+    return this.#pureV1.returnType(model, lambda);
+  }
+
+  /** `execution/generatePlan`, answered in the tab as the server answers it: the plan legend-engine generates. */
+  generatePlan(input: ExecuteInput): Promise<unknown> {
+    return this.#pureV1.generatePlan(input);
+  }
+
+  /**
+   * Execute's plan half (ExecutePlan) and its text, asked of the planner over `input`'s own model. A refusal -- a
+   * parameter with no value, a query that does not compile -- is the engine's, in its words and status, as a server's
+   * execute refuses it (500, its errorType COMPILATION).
+   */
+  async executePlan(input: ExecuteInput): Promise<{ readonly plan: ExecutePlan; readonly text: string }> {
+    // the tab runs the model it is handed (its data the page's): that one, the planner's check then always met; a
+    // model not given as text is the planner's to refuse, in the server's words
+    const model = input.model as { readonly _type?: string; readonly code?: string };
+    const models = model._type === 'text' && typeof model.code === 'string' ? [model.code] : [];
+    const text = answered(await this.#port.ask({ kind: 'executePlan', body: toJson(input), models: JSON.stringify(models) }));
+    return { plan: JSON.parse(text) as ExecutePlan, text };
+  }
+
+  /**
+   * Execute's answer (PureV1Api.jsonAnswer): `plan` (executePlan's text) and the one value the tab's database wrote
+   * running its `run` SQL, arranged by the writers legend-lite's server answers with -- its text, the server's.
+   */
+  async executeAnswer(plan: string, wire: string): Promise<string> {
+    return answered(await this.#port.ask({ kind: 'executeAnswer', plan, wire }));
+  }
+
   /** The SQL a query compiles to on its runtime, and the type of its result (upstream's relationType shape). */
   async plan(model: PureModelContext, lambda: Lambda, runtime: string): Promise<{ sql: string; type: unknown }> {
-    return JSON.parse(unfold(await this.#port.ask({ kind: 'plan', model: model.code, lambda: toJson(lambda), runtime }))) as { sql: string; type: unknown };
+    return JSON.parse(unfold(await this.#port.ask({ kind: 'planModel', model: model.code, lambda: toJson(lambda), runtime }))) as { sql: string; type: unknown };
   }
 
   /** The SQL a query compiles to on its runtime -- legend-lite's plan, shown to a person ("Show SQL"). */
   async sql(model: PureModelContext, lambda: Lambda, runtime: string): Promise<string> {
     return (await this.plan(model, lambda, runtime)).sql;
+  }
+
+  /**
+   * What a session of the database runs before it is queried, so that it answers as the planner's SQL expects -- the
+   * dialect's own setup (Boundary.sessionSetup: a DuckDB session in UTC), as legend-lite's server sets up its own.
+   */
+  async sessionSetup(databaseType: string): Promise<readonly string[]> {
+    return JSON.parse(unfold(await this.#port.ask({ kind: 'sessionSetup', databaseType }))) as string[];
+  }
+
+  /**
+   * A project's own database on a database of that type (C5, Boundary.projectData): its name and the statements that
+   * make it, point a connection at it, fill it from the model's Data elements, and drop it.
+   */
+  async projectData(model: string, databaseType: string): Promise<ProjectDataStatements> {
+    return JSON.parse(unfold(await this.#port.ask({ kind: 'projectData', model, databaseType }))) as ProjectDataStatements;
+  }
+
+  /** A host's named operations on a database of that type (D5, Boundary.hostOperations): each one's statements. */
+  async hostOperations(databaseType: string, operations: readonly HostOperation[]): Promise<string[][]> {
+    const asked = await this.#port.ask({ kind: 'hostOperations', databaseType, operations: JSON.stringify(operations) });
+    return JSON.parse(unfold(asked)) as string[][];
   }
 
   /** Build the planner's boot layer for this model now, before a person waits on it. */

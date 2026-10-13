@@ -1,8 +1,10 @@
-// The planner's worker protocol: what `LitePlanner` sends the worker holding legend-lite's module, and what it gets
-// back. The one contract between the planner and every host that answers it: planner-worker.ts in a tab (the
-// WebAssembly module's exports), and Python's headless host (the native library's functions). Each kind is answered by
-// the same `Boundary` function in both (docs/DATACUBE_HEADLESS_PYTHON_DESIGN_2026_10_11.md §3), so a kind added here
-// fails both hosts at once: planner-worker.ts's switch by the type checker, the Python host by its lane's test.
+// THE PLANNER PROTOCOL (docs/ONE_PLATFORM_PROGRAM_2026_10_12.md C2): what an app sends the worker holding legend-lite's
+// planner (WebAssembly), and what it gets back -- ONE protocol for every app that plans in a tab (DataCube's
+// LitePlanner, Query's and Studio's WasmGrammar) and every host that answers it: the tab's worker (planner-worker.ts,
+// the module's exports through planner-answer.ts) and Python (legend_lite/_planner.py, the native library's functions),
+// each kind answered by the same `Boundary` function in both (docs/DATACUBE_HEADLESS_PYTHON_DESIGN_2026_10_11.md §3). A
+// kind added here fails both hosts at once: planner-answer.ts's switch by the type checker, Python's by its start-up
+// check (legend_lite._headless.check_interface) and its lane's tests.
 
 /** Every request kind, in one list: the start-up check compares it with what a host answers (the design's §7). */
 export const REQUEST_KINDS = [
@@ -13,9 +15,15 @@ export const REQUEST_KINDS = [
   'tableModel',
   'catalogColumnsSql',
   'planJson',
+  'planModel',
   'pureV1',
+  'executePlan',
+  'executeAnswer',
   'testData',
   'sessionSetup',
+  'projectData',
+  'hostOperations',
+  'warm',
 ] as const;
 
 export type RequestKind = (typeof REQUEST_KINDS)[number];
@@ -30,12 +38,26 @@ export type RequestBody =
   | { readonly kind: 'relationType'; readonly handle: number; readonly query: string }
   | { readonly kind: 'tableModel'; readonly table: string }
   | { readonly kind: 'catalogColumnsSql'; readonly schema: string; readonly table: string }
+  // a query's protocol JSON planned against a model held
   | { readonly kind: 'planJson'; readonly handle: number; readonly lambda: string; readonly runtime: string }
+  // a query's protocol JSON planned against a model's text, none held (Query's and Studio's: each request its model)
+  | { readonly kind: 'planModel'; readonly model: string; readonly lambda: string; readonly runtime: string }
   // one pure/v1 call: its path (`/api/pure/v1/...`), its raw query string ('' for none) and its body
   | { readonly kind: 'pureV1'; readonly path: string; readonly query: string; readonly body: string }
+  // an ExecuteInput's plan half (its body) over the only models the host runs (a JSON array of their texts); then that
+  // plan's answer from the one value the host's database wrote running it (C1)
+  | { readonly kind: 'executePlan'; readonly body: string; readonly models: string }
+  | { readonly kind: 'executeAnswer'; readonly plan: string; readonly wire: string }
+  // a model's test data as the statements the server seeds DuckDB with, and each table's names as they spell it
   | { readonly kind: 'testData'; readonly model: string; readonly database: string; readonly tables: string }
   // what a session of a database runs before it is queried, so that it answers as the planner's SQL expects
-  | { readonly kind: 'sessionSetup'; readonly databaseType: string };
+  | { readonly kind: 'sessionSetup'; readonly databaseType: string }
+  // a project's own database on a host's database of that type (C5), named by what it holds
+  | { readonly kind: 'projectData'; readonly model: string; readonly databaseType: string }
+  // a host's named operations on its own database of that type (D5): a JSON array of them, each answered its statements
+  | { readonly kind: 'hostOperations'; readonly databaseType: string; readonly operations: string }
+  // the planner's boot layer built for a model now, before a person waits on it
+  | { readonly kind: 'warm'; readonly model: string };
 
 /** A request as a worker receives it: its id, and where the tab's module lives (a host with its own ignores it). */
 export type Request = RequestBody & { readonly id: number; readonly base?: string };
@@ -47,7 +69,7 @@ export type Response =
 
 /**
  * What a planner needs of a worker. The browser's `Worker` is one; a host that answers the same messages off the
- * planner's thread is another (`LitePlannerOptions.worker`).
+ * planner's thread is another (DataCube's `LitePlannerOptions.worker`).
  */
 export interface PlannerWorker {
   postMessage(message: Request): void;

@@ -28,29 +28,15 @@ import { element, fn, fromJson, lambda, readLambda, readValueSpecification, toJs
 import type { Planner } from './cube.ts';
 import type { CatalogColumn, InferOptions, InferredModel, TableModels } from './infer.ts';
 import { PlanError, type ModelOptions } from './planner.ts';
-import { modelRequestBody, type AssociationAction, type ClassAction, type DataSpaceAction, type GridSource, type ModelAnswer, type ModelWriter } from './model-writer.ts';
+import { writerBodies } from '../../model-changes/src/wire.ts';
+import type { AssociationAction, ClassAction, DataSpaceAction, GridSource, ModelAnswer, ModelWriter } from './model-writer.ts';
 import type { PrintStyle } from '../../engine-client/src/pure-v1.ts';
 import { relationColumns, type Plan, type PlanColumn } from '../../engine-client/src/relation-type.ts';
 import type { SeedTable, TableSeed } from '../../engine-client/src/model-data.ts';
-import type { PlannerWorker, RequestBody, Response } from './planner-protocol.ts';
-
-/** The subset of TeaVM's module surface this file uses. */
-interface TeavmModule {
-  readonly exports: {
-    // a model held: compiled once, planned against many times (docs/DATACUBE_MODEL_DESIGN_2026_10_10.md §8)
-    holdModelOrError(model: string): string;
-    releaseModel(handle: number): number;
-    planHeldOrError(handle: number, query: string, runtime: string): string;
-    planJsonHeldOrError(handle: number, lambdaJson: string, runtime: string): string;
-    relationTypeHeldOrError(handle: number, query: string): string;
-    tableModelOrError(table: string): string;
-    catalogColumnsSqlOrError(schema: string, table: string): string;
-    // legend-engine's pure/v1, routed as legend-lite's server routes it: `OK\n<status>\n<type>\n<body>`
-    pureV1OrError(path: string, rawQuery: string, body: string): string;
-    testDataSqlOrError(model: string, database: string, tablesJson: string): string;
-    sessionSetupOrError(databaseType: string): string;
-  };
-}
+import type { ProjectDataStatements } from '../../engine-client/src/project-data.ts';
+import type { HostOperation } from '../../engine-client/src/host-operations.ts';
+import { answer as answerOf, type PlannerModule } from '../../engine-client/src/legend/planner-answer.ts';
+import type { PlannerWorker, RequestBody, Response } from '../../engine-client/src/legend/planner-protocol.ts';
 
 interface TeavmRuntime {
   load(
@@ -59,7 +45,7 @@ interface TeavmRuntime {
       stackDeobfuscator?: { enabled: boolean };
       installImports?(imports: Record<string, unknown>): void;
     },
-  ): Promise<TeavmModule>;
+  ): Promise<PlannerModule>;
 }
 
 export interface LitePlannerOptions {
@@ -99,7 +85,7 @@ export interface LitePlannerOptions {
    */
   readonly workerUrl?: string;
   /**
-   * Run the module on a worker the HOST makes: one that answers planner-protocol.ts's messages, as planner-worker.ts
+   * Run the module on a worker the HOST makes: one that answers engine-client's planner-protocol.ts, as its planner-worker.ts
    * does in a tab -- Python's headless host answers each with the native library's function of the same name
    * (docs/DATACUBE_HEADLESS_PYTHON_DESIGN_2026_10_11.md §3). Given, it is used instead of a `Worker` from `workerUrl`.
    */
@@ -125,7 +111,7 @@ export class PlannerUnavailableError extends Error {
 
 /** What a planner and the planners `withModel` made from it share. */
 interface Transport {
-  module: Promise<TeavmModule> | undefined;
+  module: Promise<PlannerModule> | undefined;
   worker: PlannerWorker | undefined;
   readonly pending: Map<number, { resolve(answer: string): void; reject(e: unknown): void }>;
   nextId: number;
@@ -165,6 +151,14 @@ export class LitePlanner implements Planner, TableModels, ModelWriter {
     other.#t = this.#t;
     other.#borrowed = true;
     return other;
+  }
+
+  /**
+   * One request of the planner protocol, answered by the worker or, in-thread, by the module through the same answer
+   * the worker gives (engine-client's planner-answer.ts): one mapping of kinds to exports, wherever the module runs.
+   */
+  #call(request: RequestBody): Promise<string> {
+    return this.#useWorker() ? this.#ask(request) : this.#load().then((m) => answerOf(m, request));
   }
 
   /** True when the module should run off the main thread. */
@@ -267,7 +261,7 @@ export class LitePlanner implements Planner, TableModels, ModelWriter {
    * concurrent first calls -- which is exactly what an initial render
    * produces -- share one 4 MB fetch instead of racing several.
    */
-  #load(): Promise<TeavmModule> {
+  #load(): Promise<PlannerModule> {
     if (this.#t.module) return this.#t.module;
     const base = this.#base();
     const runtimeUrl = `${base}wasm-gc-module-runtime.js`;
@@ -372,14 +366,8 @@ export class LitePlanner implements Planner, TableModels, ModelWriter {
   #handle(): Promise<number> {
     if (this.#held !== undefined && this.#held.generation === this.#t.generation) return this.#held.handle;
     const model = this.#options.model;
-    let handle: Promise<number>;
-    if (this.#useWorker()) {
-      this.#ensureWorker();
-      handle = this.#ask({ kind: 'hold', model }).then((answer) => Number(decode(answer, model)));
-    } else {
-      const module = this.#load();
-      handle = module.then((m) => Number(decode(m.exports.holdModelOrError(model), model)));
-    }
+    if (this.#useWorker()) this.#ensureWorker();
+    const handle = this.#call({ kind: 'hold', model }).then((held) => Number(decode(held, model)));
     const held = { handle, generation: this.#t.generation };
     this.#held = held;
     handle.catch(() => {
@@ -399,7 +387,7 @@ export class LitePlanner implements Planner, TableModels, ModelWriter {
       if (this.#useWorker()) {
         return this.#t.worker ? this.#ask({ kind: 'release', handle }).then(() => undefined) : undefined;
       }
-      return this.#t.module ? this.#t.module.then((m) => { m.exports.releaseModel(handle); }) : undefined;
+      return this.#t.module ? this.#t.module.then((m) => { answerOf(m, { kind: 'release', handle }); }) : undefined;
     }).catch(() => {
       // a model never held, or a worker gone with the models it held: nothing to let go
     });
@@ -422,9 +410,7 @@ export class LitePlanner implements Planner, TableModels, ModelWriter {
     // the model and its runtime as they are now, together: a useModel while this waits changes neither
     const { model, runtime } = this.#options;
     const handle = await this.#handle();
-    const answer = this.#useWorker()
-      ? await this.#ask({ kind: 'plan', handle, query: pureGrammar, runtime })
-      : (await this.#load()).exports.planHeldOrError(handle, pureGrammar, runtime);
+    const answer = await this.#call({ kind: 'plan', handle, query: pureGrammar, runtime });
     if (signal?.aborted) throw signal.reason ?? new Error('aborted');
     // `{"sql", "type"}`: the SQL and the compiler's type of its result, in upstream's
     // RelationType shape -- the same renderer legend-lite's pure/v1 answers use.
@@ -444,9 +430,7 @@ export class LitePlanner implements Planner, TableModels, ModelWriter {
     if (signal?.aborted) throw signal.reason ?? new Error('aborted');
     const { model } = this.#options;
     const handle = await this.#handle();
-    const answer = this.#useWorker()
-      ? await this.#ask({ kind: 'relationType', handle, query: pureGrammar })
-      : (await this.#load()).exports.relationTypeHeldOrError(handle, pureGrammar);
+    const answer = await this.#call({ kind: 'relationType', handle, query: pureGrammar });
     if (signal?.aborted) throw signal.reason ?? new Error('aborted');
     const columns = relationColumns(JSON.parse(decode(answer, pureGrammar)));
     if (useCache && this.#options.model === model) this.#types.set(key, columns);
@@ -463,9 +447,7 @@ export class LitePlanner implements Planner, TableModels, ModelWriter {
     if (hit !== undefined) return hit;
     if (signal?.aborted) throw signal.reason ?? new Error('aborted');
     const handle = await this.#handle();
-    const answer = this.#useWorker()
-      ? await this.#ask({ kind: 'planJson', handle, lambda: json, runtime })
-      : (await this.#load()).exports.planJsonHeldOrError(handle, json, runtime);
+    const answer = await this.#call({ kind: 'planJson', handle, lambda: json, runtime });
     if (signal?.aborted) throw signal.reason ?? new Error('aborted');
     const plan = this.readPlan(answer, query);
     if (useCache && this.#options.model === model) this.#cache.set(json, plan);
@@ -513,9 +495,7 @@ export class LitePlanner implements Planner, TableModels, ModelWriter {
    * its endpoints (docs/PROTOCOL_PROGRAM_2026_10_05.md, invariant 5).
    */
   async #pureV1(path: string, query: string, body: string, subject: Lambda | string): Promise<string> {
-    const answer = this.#useWorker()
-      ? await this.#ask({ kind: 'pureV1', path, query, body })
-      : (await this.#load()).exports.pureV1OrError(path, query, body);
+    const answer = await this.#call({ kind: 'pureV1', path, query, body });
     return pureV1Body(decode(answer, subject), subject);
   }
 
@@ -527,18 +507,17 @@ export class LitePlanner implements Planner, TableModels, ModelWriter {
    * too (demo/planners.ts).
    */
   createClass(project: string, pkg: string, cls: ClassAction): Promise<ModelAnswer> {
-    return this.#writeModel('createClass', modelRequestBody(toJson, project, pkg, { class: cls }));
+    return this.#writeModel('createClass', writerBodies.createClass(project, pkg, cls));
   }
 
   createAssociation(project: string, pkg: string, association: AssociationAction | undefined,
     classes: readonly ClassAction[] = []): Promise<ModelAnswer> {
-    return this.#writeModel('createAssociation', modelRequestBody(toJson, project, pkg,
-      association === undefined ? { classes } : { classes, association }));
+    return this.#writeModel('createAssociation', writerBodies.createAssociation(project, pkg, association, classes));
   }
 
   createDataSpace(project: string, pkg: string, dataSpace: DataSpaceAction, classes: readonly ClassAction[] = [],
     associations: readonly AssociationAction[] = []): Promise<ModelAnswer> {
-    return this.#writeModel('createDataSpace', modelRequestBody(toJson, project, pkg, { classes, associations, dataSpace }));
+    return this.#writeModel('createDataSpace', writerBodies.createDataSpace(project, pkg, dataSpace, classes, associations));
   }
 
   async #writeModel(route: string, body: string): Promise<ModelAnswer> {
@@ -591,9 +570,7 @@ export class LitePlanner implements Planner, TableModels, ModelWriter {
    */
   async testDataSql(model: string, database: string, tables: readonly SeedTable[]): Promise<TableSeed[]> {
     const tablesJson = JSON.stringify(tables);
-    const answer = this.#useWorker()
-      ? await this.#ask({ kind: 'testData', model, database, tables: tablesJson })
-      : (await this.#load()).exports.testDataSqlOrError(model, database, tablesJson);
+    const answer = await this.#call({ kind: 'testData', model, database, tables: tablesJson });
     return JSON.parse(decode(answer, `the test data of ${database}`)) as TableSeed[];
   }
 
@@ -611,9 +588,7 @@ export class LitePlanner implements Planner, TableModels, ModelWriter {
   tableModel(columns: readonly CatalogColumn[], options: InferOptions): Promise<InferredModel>;
   async tableModel(columns: readonly CatalogColumn[], options: InferOptions): Promise<InferredModel> {
     const table = JSON.stringify({ ...options, columns });
-    const answer = this.#useWorker()
-      ? await this.#ask({ kind: 'tableModel', table })
-      : (await this.#load()).exports.tableModelOrError(table);
+    const answer = await this.#call({ kind: 'tableModel', table });
     const { source, ...written } = fromJson(decode(answer, `the columns of ${options.table}`)) as
       Omit<InferredModel, 'source'> & { readonly source: unknown; readonly accessor: string };
     const { accessor: _accessor, ...model } = written;
@@ -622,18 +597,30 @@ export class LitePlanner implements Planner, TableModels, ModelWriter {
 
   /** THE catalog question for one table of a DuckDB, its schema and table as SQL string literals. */
   async catalogColumnsSql(schema: string, table: string): Promise<string> {
-    const answer = this.#useWorker()
-      ? await this.#ask({ kind: 'catalogColumnsSql', schema, table })
-      : (await this.#load()).exports.catalogColumnsSqlOrError(schema, table);
+    const answer = await this.#call({ kind: 'catalogColumnsSql', schema, table });
     return decode(answer, `the catalog of ${table}`);
   }
 
   /** What a session of the database runs before it is queried (the dialect's own setup: a DuckDB session in UTC). */
   async sessionSetup(databaseType: string): Promise<readonly string[]> {
-    const answer = this.#useWorker()
-      ? await this.#ask({ kind: 'sessionSetup', databaseType })
-      : (await this.#load()).exports.sessionSetupOrError(databaseType);
+    const answer = await this.#call({ kind: 'sessionSetup', databaseType });
     return JSON.parse(decode(answer, `a ${databaseType} session's setup`)) as string[];
+  }
+
+  /**
+   * A project's own database on a database of that type (C5, Boundary.projectData; engine-client's project-data.ts):
+   * its name and the statements that make it, point a connection at it, fill it from the model's Data elements, and
+   * drop it. The model is the one given, not this planner's own.
+   */
+  async projectData(model: string, databaseType: string): Promise<ProjectDataStatements> {
+    const answer = await this.#call({ kind: 'projectData', model, databaseType });
+    return JSON.parse(decode(answer, `a project's database on ${databaseType}`)) as ProjectDataStatements;
+  }
+
+  /** A host's named operations on a database of that type (D5, Boundary.hostOperations): each one's statements. */
+  async hostOperations(databaseType: string, operations: readonly HostOperation[]): Promise<string[][]> {
+    const answer = await this.#call({ kind: 'hostOperations', databaseType, operations: JSON.stringify(operations) });
+    return JSON.parse(decode(answer, `a host's operations on ${databaseType}`)) as string[][];
   }
 
   /**

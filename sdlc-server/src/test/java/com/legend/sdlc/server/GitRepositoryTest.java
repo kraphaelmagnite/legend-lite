@@ -129,4 +129,39 @@ class GitRepositoryTest {
         assertTrue(r.status() < 300, method + " " + target + ": " + r.status() + " " + r.body());
         return r.body() == null ? "" : r.body();
     }
+
+    /**
+     * THE REPOSITORY'S LOCK (docs/ONE_PLATFORM_PROGRAM_2026_10_12.md G11), on every platform: a call made inside another
+     * is made under the same hold (no second file lock, which would be refused), and a second thread's call waits until
+     * the first lets go -- the file lock (FileChannel.lock: fcntl, or Windows' LockFileEx) taken and given back each time.
+     */
+    @Test
+    void theRepositorysLock_aCallInsideOneIsMadeUnderIt_andAnotherThreadWaits() throws Exception {
+        GitStorage storage = new GitStorage(dir);
+        assertEquals("inner", storage.locked(() -> storage.locked(() -> "inner")));
+        java.util.concurrent.CountDownLatch inside = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
+        List<String> order = java.util.Collections.synchronizedList(new ArrayList<>());
+        Thread first = new Thread(() -> storage.locked(() -> {
+            inside.countDown();
+            try {
+                release.await();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            order.add("first done");
+            return null;
+        }));
+        first.start();
+        assertTrue(inside.await(10, java.util.concurrent.TimeUnit.SECONDS));
+        // a second storage over the same repository, as another host in this process would open it: the same lock
+        Thread second = new Thread(() -> new GitStorage(dir).locked(() -> order.add("second")));
+        second.start();
+        Thread.sleep(200);
+        assertEquals(List.of(), order, "the second call ran while the first held the repository");
+        release.countDown();
+        first.join(10_000);
+        second.join(10_000);
+        assertEquals(List.of("first done", "second"), order);
+    }
 }

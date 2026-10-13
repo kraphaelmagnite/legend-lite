@@ -1,5 +1,8 @@
 package com.legend.server;
 
+import com.legend.queries.FileRecords;
+import com.legend.queries.SavedQueries;
+
 import com.legend.json.Json;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -22,9 +25,9 @@ class SavedQueriesTest {
 
     private final AtomicLong clock = new AtomicLong(1_000);
 
-    private PureV1Api.Answer call(String method, String rest, String query, String body, String user) {
+    private SavedQueries.Answer call(String method, String rest, String query, String body, String user) {
         clock.addAndGet(10);
-        return SavedQueries.answer(new SavedQueries(dir, clock::get), method, rest, query, body, user);
+        return SavedQueries.answer(new SavedQueries(new FileRecords(dir), clock::get), method, rest, query, body, user);
     }
 
     private static String query(String id, String name) {
@@ -36,13 +39,13 @@ class SavedQueriesTest {
                 + "\"value\":\"demo::trading::Trade\"}]}";
     }
 
-    private static Json.Obj obj(PureV1Api.Answer a) {
+    private static Json.Obj obj(SavedQueries.Answer a) {
         return Json.parseObject(a.json());
     }
 
     @Test
     void createThenGet_ownerVersionAndTimes_andGetMarksItOpened() {
-        PureV1Api.Answer created = call("POST", "", null, query("q1", "Trades"), "alice");
+        SavedQueries.Answer created = call("POST", "", null, query("q1", "Trades"), "alice");
         assertEquals(200, created.status(), created.json());
         Json.Obj c = obj(created);
         assertEquals("alice", c.getString("owner"));
@@ -65,10 +68,10 @@ class SavedQueriesTest {
     void theEnginesValidation_andAnIdCreatedOnce() {
         assertEquals(400, call("POST", "", null, query("q1", "Trades"), "a").status() == 200
                 ? call("POST", "", null, query("q1", "Again"), "a").status() : -1);
-        PureV1Api.Answer noName = call("POST", "", null, query("q2", ""), "a");
+        SavedQueries.Answer noName = call("POST", "", null, query("q2", ""), "a");
         assertEquals(400, noName.status());
         assertEquals("Query name is missing or empty", obj(noName).getString("message"));
-        PureV1Api.Answer badArtifact = call("POST", "", null, query("q3", "x").replace("\"trading\"", "\"Trading\""), "a");
+        SavedQueries.Answer badArtifact = call("POST", "", null, query("q3", "x").replace("\"trading\"", "\"Trading\""), "a");
         assertEquals(400, badArtifact.status());
         assertEquals("Query project artifact ID is invalid", obj(badArtifact).getString("message"));
     }
@@ -76,7 +79,7 @@ class SavedQueriesTest {
     @Test
     void onlyTheOwnerUpdates_eachUpdateIsAVersion_theOldOneHistory() {
         call("POST", "", null, query("q1", "Trades"), "alice");
-        PureV1Api.Answer byBob = call("PUT", "/q1", null, query("q1", "Mine now"), "bob");
+        SavedQueries.Answer byBob = call("PUT", "/q1", null, query("q1", "Mine now"), "bob");
         assertEquals(403, byBob.status());
         assertEquals("Only owner can update the query", obj(byBob).getString("message"));
 
@@ -90,7 +93,7 @@ class SavedQueriesTest {
         assertEquals("Trades v2", ((Json.Obj) one.items().get(0)).getString("name"));
         assertEquals(404, call("GET", "/q1/history", "version=9", "", "alice").status());
 
-        PureV1Api.Answer renamedId = call("PUT", "/q1", null, query("other", "x"), "alice");
+        SavedQueries.Answer renamedId = call("PUT", "/q1", null, query("other", "x"), "alice");
         assertEquals("Updating query ID is not supported", obj(renamedId).getString("message"));
     }
 
@@ -108,7 +111,7 @@ class SavedQueriesTest {
         call("POST", "", null, query("q1", "Trades"), "alice");
         assertEquals(403, call("DELETE", "/q1", null, "", "bob").status());
         assertEquals(204, call("DELETE", "/q1", null, "", "alice").status());
-        PureV1Api.Answer gone = call("GET", "/q1", null, "", "alice");
+        SavedQueries.Answer gone = call("GET", "/q1", null, "", "alice");
         assertEquals(404, gone.status());
         assertEquals("Can't find query with ID 'q1'", obj(gone).getString("message"));
         assertEquals(1, ((Json.Arr) Json.parse(call("GET", "/q1/history", null, "", "alice").json())).items().size());
@@ -147,14 +150,14 @@ class SavedQueriesTest {
         call("POST", "", null, query("q1", "One"), "a");
         call("POST", "", null, query("q2", "Two"), "a");
         assertEquals(2, ((Json.Arr) Json.parse(call("GET", "/batch", "queryIds=q1&queryIds=q2", "", "a").json())).items().size());
-        PureV1Api.Answer missing = call("GET", "/batch", "queryIds=q1&queryIds=nope", "", "a");
+        SavedQueries.Answer missing = call("GET", "/batch", "queryIds=q1&queryIds=nope", "", "a");
         assertEquals(500, missing.status());
         assertEquals("Can't find queries for the following ID(s):\nnope", obj(missing).getString("message"));
     }
 
     @Test
     void withoutAStoreEveryCallIsRefused_andTheCubeStoreIsNotServed() {
-        PureV1Api.Answer a = SavedQueries.answer(null, "GET", "/q1", null, "", "a");
+        SavedQueries.Answer a = SavedQueries.answer(null, "GET", "/q1", null, "", "a");
         assertEquals(500, a.status());
         assertTrue(obj(a).getString("message").contains("--query-store"));
         assertEquals(404, call("GET", "/dataCube/x", null, "", "a").status());

@@ -1,22 +1,21 @@
 // Where saved cubes live: upstream's query-store contract, exactly
 // (legend-engine `ApplicationQuery` / `DataCubeQueryStoreManager`, read at 4.145.0;
-// docs/DATACUBE_SAVE_SHARE_2026_09_28.md step 0).
+// docs/DATACUBE_SAVE_SHARE_2026_09_28.md step 0), at its own routes (`/api/pure/v1/query/dataCube`).
 //
-// The record and the operations are upstream's, so the same client later talks to
-// legend-lite's server or legend-engine proper (`pure/v1/query/dataCube`) unchanged; only
-// the `content` is ours (a CubeDocument). Its rules, kept:
-//   - the CLIENT supplies the id; creating an id that exists is refused;
-//   - the owner is forced to the current user; only the owner updates or deletes;
-//   - reading a cube stamps `lastOpenAt`;
-//   - search answers a LIGHT record (no content): the current user's first, then the chosen
-//     sort (newest first), then the limit; a search term matches the id, the name or the owner.
+// ONE IMPLEMENTATION (docs/ONE_PLATFORM_PROGRAM_2026_10_12.md B6): the store's rules are legend-lite's Java
+// (core/.../queries/SavedCubes.java) -- the server's, Python's native library's, and the page's, compiled to WebAssembly
+// on the saved queries' module (//query-store:page) -- so this file holds only the client of those routes
+// (`CubeStoreClient`), the page's records (IndexedDB, memory in a test) and the adapter that hands them to the module
+// (`wasmCubeServer`). The rules, kept there: the client supplies the id (creating one that exists is refused); the owner
+// is the current user, and only the owner updates or deletes; reading a cube stamps `lastOpenAt`; a search answers light
+// records -- the current user's first, then the chosen sort (newest first), then the limit.
 //
-// Two backends here: memory (tests) and the browser's IndexedDB (a tab with no server).
-// Both keep the content as the protocol library's EXACT JSON text: a calculated column's
-// `12.30` or an integer past 2^53 must come back as written (JSON.stringify and the
-// browser's structured clone would turn them into doubles).
+// A page is kept as a ROW: its record with its content as the protocol library's EXACT JSON text, so a calculated
+// column's `12.30` or an integer past 2^53 comes back as written (JSON.stringify and the browser's structured clone
+// would turn them into doubles); the client writes and reads the wire exactly too.
 
-import { fromJson, toJson } from '../../pure-protocol/src/index.ts';
+import { ExactNumber, fromJson, toJson } from '../../pure-protocol/src/index.ts';
+import type { QueriesModule } from '../../query-store/src/wasm-server.ts';
 
 /** One saved cube, as upstream's store keeps it. Times are epoch milliseconds. */
 export interface DataCubeQuery {
@@ -66,30 +65,40 @@ export interface CubeStore {
   delete(id: string): Promise<void>;
 }
 
-/** Upstream's cap on one search's answer. */
-export const MAX_SEARCH = 100;
+/** A saved page as a host keeps it: its record, its content the protocol's exact JSON text. */
+export type CubeRow = Readonly<Record<string, unknown>> & { readonly id: string; readonly content: string };
 
-/** Where records are kept: the part a backend supplies. */
+/** What one call of the rules answers: the pages it wrote (their rows) or removed (null), by id, and its own answer. */
+export interface CubeCalled<T> {
+  readonly changed: ReadonlyMap<string, CubeRow | null>;
+  readonly answer: T;
+}
+
+/** Where the page keeps its pages' rows: the part a backend supplies. */
 export interface CubeRecords {
-  all(): Promise<DataCubeQuery[]>;
-  find(id: string): Promise<DataCubeQuery | undefined>;
-  put(query: DataCubeQuery): Promise<void>;
-  remove(id: string): Promise<void>;
+  /**
+   * One call of the rules: `f` is handed every row by id (in id order) and answers what it wrote or removed, with its
+   * answer -- all in one transaction, so no other tab writes between the read and the writes (`f` runs synchronously
+   * inside it).
+   */
+  call<T>(f: (rows: ReadonlyMap<string, CubeRow>) => CubeCalled<T>): Promise<T>;
 }
 
 /**
- * The store's RULES over any records: one implementation, so memory and IndexedDB cannot
- * disagree about what a store does.
+ * THE ONE CLIENT of a saved-cube store: upstream's routes under `api` (`.../api`), wherever they are answered -- the
+ * page's module (`wasmCubeServer`), Python's engine, legend-lite's server -- the request and its answer written and
+ * read as the protocol's exact JSON. A refusal is a `CubeStoreError` with the store's status and words; `user` is who
+ * the host says the caller is (there is no sign-in yet: G10).
  */
-export class RuleStore implements CubeStore {
-  readonly #records: CubeRecords;
+export class CubeStoreClient implements CubeStore {
+  readonly #root: string;
+  readonly #fetch: typeof fetch;
   readonly #user: string;
-  readonly #now: () => number;
 
-  constructor(records: CubeRecords, user: string, now: () => number = Date.now) {
-    this.#records = records;
+  constructor(api: string, fetcher: typeof fetch, user: string) {
+    this.#root = `${api.replace(/\/+$/, '')}/pure/v1/query/dataCube`;
+    this.#fetch = fetcher;
     this.#user = user;
-    this.#now = now;
   }
 
   async currentUser(): Promise<string> {
@@ -97,107 +106,134 @@ export class RuleStore implements CubeStore {
   }
 
   async search(spec: QuerySearchSpecification): Promise<LightDataCubeQuery[]> {
-    let found = await this.#records.all();
-    const term = spec.searchTermSpecification;
-    if (term) {
-      const t = term.searchTerm;
-      found = found.filter((q) => term.exactMatchName
-        ? q.name === t || (term.includeOwner === true && q.owner === t)
-        : q.id === t
-          || q.name.toLowerCase().includes(t.toLowerCase())
-          || (q.owner ?? '').toLowerCase().includes(t.toLowerCase()));
-    }
-    if (spec.showCurrentUserQueriesOnly) found = found.filter((q) => q.owner === this.#user);
-    const field = spec.sortByOption === 'SORT_BY_CREATE' ? 'createdAt'
-      : spec.sortByOption === 'SORT_BY_UPDATE' ? 'lastUpdatedAt'
-        : spec.sortByOption === 'SORT_BY_VIEW' ? 'lastOpenAt' : undefined;
-    found.sort((a, b) => {
-      const mine = Number(b.owner === this.#user) - Number(a.owner === this.#user);
-      if (mine !== 0 || field === undefined) return mine;
-      return (b[field] ?? 0) - (a[field] ?? 0);
-    });
-    const limit = Math.min(MAX_SEARCH, spec.limit ?? Number.MAX_SAFE_INTEGER);
-    return found.slice(0, limit).map(({ content: _content, ...light }) => light);
+    return await this.#call('POST', '/search', spec) as LightDataCubeQuery[];
   }
 
   async get(id: string): Promise<DataCubeQuery> {
-    const found = await this.#records.find(id);
-    if (!found) throw new CubeStoreError(`Can't find query with ID '${id}'`, 404);
-    const opened = { ...found, lastOpenAt: this.#now() };
-    await this.#records.put(opened);
-    return opened;
+    return await this.#call('GET', `/${encodeURIComponent(id)}`) as DataCubeQuery;
   }
 
   async create(query: DataCubeQuery): Promise<DataCubeQuery> {
-    validate(query);
-    if (await this.#records.find(query.id)) {
-      throw new CubeStoreError(`Query with ID '${query.id}' already existed`, 400);
-    }
-    const now = this.#now();
-    // the owner is the current user, whatever the request says
-    const created = { ...query, owner: this.#user, createdAt: now, lastUpdatedAt: now, lastOpenAt: now };
-    await this.#records.put(created);
-    return created;
+    return await this.#call('POST', '', query) as DataCubeQuery;
   }
 
   async update(id: string, query: DataCubeQuery): Promise<DataCubeQuery> {
-    validate(query);
-    if (query.id !== id) throw new CubeStoreError('Updating query ID is not supported', 400);
-    const current = await this.#records.find(id);
-    if (!current) throw new CubeStoreError(`Can't find query with ID '${id}'`, 404);
-    if (current.owner !== undefined && current.owner !== this.#user) {
-      throw new CubeStoreError('Only owner can update the query', 403);
-    }
-    const now = this.#now();
-    const updated = {
-      ...query,
-      owner: this.#user,
-      ...(current.createdAt !== undefined ? { createdAt: current.createdAt } : {}),
-      lastUpdatedAt: now,
-      lastOpenAt: now,
-    };
-    await this.#records.put(updated);
-    return updated;
+    return await this.#call('PUT', `/${encodeURIComponent(id)}`, query) as DataCubeQuery;
   }
 
   async delete(id: string): Promise<void> {
-    const current = await this.#records.find(id);
-    if (!current) throw new CubeStoreError(`Can't find query with ID '${id}'`, 404);
-    if (current.owner !== undefined && current.owner !== this.#user) {
-      throw new CubeStoreError('Only owner can delete the query', 403);
+    await this.#call('DELETE', `/${encodeURIComponent(id)}`);
+  }
+
+  async #call(method: string, path: string, body?: unknown): Promise<unknown> {
+    const answer = await this.#fetch(`${this.#root}${path}`, {
+      method,
+      ...(body === undefined ? {} : { headers: { 'Content-Type': 'application/json' }, body: toJson(body) }),
+    });
+    // every answer read whole, an empty one too: a response left unread is cancelled by the browser
+    const text = await answer.text();
+    if (!answer.ok) {
+      let message = text || `${answer.status}`;
+      try {
+        const said = JSON.parse(text) as { message?: unknown };
+        if (typeof said.message === 'string') message = said.message;
+      } catch {
+        // not JSON: the text is the message
+      }
+      if (answer.status === 400 || answer.status === 403 || answer.status === 404) {
+        throw new CubeStoreError(message, answer.status);
+      }
+      throw new Error(`the saved pages' store answered ${answer.status}: ${message}`);
     }
-    await this.#records.remove(id);
+    return text === '' ? undefined : wire(fromJson(text));
   }
 }
 
-function validate(q: DataCubeQuery): void {
-  if (!q.id) throw new CubeStoreError('Query ID is missing or empty', 400);
-  if (!q.name) throw new CubeStoreError('Query name is missing or empty', 400);
-  if (!q.content) throw new CubeStoreError('Query content is missing', 400);
+/** The record's times, which are numbers (epoch milliseconds); the rest of it read exactly. */
+const TIMES = ['createdAt', 'lastUpdatedAt', 'lastOpenAt'] as const;
+
+/**
+ * A record (or a search's records) as the store answered it, read as the protocol's exact JSON -- the content's
+ * numbers exact (a calculated column's `12.30` kept) -- with its times plain numbers, as a record's are.
+ */
+function wire(read: unknown): unknown {
+  if (Array.isArray(read)) return read.map(wire);
+  if (read === null || typeof read !== 'object') return read;
+  const out: Record<string, unknown> = { ...(read as Record<string, unknown>) };
+  for (const t of TIMES) {
+    const v = out[t];
+    if (v instanceof ExactNumber) out[t] = Number(v.text);
+  }
+  return out;
+}
+
+/** The API root the page's own store answers at: never on the network. */
+export const LOCAL_CUBES_API = 'http://this-browser.invalid/api';
+
+/** The rows as the module reads them, `{"id": row}`. */
+const rowsJson = (rows: ReadonlyMap<string, CubeRow>): string =>
+  `{${[...rows].map(([id, row]) => `${JSON.stringify(id)}:${JSON.stringify(row)}`).join(',')}}`;
+
+const answered = (status: number, body: string): Response =>
+  new Response(status === 204 ? null : body, { status, headers: { 'Content-Type': 'application/json' } });
+
+/**
+ * THE STORE IN THIS PAGE: the routes answered by legend-lite's own rules compiled to WebAssembly (the saved queries'
+ * module, `QueriesPage.cubes`) over the page's records. Each call hands the module every row and writes back what it
+ * wrote or removed, in one transaction of the records, so the module keeps nothing and two tabs never interleave a
+ * call (the later of two saves of one page is the page, as on a server). `load` fetches the module at the store's
+ * first call; a load that failed is tried again at the next.
+ */
+export function wasmCubeServer(o: { readonly load: () => Promise<QueriesModule>; readonly records: CubeRecords; readonly user: string }):
+  { readonly fetch: typeof fetch } {
+  let loaded: Promise<QueriesModule> | undefined;
+  const module = (): Promise<QueriesModule> => (loaded ??= o.load().catch((e: unknown) => {
+    loaded = undefined;
+    throw e;
+  }));
+  const handle = async (request: Request): Promise<Response> => {
+    const url = new URL(request.url);
+    const at = url.pathname.indexOf('/pure/v1/query/dataCube');
+    if (at < 0) {
+      return answered(404, JSON.stringify({ code: -1, message: `no such API in this page's store: ${url.pathname}`, status: 'error' }));
+    }
+    const rest = url.pathname.slice(at + '/pure/v1/query/dataCube'.length);
+    const body = request.method === 'GET' || request.method === 'DELETE' ? '' : await request.text();
+    const m = await module();
+    return o.records.call((rows) => {
+      let said: { status: number; body: string; changed: Record<string, CubeRow | null> };
+      try {
+        said = JSON.parse(m.exports.cubes(request.method, rest, url.search.replace(/^\?/, ''), body, o.user, rowsJson(rows))) as typeof said;
+      } catch (e) {
+        // rows the rules cannot read are an exception out of the module (and a bug in them a trap): the engine's
+        // 500, naming it, as the server answers its own -- and nothing written
+        const error = e instanceof Error ? e : new Error(String(e));
+        return { changed: new Map(), answer: answered(500, JSON.stringify({ code: -1, message: `${error.name}: ${error.message}`, status: 'error' })) };
+      }
+      return { changed: new Map(Object.entries(said.changed)), answer: answered(said.status, said.body) };
+    });
+  };
+  return { fetch: ((input: RequestInfo | URL, init?: RequestInit) => handle(new Request(input, init))) as typeof fetch };
 }
 
 // ---------------------------------------------------------------- backends
 
-/** Records in memory, for tests and for a page that cannot store anything. */
+/** Rows in memory, for tests and for a page that cannot store anything. */
 export class MemoryRecords implements CubeRecords {
-  readonly #map = new Map<string, Record<string, unknown>>();
-  async all(): Promise<DataCubeQuery[]> {
-    return [...this.#map.values()].map(fromRow);
-  }
-  async find(id: string): Promise<DataCubeQuery | undefined> {
-    const row = this.#map.get(id);
-    return row === undefined ? undefined : fromRow(row);
-  }
-  async put(query: DataCubeQuery): Promise<void> {
-    this.#map.set(query.id, toRow(query));
-  }
-  async remove(id: string): Promise<void> {
-    this.#map.delete(id);
+  readonly #rows = new Map<string, CubeRow>();
+
+  async call<T>(f: (rows: ReadonlyMap<string, CubeRow>) => CubeCalled<T>): Promise<T> {
+    const said = f(new Map([...this.#rows].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))));
+    for (const [id, row] of said.changed) {
+      if (row === null) this.#rows.delete(id);
+      else this.#rows.set(id, row);
+    }
+    return said.answer;
   }
 }
 
 /**
- * The browser database saved cubes live in: `cubes` (records, keyed by id) and `handles`
+ * The browser database saved cubes live in: `cubes` (rows, keyed by id) and `handles`
  * (file handles by cube id: `file-handles.ts`).
  */
 export function openCubeDatabase(factory: IDBFactory = globalThis.indexedDB): Promise<IDBDatabase> {
@@ -212,7 +248,7 @@ export function openCubeDatabase(factory: IDBFactory = globalThis.indexedDB): Pr
   });
 }
 
-/** Records in the browser's IndexedDB: one object store keyed by id, every write its own transaction. */
+/** Rows in the browser's IndexedDB: one object store keyed by id, each call of the rules one transaction. */
 export class BrowserRecords implements CubeRecords {
   static readonly STORE = 'cubes';
   readonly #db: Promise<IDBDatabase>;
@@ -221,86 +257,37 @@ export class BrowserRecords implements CubeRecords {
     this.#db = db;
   }
 
-  async all(): Promise<DataCubeQuery[]> {
-    return (await this.#request<unknown[]>('readonly', (s) => s.getAll())).map(fromRow);
-  }
-
-  async find(id: string): Promise<DataCubeQuery | undefined> {
-    const row = await this.#request<unknown>('readonly', (s) => s.get(id));
-    return row === undefined ? undefined : fromRow(row);
-  }
-
-  async put(query: DataCubeQuery): Promise<void> {
-    await this.#request('readwrite', (s) => s.put(toRow(query)));
-  }
-
-  async remove(id: string): Promise<void> {
-    await this.#request('readwrite', (s) => s.delete(id));
-  }
-
-  async #request<T>(mode: IDBTransactionMode, go: (s: IDBObjectStore) => IDBRequest): Promise<T> {
+  async call<T>(f: (rows: ReadonlyMap<string, CubeRow>) => CubeCalled<T>): Promise<T> {
     const db = await this.#db;
     return new Promise<T>((resolve, reject) => {
-      const tx = db.transaction(BrowserRecords.STORE, mode);
-      const request = go(tx.objectStore(BrowserRecords.STORE));
-      let result: T;
-      request.onsuccess = () => { result = request.result as T; };
-      // resolved when the TRANSACTION commits, not when the request succeeds: a write is
-      // only saved once its transaction is
-      tx.oncomplete = () => resolve(result);
-      tx.onerror = () => reject(tx.error ?? new Error('the browser refused the write'));
-      tx.onabort = () => reject(tx.error ?? new Error('the browser aborted the write (storage full?)'));
+      const tx = db.transaction(BrowserRecords.STORE, 'readwrite');
+      const store = tx.objectStore(BrowserRecords.STORE);
+      let said: CubeCalled<T> | undefined;
+      let failed: unknown;
+      // resolved when the TRANSACTION commits, not when a request succeeds: a write is only saved once its transaction is
+      tx.oncomplete = () => resolve(said!.answer);
+      tx.onabort = () => reject(failed ?? tx.error ?? new Error('the browser aborted the write (storage full?)'));
+      // every row, in key order, read in the one transaction: the rules run, their writes made in it
+      const all = store.getAll();
+      all.onsuccess = () => {
+        try {
+          said = f(new Map((all.result as CubeRow[]).map((row) => [row.id, row])));
+          for (const [id, row] of said.changed) {
+            if (row === null) store.delete(id);
+            else store.put(row);
+          }
+        } catch (e) {
+          failed = e;
+          tx.abort();
+        }
+      };
     });
   }
 }
 
-/** One of the four calls a host answers for the records it keeps (python/legend_lite/_home.py's SavedPages). */
-export type HostRecordsCall =
-  | { readonly call: 'all' }
-  | { readonly call: 'find' | 'remove'; readonly id: string }
-  | { readonly call: 'put'; readonly record: Record<string, unknown> };
-
-/**
- * Records the page's HOST keeps (Python: this user's folder; docs/DATACUBE_ONE_APP_DESIGN_2026_10_11.md, step 2d):
- * each call carried to it, each record the browser's row (its content the exact JSON text), so the store's rules
- * stay the page's own -- RuleStore over these, as over the browser's IndexedDB. `carry` answers a call: the records,
- * the record, or undefined (none found; put and removed).
- */
-export class HostRecords implements CubeRecords {
-  readonly #carry: (call: HostRecordsCall) => Promise<unknown>;
-
-  constructor(carry: (call: HostRecordsCall) => Promise<unknown>) {
-    this.#carry = carry;
-  }
-
-  async all(): Promise<DataCubeQuery[]> {
-    const rows = await this.#carry({ call: 'all' });
-    if (!Array.isArray(rows)) throw new Error('the host answered no list of saved pages');
-    return rows.map(fromRow);
-  }
-
-  async find(id: string): Promise<DataCubeQuery | undefined> {
-    const row = await this.#carry({ call: 'find', id });
-    return row === undefined ? undefined : fromRow(row);
-  }
-
-  async put(query: DataCubeQuery): Promise<void> {
-    await this.#carry({ call: 'put', record: toRow(query) });
-  }
-
-  async remove(id: string): Promise<void> {
-    await this.#carry({ call: 'remove', id });
-  }
-}
-
-/** The content as exact JSON text in the row; the rest as it is. */
-function toRow(q: DataCubeQuery): Record<string, unknown> {
+/** A record as the row kept: its content the exact JSON text. */
+export function toRow(q: DataCubeQuery): CubeRow {
   return { ...q, content: toJson(q.content) };
-}
-
-function fromRow(row: unknown): DataCubeQuery {
-  const r = row as Record<string, unknown>;
-  return { ...(r as unknown as DataCubeQuery), content: fromJson(r['content'] as string) as Record<string, unknown> };
 }
 
 /**

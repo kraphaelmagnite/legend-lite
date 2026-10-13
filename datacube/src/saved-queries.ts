@@ -25,6 +25,7 @@
 import {
   findAll, fn, isLambda, transform, type ColSpec, type Lambda, type ValueSpecification,
 } from '../../pure-protocol/src/index.ts';
+import { contextOf as readContext, projectOf, type QueryContext } from '../../query-store/src/context.ts';
 import type { Query } from '../../query-store/src/wire.ts';
 
 /** A project's model as the compiler gives it (PureModelContextData elements): what is read here. */
@@ -47,33 +48,18 @@ export function enumerationsOf(elements: readonly ModelElement[]): ReadonlySet<s
   return new Set(elements.filter((e) => e._type === 'Enumeration').map(pathOf));
 }
 
-/** Rule 1: the mapping and runtime a saved query runs on. */
+/**
+ * Rule 1: the mapping and runtime a saved query runs on -- query-store's one reader (context.ts, Query's too), over this
+ * project's model elements' data spaces.
+ */
 export function contextOf(
   q: Pick<Query, 'executionContext' | 'groupId' | 'artifactId' | 'versionId'>,
   elements: readonly ModelElement[],
-): { readonly mapping: string; readonly runtime: string } {
-  const ctx = q.executionContext;
-  if (ctx?._type === 'explicitExecutionContext' && ctx.mapping && ctx.runtime) {
-    return { mapping: ctx.mapping, runtime: ctx.runtime };
-  }
-  if (ctx?._type === 'dataSpaceExecutionContext' && ctx.dataSpacePath) {
-    const path = ctx.dataSpacePath;
-    const ds = elements.find((e) => e._type === 'dataSpace' && pathOf(e) === path);
-    if (!ds) throw new Error(`its data space ${path} is not in ${projectOf(q)}`);
-    const key = ctx.executionKey ?? ds.defaultExecutionContext;
-    const ec = ds.executionContexts?.find((c) => c.name === key);
-    if (!ec?.mapping || !ec.defaultRuntime) {
-      throw new Error(`its data space has no execution context '${key ?? ''}' with a mapping and a runtime`);
-    }
-    return { mapping: ec.mapping.path, runtime: ec.defaultRuntime.path };
-  }
-  throw new Error('it has no execution context a cube can read (explicit, or a data space)');
+): QueryContext {
+  return readContext(q, (path) => elements.find((e) => e._type === 'dataSpace' && pathOf(e) === path));
 }
 
-/** The project a saved query belongs to, as config.json's `projects[]` names one. */
-export function projectOf(q: Pick<Query, 'groupId' | 'artifactId' | 'versionId'>): string {
-  return `${q.groupId}:${q.artifactId}:${q.versionId}`;
-}
+export { projectOf };
 
 /** Functions whose answer is objects, not rows. */
 const OBJECT_ANSWERS = new Set(['graphFetch', 'graphFetchChecked', 'serialize']);

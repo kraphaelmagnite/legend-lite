@@ -40,6 +40,8 @@ const DATA_FILES = {
     'text/csv': ['.csv'],
     'application/json': ['.json', '.jsonl', '.ndjson'],
     'application/vnd.apache.parquet': ['.parquet'],
+    // any of them gzipped (upload.ts fileParts unpacks it)
+    'application/gzip': ['.gz'],
   },
 };
 

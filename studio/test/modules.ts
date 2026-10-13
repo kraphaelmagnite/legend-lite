@@ -10,7 +10,8 @@ import { SdlcClient } from '../../sdlc-client/src/client.ts';
 import { WASM_API, WASM_DEPOT_API, wasmSdlcServer, type SdlcModule } from '../../sdlc-client/src/wasm-server.ts';
 import { WasmGrammar } from '../../engine-client/src/legend/wasm-grammar.ts';
 import { Compiler, type PlannerPort } from '../src/backend/planner.ts';
-import { answer, type PlannerModule, type PlannerRequest } from '../../engine-client/src/legend/planner-answer.ts';
+import { answer, type PlannerModule } from '../../engine-client/src/legend/planner-answer.ts';
+import type { RequestBody } from '../../engine-client/src/legend/planner-protocol.ts';
 import { runfileDirUrl } from '../../tools/js/runfiles.mts';
 
 async function load<T>(dir: URL): Promise<T> {
@@ -29,7 +30,7 @@ let planner: Promise<PlannerModule> | undefined;
 
 /** The planner in this process, answering as the tab's worker answers (planner-answer.ts). */
 class DirectPort implements PlannerPort {
-  async ask(r: PlannerRequest): Promise<string> {
+  async ask(r: RequestBody): Promise<string> {
     planner ??= load<PlannerModule>(new URL(runfileDirUrl('WASM_PLANNER')));
     return answer(await planner, r);
   }

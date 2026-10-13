@@ -37,11 +37,14 @@ public final class SdlcServer {
     private static final Pattern LOOPBACK_ORIGIN = Pattern.compile("^http://(127\\.0\\.0\\.1|localhost)(:\\d+)?$");
 
     private final Sdlc sdlc;
+    /** The repository the rules keep their projects in: each call made under its own lock (G11). */
+    private final GitStorage repository;
     private final int port;
     private final List<String> allowedOrigins;
 
-    public SdlcServer(Sdlc sdlc, int port, List<String> allowedOrigins) {
+    public SdlcServer(Sdlc sdlc, GitStorage repository, int port, List<String> allowedOrigins) {
         this.sdlc = sdlc;
+        this.repository = repository;
         this.port = port;
         this.allowedOrigins = List.copyOf(allowedOrigins);
     }
@@ -88,10 +91,10 @@ public final class SdlcServer {
                 String query = exchange.getRequestURI().getRawQuery();
                 String target = raw.substring(root.length()) + (query == null ? "" : "?" + query);
                 String body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
-                Object[] r;
-                synchronized (sdlc) {
-                    r = answer.answer(exchange.getRequestMethod(), target, body.isEmpty() ? null : body);
-                }
+                // one call at a time on the repository, by this server's threads and every other process that opens it
+                // (Python's native library): the repository's own lock (docs/ONE_PLATFORM_PROGRAM_2026_10_12.md G11)
+                Object[] r = repository.locked(() -> answer.answer(exchange.getRequestMethod(), target,
+                        body.isEmpty() ? null : body));
                 send(exchange, (Integer) r[0], (String) r[1]);
             }
         };
@@ -153,9 +156,10 @@ public final class SdlcServer {
             }
         }
         if (repo == null) throw new IllegalArgumentException("--repo DIR is required: where the projects' git repository lives");
-        Sdlc sdlc = new Sdlc(new GitStorage(repo), userId, userName, new CoreGrammar(), System::currentTimeMillis).backendType("git");
+        GitStorage repository = new GitStorage(repo);
+        Sdlc sdlc = new Sdlc(repository, userId, userName, new CoreGrammar(), System::currentTimeMillis).backendType("git");
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", port), 0);
-        SdlcServer home = new SdlcServer(sdlc, port, origins);
+        SdlcServer home = new SdlcServer(sdlc, repository, port, origins);
         server.createContext(ROOT + "/", home.handler());
         server.createContext(DEPOT_ROOT + "/", home.depotHandler(new com.legend.depot.Depot(sdlc.artifacts(), System::currentTimeMillis)));
         server.createContext("/health", exchange -> {

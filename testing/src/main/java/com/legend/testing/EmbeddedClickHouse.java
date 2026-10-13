@@ -69,9 +69,28 @@ public final class EmbeddedClickHouse {
         return shared;
     }
 
-    /** {@code jdbc:clickhouse://127.0.0.1:<http port>/<database>?user=default}: the driver speaks HTTP. */
+    /**
+     * {@code jdbc:clickhouse://127.0.0.1:<http port>/<database>?user=default}: the driver speaks HTTP. The server's
+     * {@code max_query_size} (256 KiB by default) and its AST limits are raised on the connection, since a statement's
+     * own SETTINGS clause is read only after the limit has refused it (measured 25.8: a query spelling many Floats'
+     * text). The driver passes a {@code clickhouse_setting_} property as an HTTP parameter, a server setting. A
+     * product ClickHouse connector (the dialect-leak plan's P5) carries the same.
+     */
     public String jdbcUrl(String database) {
-        return "jdbc:clickhouse://127.0.0.1:" + port + "/" + database + "?user=default";
+        return "jdbc:clickhouse://127.0.0.1:" + port + "/" + database
+                + "?user=default&clickhouse_setting_max_query_size=16777216&clickhouse_setting_max_ast_elements=1000000"
+                + "&clickhouse_setting_max_expanded_ast_elements=10000000";
+    }
+
+    /**
+     * {@link #jdbcUrl} in a session of its own: a new {@code session_id} each call, which the driver passes as an HTTP
+     * parameter like a setting, so the connection's temporary tables live as long as the session (an hour idle at
+     * most, the server's default {@code max_session_timeout}) and no other connection sees them. The system
+     * database's connection is one (exec.SystemDatabase). A session runs one statement at a time.
+     */
+    public String sessionJdbcUrl(String database) {
+        return jdbcUrl(database) + "&clickhouse_setting_session_id=legendlite_" + java.util.UUID.randomUUID()
+                + "&clickhouse_setting_session_timeout=3600";
     }
 
     /** The HTTP port (the driver's). */

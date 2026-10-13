@@ -17,7 +17,8 @@
 
 import { UI_LOCALE } from '../../engine-client/src/locale.ts';
 import { hostOf, receiptLabel, receiptLines } from '../../engine-client/src/receipt.ts';
-import { sessionExpired, WarehouseEngine } from '../../engine-client/src/warehouse.ts';
+import type { WarehouseEngine } from '../../engine-client/src/warehouse.ts';
+import { sessionExpired } from '../../engine-client/src/warehouse-session.ts';
 import { isQueryFailure, type QueryRunner } from './runner.ts';
 import {
   CubeController,
@@ -33,7 +34,6 @@ import {
   labelFor,
   toColumnAppearance,
   renderFormats,
-  leafFormats,
   DEFAULT_CONFIGURATION,
   DEFAULT_MAX_ROWS,
   renameColumnConfig,
@@ -53,8 +53,8 @@ import { isPivotTotalColumn, withoutConditions } from './snapshot.ts';
 import type { Lambda } from '../../pure-protocol/src/index.ts';
 import type { QueryEngine } from '../../engine-client/src/engine.ts';
 import { describePlane, type RemoteSource } from '../../engine-client/src/snap.ts';
-import type { SnapTarget } from './cube.ts';
-import { exportCsv, exportFileName, toCsv, toEml } from './export.ts';
+import type { HostSnap, SnapTarget } from './cube.ts';
+import { exportFileName, toCsv, toEml } from './export.ts';
 import {
   ALERT_WINDOW,
   CODE_CHECK_WINDOW,
@@ -66,10 +66,10 @@ import {
   type AlertOptions,
 } from './ui/alert.ts';
 import { pivotLabel, type PivotColumn } from './query.ts';
-import { toHtml } from './export-rich.ts';
-import { toPdf, toPlainText } from './export-doc.ts';
-import { exportTable, type ExportPage } from './export-model.ts';
-import { toXlsx, XLSX_MIME } from './export-xlsx.ts';
+import type { ExportPage } from './export-model.ts';
+import {
+  columnFormats, heatmapColour, heatmapSetting, measureHeatmaps, renderExport, type ExportedFile, type ExportKind, type Heatmap,
+} from './export-render.ts';
 import { cubeScopeOf, newCubeScope } from './ui/scope.ts';
 import type { CubePage, ChartSource, SpawnedGrid, SpawnOptions } from './page/cube-page.ts';
 import { PAGE_CUBE, oneSheet, pageToJson, writePage, type ChartView, type PageDocument, type PageViews } from './page-document.ts';
@@ -93,8 +93,7 @@ import {
   type FilterNode,
   type FilterValue,
 } from './snapshot.ts';
-import { columnRange, heatColour } from './style.ts';
-import type { HeatmapRange, HeatmapSpec } from './style.ts';
+import type { HeatmapSpec } from './style.ts';
 import { TreeState, parsePathKey, pathKey, type TreeRow } from './tree.ts';
 import { CubeStateOwner, type ChangeOptions, type CubeState, type OwnerEvent, type Outcome } from './cube-state.ts';
 import { ColumnEditor, type ColumnEditorStart, type ColumnPreview } from './ui/column-editor.ts';
@@ -158,6 +157,9 @@ export interface GridSource {
   readonly configuration?: CubeConfiguration;
   readonly place: CubeAppQuerySource;
   readonly snapTarget?: SnapTarget;
+  /** A snap its host makes (Python's page: CubeControllerOptions.hostSnap). */
+  readonly hostSnap?: HostSnap;
+  readonly signInAgain?: (password: string) => Promise<void>;
   readonly heldCopy?: HeldCopy;
   readonly cubeSource?: CubeSource;
   /** What its header says it reads: a file's name, `sales.orders`, a saved query's name. */
@@ -318,6 +320,10 @@ export interface CubeAppBaseOptions {
    * cube is planned as a live one is. Without one the cube cannot snap.
    */
   readonly snapTarget?: SnapTarget;
+  /** A snap its host makes, for a cube read through a runner (Python's page: CubeControllerOptions.hostSnap). */
+  readonly hostSnap?: HostSnap;
+  /** Signing in again when the warehouse's session ends, for a cube with no live engine of its own (a host's table). */
+  readonly signInAgain?: (password: string) => Promise<void>;
   /**
    * The rows are ALREADY a copy in this tab: a file opened into its DuckDB,
    * rows generated there. Nothing can move them while the person works, so
@@ -443,7 +449,7 @@ export class CubeApp {
   /** Measured heatmap scales, by leaf index. See `#refreshHeatmaps`. */
   readonly #heatmaps = new Map<
     number,
-    { spec: HeatmapSpec; byDepth: Map<number, HeatmapRange>; type: string | undefined }
+    Heatmap
   >();
   readonly #columnsPanel: ColumnsToolPanel;
   readonly #els: {
@@ -743,6 +749,7 @@ export class CubeApp {
     // nobody's plane exercised.
     const deps: CubeControllerOptions = {
       ...(options.snapTarget ? { snapTarget: options.snapTarget } : {}),
+      ...(options.runner !== undefined && options.hostSnap ? { hostSnap: options.hostSnap } : {}),
       ...(options.runner === undefined && options.live ? { live: options.live } : {}),
       onQueryFailure: (error) => this.#offerSignIn(error),
     };
@@ -1022,20 +1029,7 @@ export class CubeApp {
   /** Re-fill the format map in place. See `#formats`. */
   #refreshFormats(): void {
     for (const key of Object.keys(this.#formats)) delete this.#formats[key];
-    Object.assign(this.#formats, renderFormats(this.#config, this.#snapshot));
-    // What is ON SCREEN renders by its own leaf's type: a measure's result type, which
-    // aggregation changes (the average of an Integer is a Float), never its source's.
-    const view = this.#view;
-    if (!view) return;
-    // and by its KIND: a numeric dimension reads as written (no thousands separators)
-    const kinds = new Map(rowColumns(this.#shown).map((c) => [c.name, c.kind]));
-    const byLeaf = leafFormats(this.#config, view.columns.leaves.map((leaf) => ({
-      ...leaf, type: view.rows.columns[leaf.index]?.type, kind: kinds.get(leaf.name),
-    })));
-    for (const [name, format] of Object.entries(byLeaf)) {
-      if (format) this.#formats[name] = format;
-      else delete this.#formats[name];
-    }
+    Object.assign(this.#formats, columnFormats(this.#config, this.#snapshot, this.#shown, this.#view ?? undefined));
   }
 
   /**
@@ -1677,48 +1671,9 @@ export class CubeApp {
    */
   #refreshHeatmaps(view: CubeView): void {
     this.#heatmaps.clear();
-    for (const leaf of view.columns.leaves) {
-      const spec = this.#heatmapFor(leaf.name);
-      if (!spec) continue;
-      const values = view.rows.columns[leaf.index]?.values ?? [];
-      // placed on the scale by the leaf's COMPILER type: a date or a text column has none
-      const type = view.rows.columns[leaf.index]?.type;
-
-      if (spec.range) {
-        // An explicitly fixed scale is the user's decision and is
-        // applied whole, at every depth.
-        this.#heatmaps.set(leaf.index, {
-          spec,
-          byDepth: new Map([[-1, spec.range]]),
-          type,
-        });
-        continue;
-      }
-
-      const atDepth = new Map<number, Scalar[]>();
-      values.forEach((value, row) => {
-        const depth = this.#treeRows[row]?.depth ?? 0;
-        const bucket = atDepth.get(depth);
-        if (bucket) bucket.push(value);
-        else atDepth.set(depth, [value]);
-      });
-
-      const byDepth = new Map<number, HeatmapRange>();
-      for (const [depth, bucket] of atDepth) {
-        const range = columnRange(bucket, type);
-        if (range) byDepth.set(depth, range);
-      }
-      if (byDepth.size > 0) this.#heatmaps.set(leaf.index, { spec, byDepth, type });
+    for (const [leaf, heat] of measureHeatmaps(view, this.#treeRows, (name) => this.#heatmapFor(name))) {
+      this.#heatmaps.set(leaf, heat);
     }
-  }
-
-  /** The scale a cell is measured against: its own depth's. */
-  #heatRange(leafIndex: number, row: number): HeatmapRange | undefined {
-    const heat = this.#heatmaps.get(leafIndex);
-    if (!heat) return undefined;
-    return (
-      heat.byDepth.get(-1) ?? heat.byDepth.get(this.#treeRows[row]?.depth ?? 0)
-    );
   }
 
   /**
@@ -1731,12 +1686,7 @@ export class CubeApp {
    * replaced.
    */
   #heatmapFor(leafName: string): HeatmapSpec | undefined {
-    const own = columnConfig(this.#config, leafName).heatmap;
-    if (own) return own;
-    const measure = this.#pivotMeasureOf(leafName);
-    return measure !== undefined
-      ? columnConfig(this.#config, measure).heatmap
-      : undefined;
+    return heatmapSetting(this.#config, this.#view ?? undefined, leafName);
   }
 
   /**
@@ -2495,6 +2445,8 @@ export class CubeApp {
     return (host, spawned) => new CubeApp(host, source.snapshot, {
       ...source.place,
       ...(source.snapTarget ? { snapTarget: source.snapTarget } : {}),
+      ...(source.hostSnap ? { hostSnap: source.hostSnap } : {}),
+      ...(source.signInAgain ? { signInAgain: source.signInAgain } : {}),
       ...(source.heldCopy ? { heldCopy: source.heldCopy } : {}),
       ...(source.cubeSource ? { cubeSource: source.cubeSource } : {}),
       sourceLabel: source.label,
@@ -2600,6 +2552,8 @@ export class CubeApp {
         return new CubeApp(host, snapshot, {
           ...source,
           ...(o.snapTarget ? { snapTarget: o.snapTarget } : {}),
+          ...(o.hostSnap ? { hostSnap: o.hostSnap } : {}),
+          ...(o.signInAgain ? { signInAgain: o.signInAgain } : {}),
           // what its rows ARE, as this grid knows it: the same copy in the tab, the same file, the
           // host's own name for it -- so its header says the same source, and the same plane
           ...(o.heldCopy ? { heldCopy: o.heldCopy } : {}),
@@ -2683,52 +2637,17 @@ export class CubeApp {
    * names an export: the title and the moment
    * (`exportFileName`), so a second export never overwrites the first.
    */
-  #render(kind: 'csv' | 'excel' | 'html' | 'text' | 'pdf'): {
-    name: string;
-    mime: string;
-    content: string | Uint8Array;
-  } | null {
+  #render(kind: ExportKind): ExportedFile | null {
     const view = this.#view;
     const model = this.#grid.columns;
     if (!view || !model) return null;
-    const title = this.#config.reportTitle ?? 'cube';
-    const at = new Date();
-    const base = exportFileName(title, at);
-    // WHAT THE GRID SHOWS, once, for every format (export-model.ts): its leaves in its order
-    // under its headers, the tree's depth, blurred columns REDACTED, the notes a reader needs.
-    const table = exportTable({
-      title,
-      rows: view.rows,
-      model,
-      treeRows: view.treeRows,
-      groupLabels: view.snapshot.rows.map((name) => labelFor(this.#config, name)),
-      truncated: view.truncated.length > 0,
-      ...(this.#config.maxRows !== undefined ? { maxRows: this.#config.maxRows } : {}),
-      // and how the grid DRAWS it: the same appearance and heatmaps, so the file looks like it
-      appearance: this.#config.appearance,
-      columnAppearance: toColumnAppearance(this.#config),
-      cellBackground: (leaf, row, value) => this.#heatFor(leaf, row, value),
-    });
     // THE WHOLE PAGE: with charts on the board, each format carries them where the board puts
     // them, and the whole grid (the user: "it just always exports whole page by default")
     const page = this.#exportPage();
-    const doc = { formatters: this.#formatters, formats: this.#formats, ...(page ? { page } : {}) };
-    switch (kind) {
-      case 'csv':
-        // raw values: CSV is the one that is computed on again
-        return { name: `${base}.csv`, mime: 'text/csv', content: exportCsv(table) };
-      case 'excel':
-        // a real workbook: numbers as numbers in the column's own format, the tree as outlines
-        return { name: `${base}.xlsx`, mime: XLSX_MIME, content: toXlsx(table, { formats: this.#formats, at, ...(page ? { page } : {}) }) };
-      case 'html':
-        // Formatted: a page exists to be read, so it says what the screen says.
-        return { name: `${base}.html`, mime: 'text/html', content: toHtml(table, doc) };
-      case 'text':
-        // Formatted, not raw: plain text exists to be READ -- pasted into a message or a ticket.
-        return { name: `${base}.txt`, mime: 'text/plain', content: toPlainText(table, doc) };
-      case 'pdf':
-        return { name: `${base}.pdf`, mime: 'application/pdf', content: toPdf(table, doc) };
-    }
+    return renderExport(kind, {
+      view, model, config: this.#config, formats: this.#formats, formatters: this.#formatters,
+      cellBackground: (leaf, row, value) => this.#heatFor(leaf, row, value), ...(page ? { page } : {}), at: new Date(),
+    });
   }
 
   /**
@@ -2764,7 +2683,7 @@ export class CubeApp {
    * mailer when it has one, else upstream's way -- an unsent `.eml`
    * draft, downloaded, that opens in the user's own mail client.
    */
-  async #email(kind: 'csv' | 'excel' | 'html' | 'text' | 'pdf'): Promise<void> {
+  async #email(kind: ExportKind): Promise<void> {
     const rendered = this.#render(kind);
     if (!rendered) return;
     const send = this.#options.email;
@@ -2806,9 +2725,7 @@ export class CubeApp {
 
   /** A cell's heatmap colour, for the grid and for an export alike; null when it has none. */
   #heatFor(leaf: LeafColumn, row: number, value: Scalar): string | null {
-    const heat = this.#heatmaps.get(leaf.index);
-    if (!heat) return null;
-    return heatColour(value, heat.spec, this.#heatRange(leaf.index, row) ?? null, heat.type);
+    return heatmapColour(this.#heatmaps, this.#treeRows, leaf, row, value);
   }
 
   /** What an email's body says about its attachment: the title, the rows, when, and any note. */
@@ -2904,6 +2821,8 @@ export class CubeApp {
     for (const editor of this.#columnEditors.values()) editor.dispose();
     this.#columnEditors.clear();
     this.#grid.destroy();
+    // a copy its host keeps is let go with the grid that snapped it, one being made too (the tab's goes with the tab)
+    void this.#controller.close().catch(() => undefined);
   }
 
   // -- Ad Hoc Analysis mode -------------------------------------------------
@@ -3333,12 +3252,16 @@ export class CubeApp {
   #signInOffer(error: unknown): { who: string; where: string; submit: (password: string) => Promise<void> } | null {
     const expired = sessionExpired(error);
     const live = this.#options.runner === undefined ? this.#options.live : undefined;
-    if (!expired || !(live instanceof WarehouseEngine)) return null;
+    // a live plane that signs in again (the warehouse's engine), asked by what it does: the driver is loaded only once
+    // a page signs in to a warehouse (services/browser.ts); else the host's own sign-in (a table it reads)
+    const again = live && 'signInAgain' in live ? (password: string) => (live as WarehouseEngine).signInAgain(password)
+      : this.#options.signInAgain;
+    if (!expired || !again) return null;
     return {
       who: expired.principal,
       where: `the warehouse at ${hostOf(expired.baseUrl)}`,
       submit: async (password) => {
-        await live.signInAgain(password);
+        await again(password);
         this.#closeWindow('Sign in');
         this.#status(`signed in again as ${expired.principal}`, 'ok');
         // what failed runs again: the view (going live, or the refused change) and every chart
@@ -3712,7 +3635,9 @@ export class CubeApp {
     // way it still states the plane, and a click does nothing -- a Live
     // that only answers with a refusal, or a Snap of a copy, was a lie.
     const held = this.#options.heldCopy;
-    const canSnap = this.#options.runner === undefined && this.#options.snapTarget !== undefined;
+    // the page's own store, or its host's (Python's page: hostSnap)
+    const canSnap = (this.#options.runner === undefined && this.#options.snapTarget !== undefined)
+      || (this.#options.runner !== undefined && this.#options.hostSnap !== undefined);
     if (held !== undefined || !canSnap) {
       snap.textContent = held !== undefined ? 'Snapped' : 'Live';
       snap.classList.toggle('dc-on', held !== undefined);
@@ -3729,8 +3654,10 @@ export class CubeApp {
         const state = this.#controller.snaps.state;
         snap.classList.toggle('dc-on', state.mode === 'snapped');
         // Where the data is, when Live is a warehouse: the plane is a place (the wording every app shares)
-        const remote = this.#options.runner === undefined && this.#options.live !== undefined;
-        const described = describePlane(state, { remote, toggles: true });
+        const host = this.#options.runner !== undefined && this.#options.hostSnap !== undefined;
+        const remote = host || (this.#options.runner === undefined && this.#options.live !== undefined);
+        const described = describePlane(state, { remote, toggles: true,
+          ...(host ? { store: this.#options.hostSnap!.store } : {}) });
         snap.textContent = described.text;
         snap.title = described.title;
       };

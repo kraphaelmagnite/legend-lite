@@ -11,6 +11,8 @@ load("//tools/teavm:defs.bzl", "teavm_wasm")
 load("//tools/platforms:defs.bzl", "compatible_with", "platform_select")
 load(":defs.bzl", "POSTGRES_EXTENSION", "POSTGRES_EXTENSION_COMPATIBLE", "jar_entry", "warehouse_folder")
 load("//tools/postgres:defs.bzl", "EMBEDDED_POSTGRES_COMPATIBLE")
+load("@bazel_lib//lib:copy_file.bzl", "copy_file")
+load("@bazel_lib//lib:copy_to_directory.bzl", "copy_to_directory")
 load("@bazel_lib//lib:write_source_files.bzl", "write_source_files")
 load("//tools/guards:defs.bzl", "guards_package")
 
@@ -32,6 +34,10 @@ package(default_visibility = ["//visibility:public"])
 legend_java_library(
     name = "sqlapi",
     srcs = glob(["src/main/java/com/legend/warehouse/sqlapi/**/*.java"]),
+    # Python's native library only, which speaks the API through it (SqlApiCalls:
+    # docs/ONE_PLATFORM_PROGRAM_2026_10_12.md C3): narrower than the package's public default, an explicit list of who
+    # compiles it
+    visibility = ["//native:__pkg__"],
     deps = [
         "//base",
         "//json",
@@ -64,6 +70,8 @@ legend_java_library(
         ":sqlapi",
         "//base",
         "//json",
+        # the site's media types, the one table every host serving a site answers with (C4)
+        "//site:types",
     ],
     # No DuckDB jar here: the server calls DuckDB's C API through java.lang.foreign and uses no JDBC class
     # (docs/WAREHOUSE_FFM_HOMEWORK_2026_09_26.md), and its native library is :duckdb_library, never extracted
@@ -162,6 +170,21 @@ executable_of(
 
 _ARROW_COMPARATOR = "-Dwarehouse.arrow.comparator=$(rlocationpath :arrow_matches_json_executable)"
 
+# THE WAREHOUSE'S API AS EVERY DRIVER SPEAKS IT (docs/ONE_PLATFORM_PROGRAM_2026_10_12.md C3): recorded exchanges the
+# binding (SqlApiCalls) is held to here, and the tab's and Python's drivers replay. A copy in the output tree: a node
+# test takes another package's file only from there (rules_js)
+copy_file(
+    name = "sqlapi_corpus",
+    src = "src/test/resources/sqlapi-corpus.json",
+    out = "sqlapi-corpus.json",
+    visibility = [
+        "//engine-client:__pkg__",
+        "//python:__pkg__",
+    ],
+)
+
+_SQLAPI_CORPUS = "-Dwarehouse.sqlapi.corpus=$(rlocationpath :sqlapi_corpus)"
+
 # DuckDB's library, for the in-process servers and DuckLibrary's own tests (Bazel workplan P1-16)
 _DUCKDB_LIBRARY_FLAG = "-Dwarehouse.duckdb.library=$(rlocationpath :duckdb_library)"
 
@@ -185,11 +208,13 @@ junit_test(
         ":arrow_matches_json",
         ":arrow_matches_json_executable",
         ":duckdb_library",
+        ":sqlapi_corpus",
     ],
     jvm_flags = [
         _ARROW_COMPARATOR,
         _DUCKDB_LIBRARY_FLAG,
         _NATIVE_ACCESS,
+        _SQLAPI_CORPUS,
         # a principal from the machine's account name is host-dependent (AppModeTest); every host is "tester"
         "-Duser.name=tester",
     ],
@@ -395,6 +420,46 @@ legend_java_library(
     testonly = True,
     srcs = ["src/test/java/com/legend/warehouse/sqlapi/WasmEntry.java"],
     deps = [":sqlapi"],
+)
+
+# THE WAREHOUSE'S API IN THE PAGE (docs/ONE_PLATFORM_PROGRAM_2026_10_12.md C3): the one binding (SqlApiCalls)
+# compiled to WebAssembly, the tab's driver's (engine-client/src/warehouse.ts), served at vendor/warehouse/ by
+# DataCube's and Query's sites. Its own small module, not the planner's: the planner runs in a worker, and a
+# statement's every HTTP step would be a round trip to it.
+legend_java_library(
+    name = "sqlapi_page_entry",
+    srcs = ["src/page/java/com/legend/warehouse/sqlapi/page/SqlApiPage.java"],
+    deps = [
+        ":sqlapi",
+        # TeaVM's annotations, at compile time only
+        "//tools/teavm:api",
+    ],
+)
+
+teavm_wasm(
+    name = "sqlapi_page",
+    main_class = "com.legend.warehouse.sqlapi.page.SqlApiPage",
+    visibility = [
+        "//datacube:__pkg__",
+        "//engine-client:__pkg__",
+        "//query:__pkg__",
+    ],
+    deps = [
+        ":sqlapi_page_entry",
+        "@maven_teavm//:org_teavm_teavm_classlib",
+        "@maven_teavm//:org_teavm_teavm_jso",
+    ],
+)
+
+# The page's module as ONE directory, so a test names it with one $(rlocationpath) (as //query-store:page_dir)
+copy_to_directory(
+    name = "sqlapi_page_dir",
+    srcs = [":sqlapi_page"],
+    root_paths = ["warehouse/sqlapi_page"],
+    visibility = [
+        "//datacube:__pkg__",
+        "//engine-client:__pkg__",
+    ],
 )
 
 teavm_wasm(

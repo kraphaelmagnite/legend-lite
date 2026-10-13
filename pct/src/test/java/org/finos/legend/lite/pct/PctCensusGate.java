@@ -141,13 +141,17 @@ public final class PctCensusGate {
     // (p.first) as the folded element's, so two tests that failed before the wire reach it on Postgres, each with one
     // more struct as jsonb (STRUCT <- JSON, the by-design class above): testExistsInSelect's empty list of firms
     // (Essential 12 -> 13) and testFilterInstance's persons (Grammar 4 -> 5). No other class moved.
+    // 18 -> 20 (2026-10-12, Postgres's own pins burned down, docs/PCT_PIN_WORKAROUNDS_2026_10_12.md): a struct cell is
+    // decoded from its jsonb (Postgres.normalize), so tests that stopped at their first struct now run their later
+    // statements, each column a struct as jsonb (STRUCT <- JSON, the by-design class): Essential 13 -> 14, Grammar
+    // 5 -> 6. No other class moved.
     private static long maxWireDiverge(String suite) {
         if (!POSTGRES) {
             return 0;
         }
         return switch (suite) {
-            case "Essential" -> 13;
-            case "Grammar" -> 5;
+            case "Essential" -> 14;
+            case "Grammar" -> 6;
             default -> 0;
         };
     }

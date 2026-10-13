@@ -32,6 +32,8 @@ test_suite(
         # the #SQL{}# island's cases on the embedded Postgres 16: Postgres's own answers, and the islands through the
         # Postgres dialect
         "//core:sql_island_postgres_test",
+        # Snap's preflight count as Postgres's host operations write it, on the embedded Postgres 16 (D5)
+        "//core:host_operations_postgres_test",
         # upstream's Postgres parity corpus (legend-engine 4.145.0's e2e cases) as #SQL{}# islands, on DuckDB and on
         # Postgres 16, each case's status held by core/src/test/resources/sql-parity/ledger.tsv
         "//core:sql_parity_test",
@@ -66,6 +68,9 @@ test_suite(
         "//tools/guards:markdown_inputs_test",
         "//tools/guards:workflows_test",
         "//tools/guards:ci_scripts_test",
+        # no SQL spelled by the tab's apps or Python's host, two halves of one rule (D5, tools/guards/host_sql.txt)
+        "//tools/guards:host_sql_test",
+        "//python:host_sql_test",
         "//tools/browser:revision_test",
         "//tools/bump:bump_test",
         "//tools/java_run:pins_test",
@@ -174,10 +179,22 @@ test_suite(
         # a notebook's cube: the widget's calls and version, show() in a kernel (legend_lite/notebook.py)
         "//python:notebook_test",
         "//python:tools_build_test",
+        # a server planning for Python's pages, against a legend-lite server it starts (legend_lite/upstream.py; G1)
+        "//python:upstream_test",
+        # a class, an association or a data space into a project: the twin of model-changes/, its cases replayed (B4)
+        "//python:model_test",
         # the wheel as a developer installs it: a fresh environment, offline, nothing from the repository
         "//python:wheel_test",
         # DataCube against Python's engine, in the pinned Chromium (the compiler's library in its runfiles)
         "//datacube:python_engine_test",
+        # Python's model home (the native library's SDLC) held to the one SDLC suite
+        "//datacube:python_model_home_test",
+        # Python's saved queries (the native library's saved-query rules) held to the one query-store suite (B5)
+        "//datacube:python_saved_queries_test",
+        # Python's saved pages (the native library's saved-page rules) held to the one saved-pages suite (B6)
+        "//datacube:python_saved_pages_test",
+        # the tab's execute (its planner's plan, DuckDB-WASM's rows) against Python's over the same frame (C1)
+        "//datacube:python_execute_test",
         # DataCube's own non-screen tests in V8 inside Python: the native library's planner, Python's DuckDB, no
         # WebAssembly (docs/DATACUBE_HEADLESS_PYTHON_DESIGN_2026_10_11.md §6; not in //gates:local: run it by name)
         "//datacube:headless_test",
@@ -221,7 +238,7 @@ test_suite(
     tests = [
         "//studio:tests",
         "//query:tests",
-        "//query-store:local_test",
+        "//query-store:wasm_test",
         "//query-store:share_test",
         "//query-store:lite_test",
         # where queries run in the tab, shared by Studio, Query and DataCube: a model's own test data in DuckDB, Snap
@@ -242,6 +259,8 @@ test_suite(
         "//sdlc-server:git_repository_test",
         "//sdlc-client:tests",
         "//depot-client:tests",
+        # a class, an association or a data space made in a project: the library replayed against its cases (B4)
+        "//model-changes:tests",
     ],
 )
 

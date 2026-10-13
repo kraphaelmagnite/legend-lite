@@ -38,8 +38,9 @@ public final class Compiler {
     private Compiler() {
     }
 
-    /** A new C string holding {@code s} (UTF-8), the caller's to free with {@code lite_free}. */
-    private static CCharPointer answer(String s) {
+    /** A new C string holding {@code s} (UTF-8), the caller's to free with {@code lite_free}. Python's model home's
+     *  answers too ({@link ModelHome}). */
+    static CCharPointer answer(String s) {
         byte[] b = s.getBytes(StandardCharsets.UTF_8);
         CCharPointer p = UnmanagedMemory.malloc(WordFactory.unsigned(b.length + 1));
         for (int i = 0; i < b.length; i++) p.write(i, b[i]);
@@ -49,7 +50,7 @@ public final class Compiler {
     }
 
     /** A C string as UTF-8 -- named, never the platform's default charset. */
-    private static String text(CCharPointer p) {
+    static String text(CCharPointer p) {
         int n = 0;
         while (p.read(n) != 0) n++;
         return CTypeConversion.toJavaString(p, WordFactory.unsigned(n), StandardCharsets.UTF_8);
@@ -241,6 +242,32 @@ public final class Compiler {
         return answer(a);
     }
 
+    /** A host's named operations on its own database of the given type ({@code Boundary.hostOperations}). */
+    @CEntryPoint(name = "lite_host_operations")
+    static CCharPointer hostOperations(IsolateThread thread, CCharPointer databaseType, CCharPointer operations) {
+        String a;
+        try {
+            String d = text(databaseType), o = text(operations);
+            a = Folded.of(() -> Boundary.hostOperations(d, o));
+        } catch (Throwable failure) {
+            a = Folded.failure(failure);
+        }
+        return answer(a);
+    }
+
+    /** A project's own database on a database of the given type ({@code Boundary.projectData}). */
+    @CEntryPoint(name = "lite_project_data")
+    static CCharPointer projectData(IsolateThread thread, CCharPointer model, CCharPointer databaseType) {
+        String a;
+        try {
+            String m = text(model), d = text(databaseType);
+            a = Folded.of(() -> Boundary.projectData(m, d));
+        } catch (Throwable failure) {
+            a = Folded.failure(failure);
+        }
+        return answer(a);
+    }
+
     /** One legend-engine pure/v1 call by its path and raw query, as legend-lite's server answers it ({@code Boundary.pureV1}). */
     @CEntryPoint(name = "lite_pure_v1")
     static CCharPointer pureV1(IsolateThread thread, CCharPointer path, CCharPointer rawQuery, CCharPointer body) {
@@ -261,6 +288,67 @@ public final class Compiler {
         try {
             String b = text(body), m = text(models);
             a = Folded.http(() -> Boundary.executePlan(b, m));
+        } catch (Throwable failure) {
+            a = Folded.failure(failure);
+        }
+        return answer(a);
+    }
+
+    /**
+     * Execute's plan half in the engine's JSON, for a host that runs the SQL on its own database
+     * ({@code Boundary.executeJsonPlan}; the planner protocol's {@code executePlan}, docs/ONE_PLATFORM_PROGRAM_2026_10_12.md C2).
+     */
+    @CEntryPoint(name = "lite_execute_json_plan")
+    static CCharPointer executeJsonPlan(IsolateThread thread, CCharPointer body, CCharPointer models) {
+        String a;
+        try {
+            String b = text(body), m = text(models);
+            a = Folded.http(() -> Boundary.executeJsonPlan(b, m));
+        } catch (Throwable failure) {
+            a = Folded.failure(failure);
+        }
+        return answer(a);
+    }
+
+    /** That plan's answer from the one value the host's database wrote ({@code Boundary.executeJsonAnswer}; C2). */
+    @CEntryPoint(name = "lite_execute_json_answer")
+    static CCharPointer executeJsonAnswer(IsolateThread thread, CCharPointer plan, CCharPointer wire) {
+        String a;
+        try {
+            String p = text(plan), w = text(wire);
+            a = Folded.http(() -> Boundary.executeJsonAnswer(p, w));
+        } catch (Throwable failure) {
+            a = Folded.failure(failure);
+        }
+        return answer(a);
+    }
+
+    /** The planner's boot layer built for a model now ({@code Boundary.warmModel}; the protocol's {@code warm}, C2). */
+    @CEntryPoint(name = "lite_warm_model")
+    static CCharPointer warmModel(IsolateThread thread, CCharPointer model) {
+        String a;
+        try {
+            String m = text(model);
+            a = Folded.of(() -> {
+                Boundary.warmModel(m);
+                return "";
+            });
+        } catch (Throwable failure) {
+            a = Folded.failure(failure);
+        }
+        return answer(a);
+    }
+
+    /**
+     * The media types of legend-lite's sites by extension, as one JSON object ({@code com.legend.site.SiteTypes}): the
+     * one table the warehouse's server answers with, which Python's engine serves its site by
+     * (docs/ONE_PLATFORM_PROGRAM_2026_10_12.md C4).
+     */
+    @CEntryPoint(name = "lite_site_types")
+    static CCharPointer siteTypes(IsolateThread thread) {
+        String a;
+        try {
+            a = Folded.of(com.legend.site.SiteTypes::json);
         } catch (Throwable failure) {
             a = Folded.failure(failure);
         }

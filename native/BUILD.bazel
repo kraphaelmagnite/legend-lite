@@ -16,7 +16,9 @@ legend_java_library(
     ],
 )
 
-# Python's adapter: the C entry points, over planner.Boundary, and the resources the image must carry (META-INF/native-image)
+# Python's adapter: the C entry points, over planner.Boundary, and the resources the image must carry (META-INF/native-image);
+# and Python's model home (ModelHome.java, docs/ONE_PLATFORM_PROGRAM_2026_10_12.md B3): the SDLC's and the Depot's rules
+# -- the classes the page runs as WebAssembly and the model home's server on the JVM -- over a git repository on disk
 legend_java_library(
     name = "entry",
     srcs = glob(["src/main/java/**/*.java"]),
@@ -24,6 +26,15 @@ legend_java_library(
     resource_strip_prefix = "native/src/main/resources",
     deps = [
         ":graal_api",
+        # the saved queries' rules over a folder (SavedQueriesHome: the program's B5)
+        "//core:saved_queries",
+        "//depot-server:rules",
+        "//sdlc-server:git_storage",
+        "//sdlc-server:rules",
+        "//sdlc-server/grammar",
+        "//site:types",
+        # the warehouse's SQL API as the one binding speaks it (WarehouseCalls: the program's C3)
+        "//warehouse:sqlapi",
         "//wasm:boundary",
     ],
 )

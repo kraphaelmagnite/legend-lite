@@ -39,6 +39,12 @@ exports_files(
     ],
 )
 
+# the shared cases of a server planning for a page (G1), which Python's twin is held to as the tab's planner is
+exports_files(
+    ["test/fixtures/upstream-plans.json"],
+    visibility = ["//python:__pkg__"],
+)
+
 
 # the app's sources as the tests read them; package.json carries
 # "type": "module" (the sources are ES modules)
@@ -66,6 +72,9 @@ js_library(
         # the page's model (src/page-model.ts, Create a Class…: docs/DATACUBE_MODEL_DESIGN_2026_10_10.md §15.3): the
         # SDLC's client, over the page's own SDLC (Studio's) or a server's
         "//sdlc-client:sdlc_client",
+        # a class, an association or a data space made in a project: the generic library DataCube's windows call
+        # (docs/ONE_PLATFORM_PROGRAM_2026_10_12.md B4)
+        "//model-changes:model_changes",
         # the model home's Depot client (a saved query's project opened by name): src/services/browser.ts connects to it
         # and src/app/sources.ts reads a project's model text, both by a dynamic import that every bundle of the app
         # inlines or splits off
@@ -157,6 +166,7 @@ _NEXT_LINK_VERSION = "p2"
 _NEXT_LINK_FILE = "src/share/link-%s.ts" % _NEXT_LINK_VERSION
 
 _EXTRA_ENV = {
+    "warehouse-session-http": {"SQLAPI_PAGE": "$(rlocationpath //warehouse:sqlapi_page_dir)"},
     "bundle-budget": {
         "BUNDLE": "$(rlocationpath :demo/bundle.js)",
         "ENGINE_BUNDLE": "$(rlocationpath :demo/bundle-engine.js)",
@@ -172,15 +182,35 @@ _EXTRA_ENV = {
     "saved-queries": {
         "SAVED_QUERIES": "$(rlocationpaths //fixtures/saved-queries:records)",
         "TRADING_PROJECT": "$(rlocationpath :projects)",
+        # the trading rows' other two copies, held equal to its Data: the warehouse's fixture and the H2 connection's
+        "TRADING_COPIES": "$(rlocationpath :trading_copies)",
+    },
+    # the shared cases of a server planning for a page, which Python's twin reads too (//python:upstream_test)
+    "upstream-plans": {
+        "UPSTREAM_PLANS": "$(rlocationpath test/fixtures/upstream-plans.json)",
     },
 }
 
 # DuckDB-WASM's users load it from node_modules by name, so they declare it (DC-N3.6)
-_DUCKDB_USERS = ["duckdb", "group-derived", "model-join", "saved-queries", "sorting", "treeview", "upload"]
+_DUCKDB_USERS = [
+    "duckdb",
+    "group-derived",
+    "model-join",
+    "sample-trades",
+    "saved-queries",
+    "sorting",
+    "treeview",
+    "upload",
+]
 
 # What a test reads from disk beyond src/: the guardrails scan the demo
 # entry points too (they ship), so they are declared, not assumed.
+# The tests that load the warehouse's binding (//warehouse:sqlapi_page: docs/ONE_PLATFORM_PROGRAM_2026_10_12.md C3), a
+# WebAssembly module of its own: its flag, never the planner's
+_BINDING_TESTS = ["warehouse-session-http"]
+
 _EXTRA_DATA = {
+    "warehouse-session-http": ["//warehouse:sqlapi_page_dir"],
     # the page's own bundle and its lazy chunks, measured against their budget (plan F7)
     "bundle-budget": [
         ":bundle_bundle",
@@ -192,7 +222,8 @@ _EXTRA_DATA = {
         ":demo/widget.js",
     ],
     # the saved queries Query writes, and the project they compile against
-    "saved-queries": ["//fixtures/saved-queries:records", ":projects"],
+    "saved-queries": ["//fixtures/saved-queries:records", ":projects", ":trading_copies"],
+    "upstream-plans": ["test/fixtures/upstream-plans.json"],
     # the in-memory source the Ad Hoc Analysis tests query
     "adhoc-session": ["test/adhoc-fixture.ts"],
     "adhoc-mode": ["test/adhoc-fixture.ts"],
@@ -245,6 +276,11 @@ _WASM_TESTS = [
     "model-join",
     # the model's routes, asked of the tab's module (docs/DATACUBE_MODEL_DESIGN_2026_10_10.md §15.6a)
     "model-route",
+    # a remote file's operations, and Snap's copy, their statements the planner's
+    # (docs/ONE_PLATFORM_PROGRAM_2026_10_12.md D5)
+    "remote",
+    "plane",
+    "app-dom",
 ]
 
 # node:test files, each its own node_test (tools/js/defs.bzl: types stripped, the spec and strict reporters, a
@@ -275,6 +311,7 @@ _WASM_TESTS = [
     env = _EXTRA_ENV.get(t[len("test/"):-len(".test.ts")], {}) | ({
         "SOURCES": " ".join(["$(rlocationpaths %s)" % f for f in _SCANNED[t[len("test/"):-len(".test.ts")]]]),
     } if t[len("test/"):-len(".test.ts")] in _SCANNED else {}),
+    node_options = ["--experimental-wasm-exnref"] if t[len("test/"):-len(".test.ts")] in _BINDING_TESTS else [],
     wasm = t[len("test/"):-len(".test.ts")] in _WASM_TESTS,
 ) for t in _TESTS]
 
@@ -323,7 +360,6 @@ _HEADLESS_TESTS = [
     "create-class",
     "cube-document",
     "cube-state",
-    "cube-store",
     "dimensions",
     "drill",
     "duckdb",
@@ -356,6 +392,7 @@ _HEADLESS_TESTS = [
     "pivot-values",
     "plane",
     "planner",
+    "python-runner",
     "query",
     "relation-type",
     "remote",
@@ -380,6 +417,9 @@ _HEADLESS_TESTS = [
 # headless_roster_test reads. A file that mixed them is split in two: its screen or Node half `<name>-dom` or
 # `<name>-node`, the rest in the lane under its own name.
 _HEADLESS_LEFT_OUT = {
+    # rows put in by DuckDB-WASM's Arrow reader (insertArrowFromIPCStream), the tab's: a headless host's database has
+    # none
+    "sample-trades": "the tab's Arrow reader",
     # DataCube's HTTP clients against a stubbed fetch: the host has no fetch API (nothing headless speaks HTTP: §3)
     "cancel-http": "the planner client's HTTP",
     "engine-remote-http": "the engine executor's HTTP",
@@ -477,6 +517,10 @@ test_suite(
         ":typed_values_tokyo_test",
         ":typed_values_new_york_test",
         ":wasm_differential_test",
+        # the saved pages' one suite on the page's store and on legend-lite's server (B6; Python's is in the warehouse
+        # lane, beside its saved queries')
+        ":saved_pages_page_test",
+        ":saved_pages_server_test",
         # live against the Bazel-built native warehouse (it builds the native image; not on Windows ARM64)
         ":live_snap_test",
     ],
@@ -501,6 +545,10 @@ typescript.tsc_test(
         "//engine-client:typescript_sources",
         "//depot-client:depot_client",
         "//sdlc-client:sdlc_client",
+        # the one SDLC suite, which test/python-engine/model-home.test.ts holds Python's model home to
+        "//sdlc-client:conformance",
+        # a class, an association or a data space made in a project: the library the model actions call (B4)
+        "//model-changes:model_changes",
         "//pure-protocol:typescript_sources",
         "//tools/js:runfiles",
         "//query-store:typescript_sources",
@@ -909,6 +957,7 @@ py_binary(
     deps = [
         # DataCube's own code headless (the datacube extra): what reads a page's file into Python's DuckDB (step 2b)
         "//python:headless",
+        "//python:iceberg_table",
         "//python:legend_lite",
         "//python:notebook",
     ],
@@ -935,6 +984,10 @@ browser_test(
         ":upstream_arrow_answer",
         "//native:compiler",
         "//python:wheel_duckdb",
+        "//python:wheel_query_site",
+        "//python:wheel_studio_site",
+        "//warehouse:duckdb_library",
+        "//warehouse:server_native",
     ],
     entry_point = "test/python-engine/python-engine.mjs",
     env = {
@@ -948,9 +1001,155 @@ browser_test(
         "LEGEND_LITE_LIBRARY": "$(rlocationpath //native:compiler)",
         "PYTHON_ENGINE_PAGE": "$(rlocationpath :python_engine_page)",
         "UPSTREAM_ARROW_ANSWER": "$(rlocationpath :upstream_arrow_answer)",
+        # Query and Studio as the wheel ships them, served by Python's engine (E): a class made on Python's page opens
+        # in Studio; Studio's demo projects, loaded there, open in Query by name and run on their own rows (C5)
+        "QUERY_SITE": "$(rlocationpath //python:wheel_query_site)",
+        "STUDIO_SITE": "$(rlocationpath //python:wheel_studio_site)",
+        # a warehouse the page reads through Python (C3), as live_snap_test starts it
+        "WAREHOUSE_BINARY": "$(rlocationpath //warehouse:server_native)",
+        "WAREHOUSE_DUCKDB_LIBRARY": "$(rlocationpath //warehouse:duckdb_library)",
     },
     # as //python:headless_test sets it: Python reads the architecture from it where it cannot ask WMI, and mini-racer's
     # V8 (a page's file read in Python) needs it; a test's environment on Windows does not carry it
+    platform_env = select({
+        "//tools/platforms:windows_x86_64": {"PROCESSOR_ARCHITECTURE": "AMD64"},
+        "//conditions:default": {},
+    }),
+)
+
+# PYTHON'S MODEL HOME HELD TO THE ONE SDLC SUITE (docs/ONE_PLATFORM_PROGRAM_2026_10_12.md B3): the native library's SDLC,
+# served by Python's engine over a git repository in the test's own folder, answering sdlc-client's conformance suite
+# as the page's SDLC and sdlc-server do. In the warehouse lane beside python_engine_test (the compiler's library).
+node_test(
+    name = "python_model_home_test",
+    size = "medium",
+    data = [
+        "test/python-engine/model-home.test.ts",
+        ":dist",
+        ":engine_fixture",
+        ":headless_bundle",
+        "//native:compiler",
+        "//sdlc-client:conformance",
+    ],
+    entry_point = "test/python-engine/model-home.test.ts",
+    env = {
+        "DATACUBE_SITE": "$(rlocationpath :dist)",
+        "ENGINE_FIXTURE": "$(rlocationpath :engine_fixture)",
+        "LEGEND_LITE_DATACUBE": "$(rlocationpath :headless_bundle)",
+        "LEGEND_LITE_LIBRARY": "$(rlocationpath //native:compiler)",
+    },
+    platform_env = select({
+        "//tools/platforms:windows_x86_64": {"PROCESSOR_ARCHITECTURE": "AMD64"},
+        "//conditions:default": {},
+    }),
+)
+
+# DATACUBE'S SAVED PAGES, ONE IMPLEMENTATION (docs/ONE_PLATFORM_PROGRAM_2026_10_12.md B6): legend-lite's saved-page
+# rules (core's SavedCubes) held to one suite (test/saved-pages/conformance.ts) on every store -- the page's (the rules
+# compiled to WebAssembly on the saved queries' module), legend-lite's server's, and Python's (the native library's)
+node_test(
+    name = "saved_pages_page_test",
+    data = [
+        "test/saved-pages/conformance.ts",
+        "test/saved-pages/page.test.ts",
+        ":src",
+        "//query-store:page_dir",
+    ],
+    entry_point = "test/saved-pages/page.test.ts",
+    env = {"QUERIES_PAGE": "$(rlocationpath //query-store:page_dir)"},
+    node_options = ["--experimental-wasm-exnref"],  # the flag only: this test loads the stores' module, not the planner
+)
+
+node_test(
+    name = "saved_pages_server_test",
+    # starts a JVM server: past `small`'s 60 s on a loaded runner, as //query-store:lite_test
+    size = "medium",
+    data = [
+        "test/saved-pages/conformance.ts",
+        "test/saved-pages/server.test.ts",
+        ":src",
+        "//query-store:legend_server",
+        "//query-store:lite_server",
+    ],
+    entry_point = "test/saved-pages/server.test.ts",
+    env = {"LEGEND_SERVER": "$(rlocationpath //query-store:legend_server)"},
+)
+
+# THE TAB'S EXECUTE, ONE IMPLEMENTATION (docs/ONE_PLATFORM_PROGRAM_2026_10_12.md C1): an execute answered in the tab
+# (legend-lite's planner planning it, DuckDB-WASM running it, engine-client's BrowserEngine) against the same execute
+# answered by Python's engine over the same frame
+node_test(
+    name = "python_execute_test",
+    size = "medium",
+    data = [
+        "test/host/node.ts",
+        "test/python-engine/execute.test.ts",
+        ":dist",
+        ":engine_fixture",
+        ":headless_bundle",
+        ":src",
+        "//engine-client:node_modules/@duckdb/duckdb-wasm",
+        "//native:compiler",
+    ],
+    entry_point = "test/python-engine/execute.test.ts",
+    env = {
+        "DATACUBE_SITE": "$(rlocationpath :dist)",
+        "ENGINE_FIXTURE": "$(rlocationpath :engine_fixture)",
+        "LEGEND_LITE_DATACUBE": "$(rlocationpath :headless_bundle)",
+        "LEGEND_LITE_LIBRARY": "$(rlocationpath //native:compiler)",
+    },
+    platform_env = select({
+        "//tools/platforms:windows_x86_64": {"PROCESSOR_ARCHITECTURE": "AMD64"},
+        "//conditions:default": {},
+    }),
+    wasm = True,
+)
+
+node_test(
+    name = "python_saved_pages_test",
+    size = "medium",
+    data = [
+        "test/python-engine/saved-pages.test.ts",
+        "test/saved-pages/conformance.ts",
+        ":dist",
+        ":engine_fixture",
+        ":headless_bundle",
+        ":src",
+        "//native:compiler",
+    ],
+    entry_point = "test/python-engine/saved-pages.test.ts",
+    env = {
+        "DATACUBE_SITE": "$(rlocationpath :dist)",
+        "ENGINE_FIXTURE": "$(rlocationpath :engine_fixture)",
+        "LEGEND_LITE_DATACUBE": "$(rlocationpath :headless_bundle)",
+        "LEGEND_LITE_LIBRARY": "$(rlocationpath //native:compiler)",
+    },
+    platform_env = select({
+        "//tools/platforms:windows_x86_64": {"PROCESSOR_ARCHITECTURE": "AMD64"},
+        "//conditions:default": {},
+    }),
+)
+
+# Python's saved queries (the native library's saved-query rules over this user's folder) held to the one query-store
+# suite, as the page's module and legend-lite's server are (docs/ONE_PLATFORM_PROGRAM_2026_10_12.md B5)
+node_test(
+    name = "python_saved_queries_test",
+    size = "medium",
+    data = [
+        "test/python-engine/saved-queries.test.ts",
+        ":dist",
+        ":engine_fixture",
+        ":headless_bundle",
+        "//native:compiler",
+        "//query-store:conformance",
+    ],
+    entry_point = "test/python-engine/saved-queries.test.ts",
+    env = {
+        "DATACUBE_SITE": "$(rlocationpath :dist)",
+        "ENGINE_FIXTURE": "$(rlocationpath :engine_fixture)",
+        "LEGEND_LITE_DATACUBE": "$(rlocationpath :headless_bundle)",
+        "LEGEND_LITE_LIBRARY": "$(rlocationpath //native:compiler)",
+    },
     platform_env = select({
         "//tools/platforms:windows_x86_64": {"PROCESSOR_ARCHITECTURE": "AMD64"},
         "//conditions:default": {},
@@ -1040,35 +1239,39 @@ browser_test(
 # entry point -> bundle
 _BUNDLES = {
     "demo/main.ts": "demo/bundle.js",
-    "src/planner-worker.ts": "demo/planner-worker.js",
     "demo/remote-harness.ts": "demo/remote-bundle.js",
     "demo/stress.ts": "demo/stress.js",
     # DataCube's app on Python, every query Python's (docs/DATACUBE_ONE_APP_DESIGN_2026_10_11.md, step 2a)
     "demo/engine.ts": "demo/bundle-engine.js",
 }
 
+# the planner's worker: engine-client's own bundle (docs/ONE_PLATFORM_PROGRAM_2026_10_12.md C2: one planner
+# protocol, one worker for every app that plans in a tab), served as the page's ./planner-worker.js, as Query's and
+# Studio's are
+copy_file(
+    name = "planner_worker",
+    src = "//engine-client:planner_worker",
+    out = "demo/planner-worker.js",
+)
+
 # Split: what a page loads only when it needs it (ECharts, the first time a chart draws -- plan
 # F7) is a chunk beside the bundle, in its own directory per bundle, fetched by the bundle itself.
-# The planner's worker is one file: it loads nothing lazily, and a worker's imports are its own.
-_UNSPLIT = ["src/planner-worker.ts"]
-
 [esbuild_bundle(
     name = "bundle_" + out[len("demo/"):-len(".js")].replace("-", "_"),
     srcs = glob(["demo/**/*.ts"]) + [":src"],
     outs = [out],
-    out_dirs = [] if entry in _UNSPLIT else ["demo/chunks-" + out[len("demo/"):-len(".js")]],
+    out_dirs = ["demo/chunks-" + out[len("demo/"):-len(".js")]],
     args = [
         entry,
         "--bundle",
         "--format=esm",
         "--target=es2022",
         "--log-level=warning",
-    ] + (["--outfile=" + out] if entry in _UNSPLIT else [
         "--splitting",
         "--outdir=demo",
         "--entry-names=" + out[len("demo/"):-len(".js")],
         "--chunk-names=chunks-" + out[len("demo/"):-len(".js")] + "/[name]-[hash]",
-    ]),
+    ],
 ) for entry, out in _BUNDLES.items()]
 
 # A NOTEBOOK'S CUBE (legend_lite.notebook.DataCube; docs/DATACUBE_PYTHON_SHOW_DESIGN_2026_10_08.md, "In a notebook"):
@@ -1123,16 +1326,16 @@ esbuild_bundle(
 )
 
 # THE BUNDLES DATACUBE SHIPS (//:web; docs/BUILD_REBUILD_DESIGN_2026_10_05.md, D10): the app, the page of one cube on an
-# engine (engine.html: Python's engine serves it), a notebook's cube (the widget's loader and DataCube's module) and the
-# planner's worker. (The page of several cubes, demo/page.ts, went with the one-app design's step 1d: its checks run on
-# the app, verify_page.) remote-bundle and stress are fixtures of their harnesses (verify_remote,
-# run_stress), not product: they leave the site with D5.
+# engine (engine.html: Python's engine serves it), and a notebook's cube (the widget's loader and DataCube's module).
+# The planner's worker is engine-client's bundle (//engine-client:bundles, the program's C2); :planner_worker is only
+# its copy into this site, as Studio's is. (The page of several cubes, demo/page.ts, went with the one-app design's
+# step 1d: its checks run on the app, verify_page.) remote-bundle and stress are fixtures of their harnesses
+# (verify_remote, run_stress), not product: they leave the site with D5.
 filegroup(
     name = "bundles",
     srcs = [
         ":bundle_bundle",
         ":bundle_bundle_engine",
-        ":bundle_planner_worker",
         ":widget",
         ":widget_loader",
     ],
@@ -1145,8 +1348,13 @@ copy_to_directory(
     name = "vendor",
     srcs = [
         "//engine-client:node_modules/@duckdb/duckdb-wasm",
+        # its extensions, pinned (MODULE.bazel): ICU for the session's time zone; JSON, Parquet and httpfs when a
+        # page reads such a file
+        "//engine-client:duckdb_extensions",
         "//legend-art:fonts",
+        "//query-store:page",
         "//sdlc-server:page",
+        "//warehouse:sqlapi_page",
         "//wasm:planner",
     ],
     out = "demo/vendor",
@@ -1158,6 +1366,7 @@ copy_to_directory(
         "legend-art/fonts/roboto-latin-700-normal.woff2",
         "legend-art/fonts/roboto-latin-ext-700-normal.woff2",
         "legend-art/fonts/LICENSE-roboto.txt",
+        "engine-client/duckdb-extensions/**",
         "**/dist/duckdb-mvp.wasm",
         "**/dist/duckdb-eh.wasm",
         "**/dist/duckdb-browser-mvp.worker.js",
@@ -1166,25 +1375,47 @@ copy_to_directory(
         "wasm/planner/wasm-gc-module-runtime.js",
         "sdlc-server/page/classes.wasm",
         "sdlc-server/page/wasm-gc-module-runtime.js",
+        # the saved queries' rules, compiled to WebAssembly (the program's B5)
+        "query-store/page/classes.wasm",
+        "query-store/page/wasm-gc-module-runtime.js",
+        # the warehouse's API as the one binding speaks it (the program's C3)
+        "warehouse/sqlapi_page/classes.wasm",
+        "warehouse/sqlapi_page/wasm-gc-module-runtime.js",
     ],
     replace_prefixes = {
+        "engine-client/duckdb-extensions/": "duckdb-extensions/",
         "legend-art/fonts/": "fonts/",
         "**/dist/": "",
         "wasm/planner/": "",
         "sdlc-server/page/": "sdlc/",
+        "query-store/page/": "queries/",
+        "warehouse/sqlapi_page/": "warehouse/",
     },
 )
 
 # The projects a saved query compiles against (config.json `projects[]`): the Query app's trading
-# demo, its model and seed served as they are there, never copied into this package.
+# demo, its model and its Data rows served as they are there, never copied into this package.
 copy_to_directory(
     name = "projects",
     srcs = [
         "//query:demo/models/runtime-duckdb.pure",
-        "//query:demo/models/trading-seed.sql",
+        "//query:demo/models/trading-data.pure",
         "//query:demo/models/trading.pure",
     ],
     out = "demo/projects/trading",
+    root_paths = ["query/demo/models"],
+)
+
+# The trading rows' other two copies, for the test that holds them equal to the project's Data (saved-queries): the
+# warehouse's fixture and the H2 connection's setup, copied as :projects is (a test's data is its own package's).
+copy_to_directory(
+    name = "trading_copies",
+    testonly = True,
+    srcs = [
+        "//query:demo/models/runtime-h2.pure",
+        "//query:demo/models/trading-seed.sql",
+    ],
+    out = "test/trading-copies",
     root_paths = ["query/demo/models"],
 )
 
@@ -1200,6 +1431,7 @@ filegroup(
         "demo/*.pure",
         "src/**/*.css",
     ]) + [":bundle_" + out[len("demo/"):-len(".js")].replace("-", "_") for out in _BUNDLES.values()] + [
+        ":planner_worker",
         ":projects",
         ":vendor",
         ":widget",
@@ -1470,10 +1702,19 @@ browser_test(
     wasm = True,
 )
 
+# the browser tests' guard bites (tools/browser/pinned-chromium.mjs): a page cannot reach extensions.duckdb.org, under
+# either of Playwright's launches; on every platform, a few seconds
+browser_test(
+    name = "browser_guard_test",
+    data = [":node_modules/playwright"],
+    entry_point = "test/browser-guard.mjs",
+)
+
 # every browser test of this package (P4-09's //:browser names it)
 test_suite(
     name = "browser",
     tests = [
+        ":browser_guard_test",
         ":verify_features_test",
         ":verify_remote_test",
         ":verify_smoke_test",

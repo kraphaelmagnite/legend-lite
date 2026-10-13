@@ -28,6 +28,7 @@ import os
 import sys
 import threading
 from decimal import Decimal
+from pathlib import Path
 
 import pyarrow as pa
 
@@ -124,6 +125,10 @@ def main() -> None:
             pass
     files = http.server.ThreadingHTTPServer(('127.0.0.1', 0), functools.partial(Quiet, directory=remote.name))
     threading.Thread(target=files.serve_forever, daemon=True).start()
+    # and an Iceberg table the same server serves (G5), read through the iceberg extension the wheel carries
+    import iceberg_table
+    shelves = iceberg_table.write(Path(remote.name), 'shelves', f'http://127.0.0.1:{files.server_address[1]}',
+                                  [[('Atlas', 5), ('Borealis', 7)], [('Cygnus', 9)]])
     # two notebook cubes, as ll.DataCube(df) makes them: the page shows both and fetches DataCube's module once
     widgets = {'nb': DataCube(frame, name='nb'), 'nb2': DataCube(frame.slice(0, 3), name='nb2')}
     # and a notebook's PAGE (ll.Page, shown under a cell): a grid grouped by region
@@ -137,6 +142,7 @@ def main() -> None:
         'authorization': web.authorization,
         'link': cube.url,
         'remote': f'http://127.0.0.1:{files.server_address[1]}/books.parquet',
+        'iceberg': f'{shelves}#iceberg',
         'model': table.model,
         'runtime': table.runtime,
         'source': table.source,
@@ -193,6 +199,9 @@ def main() -> None:
                 command = f'py-documents {json.dumps(python_documents(frame, served_page, desks))}'
             elif command == 'py-page-read':
                 command = f'py-page-read {json.dumps([s.name for s in pypage.read().sheets])}'
+            elif command == 'py-page-save':
+                # saved into this user's saved pages, as DataCube's Save keeps a page (B6): Open… lists it
+                command = f'py-page-save {json.dumps(pypage.save())}'
             elif command == 'desks-update':
                 desks['now'] = pa.table({'desk': ['Rates', 'FX', 'Credit', 'Equity'], 'head': ['Ana', 'Ben', 'Cy', 'Di']})
                 web.engine.changed('desks')

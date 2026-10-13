@@ -1213,6 +1213,120 @@ Recorded, not fixed:
   PASS 284, REFUSED 46, BOTH_ERROR 51;
 - 0 FAIL, 0 BUG, 0 ERROR.
 
+### 9.4 The long tail: text, numbers, date spellings, aggregates and windows (built 2026-10-12 to 13, on the branch)
+
+The user's order after the basics: the functions, "all the long tail", the date and time bucket among them, then every
+permutation of aggregates and windows; regular expressions last, if ever. Each function is Postgres's own definition,
+ported step by step from its source (Postgres 16's varlena.c, oracle_compat.c, float.c, numeric.c, datetime.c) and
+measured on Postgres and DuckDB. Where a step has no exact Pure spelling it is refused by name.
+
+**Text.**
+- `concat_ws(sep, ...)`: the values that are not NULL, each written as concat writes it, the separator between them.
+- `format(fmt, ...)` of a constant format: `%s` (a NULL as nothing) and `%%`; `%I`, `%L`, positions and widths are
+  refused.
+- `overlay(s PLACING r FROM n [FOR m])` in both spellings: Postgres's definition, `substring(s, 1, n - 1) || r ||
+  substring(s, n + m)`.
+- `quote_literal`, `quote_nullable`: quotes doubled; with a backslash, Postgres's escape string `E'...'`.
+- `translate(s, from, to)` of constants: Pure's replace a character at a time, each replaced before any character that
+  becomes it, so no replacement is replaced again. A cycle (`translate(s, 'ab', 'ba')`) is refused.
+- `split_part(s, d, n)` of a constant delimiter and field 1 to 5: the text before the delimiter's first place, the rest
+  after it (Pure's relational indexOf). Pure's splitPart drops empty fields, so it is not used. A field from the end
+  is refused.
+- `ltrim`, `rtrim`, `btrim`, `trim(BOTH ' ' FROM ...)` naming their characters as `' '`; other characters are refused.
+
+**Numbers.**
+- `div(a, b)`: exact, as integer division is, a numeric of scale 0.
+- `mod` and `%` of numerics: Pure's rem, exact on both databases (DuckDB's remainder of decimals keeps the dividend's
+  sign, measured), the larger operand's scale.
+- `log(b, x)` of the constant base 10 (Pure's log10, an inexact numeric as `log(x)` is; another base is refused,
+  below), `log10`, `cot`.
+- `width_bucket` in both of Postgres's forms, chosen as Postgres resolves the call:
+  - the double one, Postgres's own steps: `count * ((x - low) / (high - low))` truncated, at most count - 1, plus 1;
+  - the numeric one, whose floor is exact here (from the remainder). Postgres rounds the quotient to 16 places first,
+    so within 5e-17 below a bucket's edge its answer may be the next bucket: there it is an error.
+- `power` and `^` of an integer read as a numeric to a whole power from 0 to 16: an exact product. Postgres rounds
+  the power of a base with a fraction to about 16 significant digits; that is refused. Pure's toDecimal of a decimal
+  is a DECIMAL(38, 18), so the integer itself is the base, never its cast (whose products would overflow at 100).
+
+**Dates: Postgres's spellings of a date or a timestamp** (`PostgresDateTime`, datetime.c's ParseDateTime and
+DecodeDateTime ported field by field, Postgres's default DateStyle ISO, MDY): month names (`January 8, 1999`,
+`8 January 1999`, `1999-Jan-08`), month/day/year (`1/8/1999`, `1-8-1999`), two-digit years (`1/8/69` is 2069, `70` is
+1970), digits run together (`19990108`, `990108`, `040506`), a year's day (`1999.008`), a Julian day (`J2451187`),
+a day's name, `AD`, AM and PM, `T`, `epoch`, fractions (Postgres's rint of the double), 24:00 and a 60th second, and a
+numeric time zone (which Postgres ignores for a date and a timestamp without time zone). Postgres's errors are its own,
+word for word. Refused by name: a time zone's name, BC, `infinity`, `now`, `today` and the like, years past 9999.
+A randomized differential read 10,000 generated spellings both ways: every one this reads agrees with Postgres; the
+rest are errors in both or refused.
+
+**Date fields.** `extract` and `date_part` of `dow` (from ISO's), `week` (ISO, as Pure's weekOfYear), `decade`,
+`century`, `millennium`, and a date's `epoch`; a timestamp's epoch is refused (Pure's toEpochValue is whole seconds).
+`isfinite` of a date or a timestamp (no value here is infinite).
+
+**Aggregates.**
+- `regr_count`, `regr_avgx`, `regr_avgy`, `regr_sxx`, `regr_syy`, `regr_sxy`, `regr_slope`, `regr_intercept`, `regr_r2`:
+  over the pairs that hold both values, each read as a double as Postgres reads it. They are computed from the pairs'
+  count, averages, population variances and covariance (Pure's covarPopulation over rowMapper pairs), the column itself
+  after the grouping: the slope and intercept NULL where x has no spread, r2 1 where only y has none. As for corr, a
+  variance Postgres's running sums leave near 0 for equal doubles is exactly 0 here (recorded).
+- `ORDER BY` inside an aggregate whose answer has no order (count, sum, avg, min, max, the boolean ones, the
+  statistics, the pairs'): Postgres reads the values in that order and answers the same, so it is dropped; its keys are
+  still checked, and under DISTINCT each must be the argument (Postgres's error otherwise).
+
+**Windows.**
+- `FILTER (WHERE c)` on a window aggregate: the aggregate of `CASE WHEN c THEN x END`, which is Postgres's definition
+  for an aggregate that skips NULLs (`count(*)` counts 1 where c holds). DISTINCT, an ORDER BY inside the call and a
+  FILTER on a ranking function are Postgres's errors.
+- Frame `EXCLUDE`, which Pure's frames do not have, from windows that do not need it:
+  - `EXCLUDE CURRENT ROW` of count, sum and avg over a ROWS frame, or a RANGE frame whose bounds hold the current row:
+    the frame's count and sum less the row's own. A ROWS frame that does not hold the row is unchanged. A RANGE frame
+    that does not is refused: a row with a NULL key is in its NULL peers' frame whatever the offsets (the randomized
+    check's cases found it);
+  - `EXCLUDE GROUP` and `EXCLUDE TIES` of count, sum and avg over a whole partition: the partition's less the peers'
+    (a window partitioned by the ORDER BY keys too), TIES adding the row back;
+  - `EXCLUDE CURRENT ROW` of min and max over a whole partition: the partition's, unless the row alone holds it, then
+    the best of the rest.
+  A sum or an average is NULL where no value remains. Min and max over other frames, and GROUP or TIES over a partial
+  frame, are refused.
+
+**The randomized check** grew with each piece (the text and number functions, the regressions, ORDER BY inside
+aggregates, FILTER and EXCLUDE over windows, RANGE frames over keys with NULLs): four seeds, about 2,700 queries,
+through both lanes against Postgres. Its one finding is fixed and pinned (`lite/windows.yaml`): a RANGE frame whose
+offsets do not reach the current row still holds a row with a NULL key (its NULL peers' frame), so EXCLUDE there is
+not a no-op. Its generator once produced positional frames over tied keys, whose answers depend on the order rows
+arrive in, in Postgres too; it now orders them uniquely. The one error left is the known 38-digit decimal.
+
+**The independent review (2026-10-13)** of the step, by an agent that wrote none of it, ran each query raw on Postgres
+and as an island on both lanes, and read 12,000 more date spellings against Postgres (no mismatch). It traced four
+wrong answers in the step and two older ones the step reaches; each is fixed and pinned (`SqlToPureTest`, and a case
+in `lite/`):
+- `log(b, x)` was ln(x) / ln(b), a double: `log(10, 1000) >= 3` was false (2.9999999999999996), and `log(1, 8)`
+  Infinity where Postgres errs. The base 10 is now log10, exact at its powers; another base is refused.
+- EXCLUDE of a sum or an average of doubles subtracted the row's own from the frame's: catastrophic cancellation
+  (-11345920 for Postgres's -11345629). Refused.
+- `split_part` stepped over a delimiter by its UTF-16 length: an emoji's two units, one character to SQL.
+- `sum(*) FILTER (...) OVER` read the star as the constant 1; only count takes `*`.
+- Older: a date constant before the year 1000 reaches Postgres without its leading zeros (`DATE '1-01-01'`, year
+  2001 there), and the new spellings reach more of them. Such a constant is refused; the Postgres dialect's rendering is
+  the database owner's to fix.
+- Older: `min` and `max` of a boolean answered; Postgres has neither. They are its error now.
+
+Recorded, not fixed:
+- DuckDB's `trim`, `ltrim` and `rtrim` strip every Unicode space separator (U+00A0, U+3000 and the others); Postgres's
+  only U+0020. Pure's trim renders as the database's own on each, so a value beginning or ending in a no-break space
+  trims otherwise on DuckDB. It predates this step; rendering Pure's trim on DuckDB as `trim(x, ' ')` (a dialect change,
+  Pure's trim on every DuckDB query) is the user's to decide.
+- `cot(0)` is Postgres's Infinity and DuckDB's error.
+- A numeric `width_bucket` within 1e-15 of a bucket below its edge is an error where Postgres answers.
+- As for corr, the regressions of a column whose doubles are all equal: Postgres's running sums may leave a variance
+  near 0 where this has exactly 0 (NULL here, noise there).
+
+**The ledger after this step,** identical in both lanes:
+- upstream's 1,703 cases: PASS 1,183 (1,122 before; 61 from REFUSED: 20 text and number cases, 22 date spellings, 2
+  `isfinite`, 9 regressions, 8 frame exclusions), REFUSED 391, BOTH_ERROR 61, SKIP 68;
+- legend-lite's own 477 (381 before; new `lite/text.yaml` 26, `lite/math.yaml` 23, `lite/aggregates.yaml` 10;
+  `lite/dates.yaml` 44, `lite/windows.yaml` 65): PASS 344, REFUSED 58, BOTH_ERROR 75;
+- 0 FAIL, 0 BUG, 0 ERROR.
+
 ## 10. Sources
 
 - **Upstream code:** `finos/legend-engine` `e60ab67a`, sparse checkout of `legend-engine-xts-sql/`,

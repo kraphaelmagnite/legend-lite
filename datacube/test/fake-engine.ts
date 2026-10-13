@@ -9,6 +9,8 @@ import type { ResultTable } from '../../engine-client/src/result.ts';
 
 export abstract class FakeEngine implements QueryEngine {
   abstract readonly name: string;
+  /** The database its statements are written for (a host's operations, D5): the tab's. */
+  readonly databaseType: string = 'DuckDB';
 
   /** The table this double returns for `sql`. */
   abstract answer(sql: string, epoch: number, signal?: AbortSignal): Promise<ResultTable>;

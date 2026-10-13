@@ -182,6 +182,43 @@ export function conformance(name: string, target: () => Target): void {
       assert.deepEqual(r.map((q) => q['id']), [id('s2'), id('s1')]);
     });
 
+    it('answers a search in the same order on every store: by creation, then by id (not by file name)', async () => {
+      // "q-2.json" sorts before "q.json" where the ids sort "q" first: every store orders by the ids
+      await raw('POST', '', query(id('q'), { name: `Order ${run} q` }));
+      await raw('POST', '', query(id('q-2'), { name: `Order ${run} q-2` }));
+      const r = (await raw('POST', '/search', { searchTermSpecification: { searchTerm: `order ${run}` } })).json as Record<string, unknown>[];
+      assert.deepEqual(r.map((q) => q['id']), [id('q'), id('q-2')]);
+    });
+
+    it('answers a field of the wrong kind with the engine 500, naming it, on every store', async () => {
+      const wrong = async (method: string, path: string, body: unknown, message: string): Promise<void> => {
+        const r = await raw(method, path, body);
+        assert.equal(r.status, 500, r.text);
+        assert.deepEqual(r.json, { code: -1, message: `IllegalArgumentException: ${message}`, status: 'error' });
+      };
+      await wrong('POST', '/search', { limit: 'ten' }, 'QuerySearchSpecification.limit is not a number');
+      await wrong('POST', '/search', { searchTermSpecification: { searchTerm: 'x', includeOwner: 'yes' } },
+        'QuerySearchTermSpecification.includeOwner is not a boolean');
+      await wrong('POST', '/search', { projectCoordinates: [5] },
+        'QuerySearchSpecification.projectCoordinates holds something not QueryProjectCoordinates');
+      await wrong('POST', '/search', { projectCoordinates: [{ groupId: 'demo', artifactId: null }] },
+        'QueryProjectCoordinates.artifactId is missing');
+      await wrong('POST', '', query(id('w'), { taggedValues: [{ tag: { profile: 'p' }, value: 'v' }] } as unknown as Partial<Query>),
+        'TagPtr.value is missing');
+      await wrong('PUT', `/${id('a')}/patchQuery`, { stereotypes: 'x' }, 'Query.stereotypes is not a list');
+      // and nothing was written
+      await refused('GET', `/${id('w')}`, undefined, 404, `Can't find query with ID '${id('w')}'`);
+    });
+
+    it('keeps a number as it was written: 1.0, and a long beyond 2^53', async () => {
+      const written = '"gridConfig":{"width":1.0,"big":9007199254740993}';
+      const made = await raw('POST', '', JSON.stringify(query(id('n'))).replace(/}$/, `,${written}}`));
+      assert.equal(made.status, 200, made.text);
+      assert.ok(made.text.includes(written), made.text);
+      const got = await raw('GET', `/${encodeURIComponent(id('n'))}`);
+      assert.ok(got.text.includes(written), got.text);
+    });
+
     it('says an unknown path is not there', async () => {
       const r = await raw('GET', `/${id('a')}/nothing`);
       assert.equal(r.status, 404);

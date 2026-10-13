@@ -1,0 +1,64 @@
+# legend-lite's own Postgres-judged cases over upstream's parity schema: the text functions of the long tail --
+# concat_ws, format, overlay, quote_literal and quote_nullable, translate, split_part, and the trims naming their
+# characters -- at NULLs, empty values, quotes and backslashes, multi-character delimiters and positions past the end.
+# Each answer is snapped from Postgres 16 with upstream's (postgres-answers.jsonl, key lite/text/<id>).
+tests:
+  # concat_ws: the values that are not NULL, the separator between them
+  - id: concat_ws_skips_nulls
+    sql: "SELECT id, concat_ws(', ', val, nullable_val, empty_val) AS a, concat_ws('-', nullable_val, val) AS b, concat_ws('', id, val, true) AS c FROM strings ORDER BY id"
+  - id: concat_ws_of_a_null_separator
+    sql: "SELECT id, concat_ws(NULL, val, nullable_val) AS a, concat_ws(',', NULL, nullable_val) AS b, concat_ws(empty_val, val, nullable_val) AS c FROM strings ORDER BY id"
+  - id: concat_ws_of_numbers_dates_and_booleans
+    sql: "SELECT id, concat_ws('|', name, age, salary, hire_date, active) AS a FROM persons ORDER BY id"
+  - id: concat_ws_in_a_filter
+    sql: "SELECT id FROM strings WHERE concat_ws('-', nullable_val, empty_val) LIKE '%-%' ORDER BY id"
+  - id: concat_ws_needs_a_value
+    sql: "SELECT concat_ws(',') AS a FROM strings WHERE id = 1"
+  # format: %s as concat writes a value, %% a percent sign
+  - id: format_s_and_percent
+    sql: "SELECT id, format('%s is %s (100%%)', name, age) AS a, format('[%s]', salary) AS b, format('%s%s', active, hire_date) AS c FROM persons ORDER BY id"
+  - id: format_of_constants
+    sql: "SELECT format('Hello World') AS a, format('%s-%s', 'a', NULL) AS b, format('%s', true) AS c, format('%s', 'x', 'unused') AS e FROM persons WHERE id = 1"
+  - id: format_with_too_few_arguments
+    sql: "SELECT format('%s %s', name) AS a FROM persons WHERE id = 1"
+  - id: format_of_an_unknown_specifier
+    sql: "SELECT format('%d', age) AS a FROM persons WHERE id = 1"
+  - id: format_of_an_identifier_is_refused
+    sql: "SELECT format('%I', name) AS a FROM persons WHERE id = 1"
+  # overlay: substring(s, 1, n - 1) || r || substring(s, n + m)
+  - id: overlay_in_both_spellings
+    sql: "SELECT id, overlay(val PLACING 'XX' FROM 2) AS a, overlay(val PLACING 'XX' FROM 2 FOR 3) AS b, overlay(val, '#', 1, 0) AS c, overlay(val PLACING nullable_val FROM 3 FOR 1) AS e FROM strings ORDER BY id"
+  - id: overlay_past_the_end_and_backwards
+    sql: "SELECT id, overlay(val PLACING 'Z' FROM 20) AS a, overlay(val PLACING 'Z' FROM 2 FOR -1) AS b, overlay(val PLACING '' FROM 1 FOR 100) AS c, overlay(unicode_val PLACING '*' FROM 2 FOR 1) AS e FROM strings ORDER BY id"
+  - id: overlay_from_zero_is_an_error
+    sql: "SELECT overlay(val PLACING 'X' FROM 0) AS a FROM strings WHERE id = 1"
+  # quote_literal, quote_nullable
+  - id: quote_literal_and_quote_nullable
+    sql: "SELECT id, quote_literal(val) AS a, quote_nullable(nullable_val) AS b, quote_literal(nullable_val) AS c FROM strings ORDER BY id"
+  - id: quote_literal_of_quotes_and_backslashes
+    sql: "SELECT quote_literal('it''s') AS a, quote_literal('a\\b') AS b, quote_literal('\\''') AS c, quote_nullable(NULL) AS e, quote_literal(42) AS g, quote_literal(1.50) AS h FROM strings WHERE id = 1"
+  - id: quote_literal_of_other_types
+    sql: "SELECT id, quote_literal(age) AS a, quote_literal(salary) AS b, quote_nullable(hire_date) AS c, quote_literal(active) AS e FROM persons ORDER BY id"
+  # translate
+  - id: translate_maps_and_deletes
+    sql: "SELECT id, translate(val, 'aeiou', 'AEIOU') AS a, translate(val, 'lo', 'x') AS b, translate(val, 'abc', 'bcd') AS c, translate(unicode_val, 'éüß', 'eu') AS e FROM strings ORDER BY id"
+  - id: translate_takes_a_character_first_place
+    sql: "SELECT id, translate(val, 'll', 'ab') AS a, translate(val, 'hello', 'HE') AS b, translate(val, '', 'x') AS c, translate(nullable_val, 'st', 'tx') AS e FROM strings WHERE id <> 10 ORDER BY id"
+  - id: translate_of_a_cycle_is_refused
+    sql: "SELECT translate(val, 'ab', 'ba') AS a FROM strings WHERE id = 1"
+  # split_part
+  - id: split_part_fields
+    sql: "SELECT id, split_part(val, ' ', 1) AS a, split_part(val, ' ', 2) AS b, split_part(val, ' ', 3) AS c, split_part(val, 'e', 2) AS e, split_part(val, '', 1) AS g, split_part(val, '', 2) AS h FROM strings ORDER BY id"
+  - id: split_part_of_longer_delimiters
+    sql: "SELECT id, split_part(val, 'ab', 1) AS a, split_part(val, '  ', 2) AS b, split_part(nullable_val, 's', 5) AS c, split_part(unicode_val, 'é', 2) AS e FROM strings ORDER BY id"
+  - id: split_part_of_field_zero_is_an_error
+    sql: "SELECT split_part(val, ' ', 0) AS a FROM strings WHERE id = 1"
+  - id: split_part_from_the_end_is_refused
+    sql: "SELECT split_part(val, ' ', -1) AS a FROM strings WHERE id = 1"
+  # the trims, their characters named
+  - id: trims_of_named_spaces
+    sql: "SELECT id, '[' || ltrim(val, ' ') || ']' AS a, '[' || rtrim(val, ' ') || ']' AS b, '[' || btrim(val, ' ') || ']' AS c, '[' || trim(BOTH ' ' FROM val) || ']' AS e, '[' || trim(LEADING ' ' FROM empty_val) || ']' AS g FROM strings ORDER BY id"
+  - id: trim_of_other_characters_is_refused
+    sql: "SELECT btrim(val, 'hx') AS a FROM strings WHERE id = 1"
+  - id: split_part_of_a_delimiter_beyond_the_basic_plane
+    sql: "SELECT id, split_part(val || '🎉x🎉yz', '🎉', 2) AS a, split_part(val || '🎉x🎉yz', '🎉', 3) AS b FROM strings ORDER BY id"

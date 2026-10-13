@@ -1,4 +1,9 @@
 package com.legend.server;
+
+import com.legend.queries.FileCubeRecords;
+import com.legend.queries.FileRecords;
+import com.legend.queries.SavedCubes;
+import com.legend.queries.SavedQueries;
 import com.legend.json.Json;
 
 
@@ -39,18 +44,25 @@ public class LegendHttpServer {
     private final Origins origins;
     /** The saved-query store {@code --query-store DIR} names, or null (its calls are then refused). */
     private final @com.legend.base.Nullable SavedQueries queryStore;
+    /** DataCube's saved pages, beside the queries ({@code DIR/dataCube}; the program's B6), or null. */
+    private final @com.legend.base.Nullable SavedCubes cubeStore;
 
     /** On the loopback interface, loopback origins only: the development server. */
     public LegendHttpServer(int port) throws IOException {
         this(port, java.net.InetAddress.getLoopbackAddress(), Origins.LOOPBACK, null);
     }
 
+    /** {@code queryStore}: the directory {@code --query-store DIR} names -- the saved queries in it, DataCube's saved
+     *  pages in its {@code dataCube} -- or null, every call of the store's then refused. */
     public LegendHttpServer(int port, java.net.InetAddress bind, Origins origins,
-            @com.legend.base.Nullable SavedQueries queryStore) throws IOException {
+            java.nio.file.@com.legend.base.Nullable Path queryStore) throws IOException {
         this.server = HttpServer.create(new InetSocketAddress(bind, port), 0);
         this.lspServer = new PureLspServer();
         this.origins = origins;
-        this.queryStore = queryStore;
+        this.queryStore = queryStore == null ? null
+                : new SavedQueries(new FileRecords(queryStore), System::currentTimeMillis);
+        this.cubeStore = queryStore == null ? null
+                : new SavedCubes(new FileCubeRecords(queryStore.resolve("dataCube")), System::currentTimeMillis);
         setupRoutes();
     }
 
@@ -123,13 +135,17 @@ public class LegendHttpServer {
             }
             String body = readBody(exchange);
             String rest = exchange.getRequestURI().getRawPath().substring("/api/pure/v1/query".length());
-            PureV1Api.Answer a = SavedQueries.answer(queryStore, exchange.getRequestMethod(), rest,
-                    exchange.getRequestURI().getRawQuery(), body, SavedQueries.ANONYMOUS);
+            // DataCube's saved pages (SavedCubes, the program's B6), else the saved queries
+            SavedQueries.Answer a = rest.equals("/dataCube") || rest.startsWith("/dataCube/")
+                    ? SavedCubes.answer(cubeStore, exchange.getRequestMethod(), rest.substring("/dataCube".length()),
+                            exchange.getRequestURI().getRawQuery(), body, SavedQueries.ANONYMOUS)
+                    : SavedQueries.answer(queryStore, exchange.getRequestMethod(), rest,
+                            exchange.getRequestURI().getRawQuery(), body, SavedQueries.ANONYMOUS);
             if (a.status() == 204) {
                 exchange.sendResponseHeaders(204, -1);
                 exchange.close();
             } else {
-                sendResponse(exchange, a.status(), a.json(), a.contentType());
+                sendResponse(exchange, a.status(), a.json(), "application/json");
             }
         });
         route("/api/server/v1/currentUser", exchange -> {
@@ -331,10 +347,10 @@ public class LegendHttpServer {
             }
         }
         // arguments: [port] [--query-store DIR] (the saved-query store's directory)
-        SavedQueries queryStore = null;
+        java.nio.file.Path queryStore = null;
         for (int i = 0; i < args.length; i++) {
             if ("--query-store".equals(args[i]) && i + 1 < args.length) {
-                queryStore = new SavedQueries(java.nio.file.Path.of(args[++i]), System::currentTimeMillis);
+                queryStore = java.nio.file.Path.of(args[++i]);
             } else {
                 try {
                     port = Integer.parseInt(args[i]);

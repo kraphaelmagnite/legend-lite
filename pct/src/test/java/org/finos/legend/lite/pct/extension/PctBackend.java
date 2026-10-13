@@ -109,7 +109,8 @@ public final class PctBackend {
 
             @Override
             Connection openSystem() throws SQLException {
-                return DriverManager.getConnection(EmbeddedClickHouse.shared().jdbcUrl("default"));
+                // a session of its own: ClickHouse keeps a temporary table only in an HTTP session
+                return DriverManager.getConnection(EmbeddedClickHouse.shared().sessionJdbcUrl("default"));
             }
         },
         POSTGRES(DatabaseType.Postgres) {
