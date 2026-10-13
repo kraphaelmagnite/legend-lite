@@ -237,8 +237,20 @@ with the compiler's plan/execution split**, in this order:
    dropped by the user (PARK-36). Files beyond the runbook's lists: `tools/browser/pinned-chromium.mjs` (the guard),
    `site/verify.mjs` (guarded by hand), `datacube/test/browser-guard.mjs` (its test). Reviews: the Compiler Rewrite
    line (MODULE.bazel, the BUILD files, the guard), the Studio line (Query's and Studio's BUILD, `duckdb-tab.ts`,
-   `site/verify.mjs`), an audit. Next: C5 in the dialect program's shape, after that line's answer (its section);
-   then F. **Step 2's second landing announced 2026-10-11 (rule 5; branch `datacube-m3`; the design's §15.6a,
+   `site/verify.mjs`), an audit. **C5 announced 2026-10-13 (branch `datacube/c5-project-data`; the runbook's C5, the
+   user's design): a project's Data rows in a database of its own inside the host's database, named by what it holds
+   and kept** (the tab's DuckDB, Python's, legend-lite's server). Core files: `setup/ProjectData.java` (new),
+   `sql/dialect/HostOperations.java` and `DuckDbHostOperations.java` (new files, clear of the dialect program's
+   `DuckDb.java`; its section, item 3), `compiler/ModelBuilder.java`, `compiler/element/ModelContext.java` and
+   `PureModelContext.java` (`dataElements()`), `server/ConnectionResolver.java` (a held in-memory database made holding
+   the model's Data rows, keyed by them, opened outside the store's lock), `server/PureV1Api.java` (a refusal's words),
+   `core/BUILD.bazel` (`:setup` reaches `:cache`, `:protocol`; `:server_lib` reaches `:setup`),
+   `tools/deps/core-layers.txt`, `ParkedWorkLedgerTest` (PARK-35's anchor gone: PARK-33 and PARK-35 closed); tests
+   `sql/dialect/HostOperationsTest`, `server/ProjectRowsTest`. Beyond core: `wasm/` Boundary and TabExports (the
+   planner-protocol kind `projectData`), `native/` (`lite_project_data`), engine-client, Query, Studio, DataCube,
+   `python/`. Reviews: the Compiler Rewrite line (core), Plan Gen (the boundary), the Studio line (engine-client, Query,
+   Studio), an audit. Then D5 (no SQL text in TypeScript or Python's host, claimed in the dialect program's section),
+   stacked on it; then F. **Step 2's second landing announced 2026-10-11 (rule 5; branch `datacube-m3`; the design's §15.6a,
    agreed with the user): a cross-area edit in `core/`** -- the route renamed and two more beside it,
    `/api/lite/v1/model/createClass` (was `/api/lite/v1/relational/promoteRelationToModel`), `createAssociation`,
    `createDataSpace`, one atomic writer under them. Core files: `core/src/main/java/com/legend/server/`
