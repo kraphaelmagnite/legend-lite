@@ -129,6 +129,17 @@ node_test(
     wasm = True,
 )
 
+# rows a page makes, as Arrow (arrow-ipc.ts arrowIpcStream: DataCube's demo trades), read back by DuckDB-WASM's own reader
+node_test(
+    name = "arrow_ipc_test",
+    size = "small",
+    data = [
+        ":engine_client",
+        ":node_modules/@duckdb/duckdb-wasm",
+    ],
+    entry_point = "test/arrow-ipc.test.ts",
+)
+
 # Snap's engine half (plan A6, moved from DataCube): freezing rows into the tab's DuckDB, the stamp, the refusals
 node_test(
     name = "snap_test",

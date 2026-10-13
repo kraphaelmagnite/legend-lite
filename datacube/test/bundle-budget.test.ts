@@ -87,8 +87,12 @@ function startup(bundle = join(DEMO, 'bundle.js')): string[] {
  *  main before it 391,846 (+236: the session setup's 708 since 391,138 came with PR #31, under the budget).
  *  393,000 -> 394,000 (2026-10-13, the program's D): a grid's export is one core for the screen's Export menu and
  *  Python's grid.export() (src/export-render.ts: the renderer, the formats and the heatmaps moved out of app.ts into a
- *  module of their own, which the headless bundle calls too). Measured 393,014, B4 before it 392,804 (+210). */
-const BUDGET = 394_000;
+ *  module of their own, which the headless bundle calls too). Measured 393,014, B4 before it 392,804 (+210).
+ *  394,000 -> 395,000 (2026-10-13, the program's D5: the page spells no SQL): the demo's trades made in the tab as
+ *  Arrow data and put in by DuckDB's Arrow reader, where a SQL statement generated them (demo/boot.ts generateTrades;
+ *  engine-client's arrow-ipc.ts arrowIpcStream -- Arrow's table and vector makers; its writer was already here,
+ *  DuckDB-WASM's). Measured 394,429, D5's step 5 before it 393,598 (+831). */
+const BUDGET = 395_000;
 
 /** The engine page's (demo/engine.html: DataCube on Python's engine, which runs its queries) startup download,
  *  gzipped: no DuckDB-WASM and no compiler. Set 2026-10-08 at its first measure (288,876 bytes) and the app's headroom
