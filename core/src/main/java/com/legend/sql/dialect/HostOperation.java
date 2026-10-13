@@ -25,6 +25,10 @@ public sealed interface HostOperation {
             boolean declared) {
         public Name {
             java.util.Objects.requireNonNull(name, "name");
+            // a model's default schema is no schema: its tables are made with none (as their seed makes them)
+            if (declared && "default".equals(schema)) {
+                schema = null;
+            }
         }
 
         /** A person's or a host's name in the database's own schema. */
@@ -34,7 +38,7 @@ public sealed interface HostOperation {
 
         /** A model's declared table: its schema ({@code null} or {@code default}: none) and its name. */
         public static Name declared(@com.legend.base.Nullable String schema, String table) {
-            return new Name(null, schema == null || "default".equals(schema) ? null : schema, table, true);
+            return new Name(null, schema, table, true);
         }
     }
 

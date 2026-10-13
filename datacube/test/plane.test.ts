@@ -9,6 +9,8 @@
 // Against the real planner the source is `#>{trades::DB.TRADES}#`
 // and both failures are immediate.
 
+import { plannerOptions } from '#test-host';
+import { LitePlanner } from '../src/lite-planner.ts';
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
@@ -81,19 +83,24 @@ function selectOf(q: Lambda): { readonly source: unknown; readonly columns: read
   };
 }
 
+/** legend-lite's planner, which writes the copy's statements (D5): in-thread, or Python's library in the headless lane. */
+const host = new LitePlanner({ model: '', runtime: '', ...plannerOptions(), cache: false });
+
 /**
  * Where these cubes snap: a table the model would declare, and the planner its copy is planned
  * with (the same model against the tab engine's runtime; a planner of its own here).
  */
 const snapInto = (planner: Planner = new RecordingPlanner()): SnapTarget =>
-  ({ table: 'TRADES_SNAP', source: accessor('trades::DB', 'TRADES_SNAP'), conversions: [], planner });
+  ({ table: 'TRADES_SNAP', source: accessor('trades::DB', 'TRADES_SNAP'), conversions: [], planner, host });
 
 class RecordingEngine extends FakeEngine {
   readonly name = 'recording';
   readonly sql: string[] = [];
   /** The tables Arrow was loaded into (DuckDbEngine.loadArrow). */
   readonly loaded: string[] = [];
-  async loadArrow(target: { readonly schema?: string; readonly table: string }, chunks: AsyncIterable<Uint8Array>): Promise<void> {
+  async loadArrow(target: { readonly schema?: string; readonly table: string }, chunks: AsyncIterable<Uint8Array>,
+    prepare: readonly string[] = []): Promise<void> {
+    this.sql.push(...prepare);
     for await (const _ of chunks) void _;
     this.loaded.push(target.table);
   }

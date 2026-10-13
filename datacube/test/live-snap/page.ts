@@ -174,7 +174,7 @@ async function run(): Promise<void> {
     }
     // SNAP: exactly the rows the reader may read, through the real SnapManager
     const sourceSql = (await planner.plan(from(SOURCE).select(COLUMNS).lambda())).sql;
-    const snaps = new SnapManager(local, live);
+    const snaps = new SnapManager(local, live, planner);
     const info = await snaps.snap(sourceSql, 0, { target: { table: 'TRADES', source: SOURCE, conversions: [] } });
     equal(info.rowCount, 10, 'the snap holds every row the reader may read:');
     const refused: string[] = [];
@@ -214,7 +214,7 @@ async function run(): Promise<void> {
       measures: [{ name: 'notional', column: 'notional', fn: 'sum' as const }], sorts: [{ column: 'region', direction: 'asc' as const }] };
     const pure = levelLambda(snapshot, { level: 1, parent: [] });
     const liveOut = await new PlanThenRun(own, live).run(pure, snapshot);
-    const snaps = new SnapManager(local, live);
+    const snaps = new SnapManager(local, live, planner);
     await snaps.snap((await own.plan(from(m.source).select(COLUMNS).lambda())).sql, 0,
       { target: { schema: trades.schema, table: trades.name, source: m.source, conversions: m.conversions } });
     const localOut = await new PlanThenRun(own, local).run(pure, snapshot);
@@ -241,7 +241,7 @@ async function run(): Promise<void> {
     // an id the server never issued is not on its record
     match(await live.check('00000000-0000-0000-0000-000000000000'), /^Not on the warehouse's record for rita/);
     const sourceSql = (await planner.plan(from(SOURCE).select(COLUMNS).lambda())).sql;
-    const snaps = new SnapManager(local, live);
+    const snaps = new SnapManager(local, live, planner);
     const info = await snaps.snap(sourceSql, 0, { target: { table: 'TRADES', source: SOURCE, conversions: [] } });
     equal(info.pulledBy?.as, 'rita');
     match(await info.pulledBy!.check!(), /^On the warehouse's record for rita/);

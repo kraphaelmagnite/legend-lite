@@ -260,7 +260,7 @@ export interface WarehouseService {
   /** The single-user app's launch key: signed in with it, at the warehouse that served the page. */
   signInWithKey(key: string): Promise<{ session: WarehouseSession; objects: CatalogObject[] }>;
   /** A table's rows read Live there, as the signed-in user, by the page itself (the tab's). */
-  live?(session: WarehouseSession, catalog: string): WarehouseEngine;
+  live?(session: WarehouseSession, catalog: string, databaseType: string): WarehouseEngine;
   /**
    * A table's model written and held by the host, which then plans and runs its queries itself (Python's: C3, R4) --
    * the tab's own writer's answer, read-only, with the runtime a copy is planned against.

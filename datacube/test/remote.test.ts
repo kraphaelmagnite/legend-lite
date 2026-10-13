@@ -52,7 +52,6 @@ const empty = (epoch: number): ResultTable => ({
 
 class RecordingEngine extends FakeEngine {
   readonly name = 'recording';
-  readonly databaseType = 'DuckDB';
   readonly sql: string[] = [];
   failOn?: RegExp;
   async answer(sql: string, epoch: number): Promise<ResultTable> {

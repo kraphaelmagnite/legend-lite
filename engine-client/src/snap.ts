@@ -33,6 +33,7 @@
 // its cube behaviour on top): the manager, the stamp it carries, the refusals and the preflight. Where a snap's
 // queries are planned is the app's (DataCube's SnapTarget adds its planner).
 
+import type { HostName, HostOperation, HostOperationsSource } from './host-operations.ts';
 import { UI_LOCALE } from './locale.ts';
 import type { Lambda, ValueSpecification } from '../../pure-protocol/src/index.ts';
 import type { QueryEngine } from './engine.ts';
@@ -44,7 +45,9 @@ import type { Receipt } from './receipt.ts';
  * Arrow into the local store.
  */
 export interface RemoteSource {
-  /** Raw SQL on the remote plane: the preflight count. */
+  /** The remote plane's database type (a warehouse catalog's: DuckDB or Postgres), which its statements are written for. */
+  readonly databaseType: string;
+  /** Raw SQL on the remote plane: the preflight count, as the planner writes it for that database. */
   run: QueryEngine['run'];
   /** `onReceipt` hears, once the statement has succeeded, what the server issued for it. */
   arrowChunks(sql: string, signal?: AbortSignal, onReceipt?: (receipt: Receipt) => void): AsyncIterable<Uint8Array>;
@@ -55,6 +58,7 @@ interface ArrowLoader {
   loadArrow(
     target: { readonly schema?: string; readonly table: string },
     chunks: AsyncIterable<Uint8Array>,
+    prepare?: readonly string[],
   ): Promise<void>;
 }
 
@@ -128,12 +132,9 @@ export interface PreflightEstimate {
   readonly refusal?: string;
 }
 
-function quoteIdent(name: string): string {
-  return `"${name.replace(/"/g, '""')}"`;
-}
-
-function qualified(schema: string | undefined, table: string): string {
-  return schema ? `${quoteIdent(schema)}.${quoteIdent(table)}` : quoteIdent(table);
+/** A snap's table as a host operation names it: the name the app's model declares, quoted as written. */
+function named(schema: string | undefined, table: string): HostName {
+  return { ...(schema ? { schema } : {}), name: table };
 }
 
 /** What a cube asks of its snaps, wherever the copy is: the page's own store (SnapManager) or its host's (HostSnaps). */
@@ -156,15 +157,25 @@ export class SnapManager implements Snaps {
    * invent one. Every method that needs it refuses by name rather
    * than half-working -- the cache mode is what will fill this in.
    */
-  readonly #engine: QueryEngine | null;
+  readonly #engine: (QueryEngine & { readonly databaseType: string }) | null;
   /** The live plane, when it is remote; absent when live is the local store. */
   readonly #remote: RemoteSource | null;
+  /** What writes the copy's statements (the tab's planner: D5); none, a snap is refused by name. */
+  readonly #host: HostOperationsSource | undefined;
   #state: PlaneState = { mode: 'live' };
   #counter = 0;
 
-  constructor(engine: QueryEngine | null, remote: RemoteSource | null = null) {
+  constructor(engine: (QueryEngine & { readonly databaseType: string }) | null, remote: RemoteSource | null = null,
+    host?: HostOperationsSource) {
     this.#engine = engine;
     this.#remote = remote;
+    this.#host = host;
+  }
+
+  /** The planner's statements for `operations` on a database of `databaseType`, in order. */
+  async #statements(databaseType: string, operations: readonly HostOperation[]): Promise<string[]> {
+    if (!this.#host) throw new SnapRefusal('this cube has no planner to write its copy\u2019s statements: it cannot be snapped');
+    return (await this.#host.hostOperations(databaseType, operations)).flat();
   }
 
   /**
@@ -173,7 +184,7 @@ export class SnapManager implements Snaps {
    * "Cannot read properties of null" is not an answer anyone can
    * act on; "this plane has no local store to freeze into" is.
    */
-  #localStore(): QueryEngine {
+  #localStore(): QueryEngine & { readonly databaseType: string } {
     if (!this.#engine) {
       throw new SnapRefusal(
         'this cube\u2019s queries run on a remote engine, which has no'
@@ -212,12 +223,11 @@ export class SnapManager implements Snaps {
    * "this is 40 million rows" instead of watching a tab die.
    */
   async preflight(sourceSql: string, epoch: number): Promise<PreflightEstimate> {
-    // counted where the rows are: the remote live plane when there is one
+    // counted where the rows are: the remote live plane when there is one, by its own database's statement (a
+    // warehouse catalog that is Postgres asks for a subquery's alias, which DuckDB's spelling left out: D5)
     const engine = this.#remote ?? this.#localStore();
-    const r = await engine.run(
-      `SELECT count(*) AS n FROM (${sourceSql})`,
-      epoch,
-    );
+    const [count] = await this.#statements(engine.databaseType, [{ op: 'count', from: { query: sourceSql } }]);
+    const r = await engine.run(count!, epoch);
     const raw = r.columns[0]?.values[0] ?? 0;
     const rowCount = typeof raw === 'number' ? raw : Number(raw);
 
@@ -261,13 +271,11 @@ export class SnapManager implements Snaps {
     let pulledBy: Receipt | undefined;
     const schema = options.target.schema;
     const bare = options.target.table;
-    const table = qualified(schema, bare);
+    const table = named(schema, bare);
     const engine = this.#localStore();
-    // the copy's conversions, applied by the store the copy is written to (SnapTarget.conversions):
-    // the same rewrite an upload applies at ingest (upload.ts), in that store's SQL
-    const conversions = options.target.conversions;
-    const converted = (from: string): string => (conversions.length === 0 ? from
-      : `SELECT * REPLACE (${conversions.map((c) => `${c.sql} AS ${quoteIdent(c.column)}`).join(', ')}) FROM ${from}`);
+    // the copy's conversions, applied by the store the copy is written to (SnapTarget.conversions): the same rewrite an
+    // upload applies at ingest (upload.ts), each column replaced by the planner's expression for it
+    const replacing = options.target.conversions.map((c) => ({ column: c.column, sql: c.sql }));
     if (this.#remote) {
       // The rows live on the server: the live plan runs there, and its Arrow
       // chunks stream into a local table of the same name, so the model -- and
@@ -278,20 +286,30 @@ export class SnapManager implements Snaps {
       if (typeof loader.loadArrow !== 'function') {
         throw new SnapRefusal('the local store cannot load Arrow data, so a remote live plane cannot be snapped');
       }
-      const landing = conversions.length === 0 ? bare : `${bare}__pulled`;
+      const landing = replacing.length === 0 ? bare : `${bare}__pulled`;
+      const pulled = named(schema, landing);
+      // its schema made and the table there before dropped, by the planner's statements, before the rows load
+      const prepare = await this.#statements(engine.databaseType, [
+        ...(schema ? [{ op: 'schema' as const, name: schema }] : []),
+        { op: 'drop', kind: 'table', target: pulled },
+      ]);
       await loader.loadArrow({ ...(schema ? { schema } : {}), table: landing },
-        this.#remote.arrowChunks(sourceSql, undefined, (r) => { pulledBy = r; }));
+        this.#remote.arrowChunks(sourceSql, undefined, (r) => { pulledBy = r; }), prepare);
       if (landing !== bare) {
-        const pulled = qualified(schema, landing);
+        const [copy, drop] = await this.#host!.hostOperations(engine.databaseType, [
+          { op: 'relation', kind: 'table', target: table, replace: true, replacing, from: { relation: pulled } },
+          { op: 'drop', kind: 'table', target: pulled },
+        ]);
         try {
-          await engine.run(`CREATE OR REPLACE TABLE ${table} AS ${converted(pulled)}`, epoch);
+          for (const sql of copy!) await engine.run(sql, epoch);
         } finally {
-          await engine.run(`DROP TABLE IF EXISTS ${pulled}`, epoch);
+          for (const sql of drop!) await engine.run(sql, epoch);
         }
       }
     } else {
-      await engine.run(`CREATE OR REPLACE TABLE ${table} AS ${conversions.length === 0 ? sourceSql
-        : converted(`(${sourceSql}) AS ${quoteIdent('snap_source')}`)}`, epoch);
+      for (const sql of await this.#statements(engine.databaseType, [
+        { op: 'relation', kind: 'table', target: table, replace: true, replacing, from: { query: sourceSql } },
+      ])) await engine.run(sql, epoch);
     }
 
     const takenAt = new Date();
@@ -333,8 +351,10 @@ export class SnapManager implements Snaps {
 
   /** Live answered: the kept snap's table goes. */
   async discard(snap: SnapInfo): Promise<void> {
-    await this.#localStore()
-      .run(`DROP TABLE IF EXISTS ${qualified(snap.schema, snap.table)}`, 0);
+    const store = this.#localStore();
+    for (const sql of await this.#statements(store.databaseType, [
+      { op: 'drop', kind: 'table', target: named(snap.schema, snap.table) },
+    ])) await store.run(sql, 0);
   }
 }
 

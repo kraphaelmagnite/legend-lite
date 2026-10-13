@@ -8,6 +8,7 @@
 // throws the refusal. What it keeps is the query side's own: the runners,
 // the guard, and the plane (engine-client's snap.ts).
 
+import type { HostOperationsSource } from '../../engine-client/src/host-operations.ts';
 import { UI_LOCALE } from '../../engine-client/src/locale.ts';
 import { from, type Lambda } from '../../pure-protocol/src/index.ts';
 import type { QueryEngine } from '../../engine-client/src/engine.ts';
@@ -92,6 +93,8 @@ export interface CompileOutcome {
  */
 export interface SnapTarget extends SnapTable {
   readonly planner: Planner;
+  /** What writes the copy's statements on the host's database: the tab's planner module (D5). */
+  readonly host: HostOperationsSource;
 }
 
 export interface Planner {
@@ -335,7 +338,9 @@ export class CubeController {
     const host = asRunner ? options.hostSnap : undefined;
     this.#copy = host ? host.runner
       : local && options.snapTarget ? new PlanThenRun(options.snapTarget.planner, local.engine) : null;
-    this.#snaps = host ? new HostSnaps(host) : new SnapManager(local ? local.engine : null, options.live ?? null);
+    this.#snaps = host ? new HostSnaps(host)
+      : new SnapManager(local ? local.engine as QueryEngine & { readonly databaseType: string } : null, options.live ?? null,
+        options.snapTarget?.host);
   }
 
   get snaps(): Snaps {

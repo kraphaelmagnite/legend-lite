@@ -1,8 +1,10 @@
 // app.test.ts's screen tests, in jsdom: the app, the bar says what you are looking at, and nothing else. The others are in app.test.ts, which
 // runs in the headless lane too (docs/DATACUBE_HEADLESS_PYTHON_DESIGN_2026_10_11.md §6).
 
+import { LitePlanner } from '../src/lite-planner.ts';
+import { plannerOptions } from '#test-host';
 import assert from 'node:assert/strict';
-import { beforeEach, describe, it } from 'node:test';
+import { before, beforeEach, describe, it } from 'node:test';
 
 import { JSDOM } from 'jsdom';
 import { CubeApp } from '../src/app.ts';
@@ -144,6 +146,13 @@ class PivotEngine extends FakeEngine {
     };
   }
 }
+
+/** legend-lite's planner, which writes a snap's statements (D5): in-thread, or Python's library in the headless lane. */
+const copies = new LitePlanner({ model: '', runtime: '', ...plannerOptions(), cache: false });
+// its module loaded before any test clicks Snap: a click is followed by a few ticks, not a module's load
+before(async () => {
+  await copies.hostOperations('DuckDB', []);
+});
 
 describe('the app', () => {
   let dom: JSDOM;
@@ -1197,7 +1206,7 @@ describe('the bar says what you are looking at, and nothing else', () => {
     const app = new CubeApp(root, SNAPSHOT, {
       engine: new CountingEngine(),
       planner: new StubPlanner(),
-      snapTarget: { table: 'TRADES_SNAP', source: element('TRADES_SNAP'), conversions: [], planner: new StubPlanner() },
+      snapTarget: { table: 'TRADES_SNAP', source: element('TRADES_SNAP'), conversions: [], planner: new StubPlanner(), host: copies },
     });
     await app.open();
     const toggle = root.querySelector('.dc-titlebar-toggle') as HTMLButtonElement;
@@ -1221,7 +1230,7 @@ describe('the bar says what you are looking at, and nothing else', () => {
     const app = new CubeApp(root, SNAPSHOT, {
       engine,
       planner: new StubPlanner(),
-      snapTarget: { table: 'TRADES_SNAP', source: element('TRADES_SNAP'), conversions: [], planner: new StubPlanner() },
+      snapTarget: { table: 'TRADES_SNAP', source: element('TRADES_SNAP'), conversions: [], planner: new StubPlanner(), host: copies },
       heldCopy: { label: 'trades.csv', takenAt: new Date(2026, 8, 29, 9, 30), rowCount: 1234 },
     });
     await app.open();
@@ -1250,7 +1259,7 @@ describe('the bar says what you are looking at, and nothing else', () => {
     const app = new CubeApp(root, SNAPSHOT, {
       engine: new SigningEngine(),
       planner: new StubPlanner(),
-      snapTarget: { table: 'TRADES_SNAP', source: element('TRADES_SNAP'), conversions: [], planner: new StubPlanner() },
+      snapTarget: { table: 'TRADES_SNAP', source: element('TRADES_SNAP'), conversions: [], planner: new StubPlanner(), host: copies },
     });
     await app.open();
     const chip = () => root.querySelector('.dc-status-receipt') as HTMLButtonElement;

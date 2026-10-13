@@ -404,6 +404,7 @@ export function pageSources(d: SourcesOf): PageSources {
     snapTarget: {
       schema: o.schema, table: o.name, source: m.source, conversions: m.conversions,
       planner: l.another(m.model, m.snapRuntime, { bitColumns: m.bitColumns }),
+      host: l.tables,
     },
   });
 
@@ -418,7 +419,7 @@ export function pageSources(d: SourcesOf): PageSources {
     const m = await warehouseModel(local, chosen);
     const own = local.another(m.model, m.runtime, { bitColumns: m.bitColumns });
     const columns = await sourceColumns(own, m.source);
-    const live = track(on.live(session, chosen.catalog));
+    const live = track(on.live(session, chosen.catalog, chosen.databaseType));
     const name = `${chosen.schema}.${chosen.name}`;
     // where it is, never the sign-in: whoever reopens it signs in as themselves
     const cubeSource: WarehouseSource = {

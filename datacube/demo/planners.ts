@@ -45,7 +45,7 @@ async function inTab(model: string): Promise<Engine> {
   return {
     planner,
     source: SOURCE,
-    snapTarget: { ...SNAP_TARGET, planner },
+    snapTarget: { ...SNAP_TARGET, planner, host: planner },
     tables: planner,
     projects: planner,
     label: 'local',
@@ -76,7 +76,7 @@ async function onServer(model: string, which: 'remote' | 'engine'): Promise<Engi
   return {
     planner,
     source: SOURCE,
-    snapTarget: { ...SNAP_TARGET, planner },
+    snapTarget: { ...SNAP_TARGET, planner, host: writer },
     tables: writer,
     projects: writer,
     label: which,

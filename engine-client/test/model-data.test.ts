@@ -6,17 +6,14 @@
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import { afterEach, before, describe, it } from 'node:test';
-import { fileURLToPath } from 'node:url';
 
 import { DuckDbEngine, type ArrowishConnection } from '../src/duckdb.ts';
-import { WasmGrammar } from '../src/legend/wasm-grammar.ts';
-import { answer, type PlannerModule } from '../src/legend/planner-answer.ts';
-import type { RequestBody } from '../src/legend/planner-protocol.ts';
+import type { WasmGrammar } from '../src/legend/wasm-grammar.ts';
+import { loadPlanner } from './planner.ts';
 import { dataTables, loadDataTables, seeded, type FileSink } from '../src/model-data.ts';
 import { ProjectDatabases, ProjectRunner } from '../src/project-data.ts';
 import { TabTables, type Model } from '../src/tab-data.ts';
 import { engineClientRequire } from '../src/node-require.ts';
-import { runfileDirUrl } from '../../tools/js/runfiles.mts';
 
 type Elements = Parameters<typeof dataTables>[0];
 
@@ -78,25 +75,6 @@ const tablesOf = async (m: Model) => seeded(planner, m.text, dataTables(m.elemen
 const V1 = 'ID,NAME,COUNTRY\n1,Meridian Capital,US\n2,Halberd Securities,GB\n';
 const V2 = 'ID,NAME,COUNTRY\n3,Corvid Partners,FR\n';
 const DESK = 'ID,NAME,COUNTRY\n5,Rates Desk,US\n';
-
-/** legend-lite's planner, in this process, answering as the tab's worker does. */
-async function loadPlanner(): Promise<WasmGrammar> {
-  const dir = new URL(runfileDirUrl('WASM_PLANNER'));
-  const runtime = await import(new URL('wasm-gc-module-runtime.js', dir).href) as {
-    load(src: string, options: unknown): Promise<PlannerModule>;
-  };
-  const m = await runtime.load(fileURLToPath(new URL('classes.wasm', dir)), {
-    stackDeobfuscator: { enabled: false },
-    installImports(i: Record<string, unknown>) {
-      i.teavmConsole = { putcharStdout() {}, putcharStderr() {} };
-    },
-  });
-  return new WasmGrammar({
-    async ask(r: RequestBody): Promise<string> {
-      return answer(m, r);
-    },
-  });
-}
 
 before(async () => {
   planner = await loadPlanner();

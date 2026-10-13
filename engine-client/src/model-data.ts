@@ -4,6 +4,8 @@
 // table here holds what the same table on the server holds, its column types the server's. This file says which tables
 // a model's test data fills and which Database declares each, and runs the statements it is given.
 
+import type { HostOperationsSource } from './host-operations.ts';
+
 /** The model JSON parts read here (grammarToJson/model). */
 interface ModelElement {
   readonly _type: string;
@@ -138,10 +140,6 @@ export interface FileSink extends DataSink {
   dropFile?(name: string): Promise<void>;
 }
 
-/** A name as DuckDB reads it: a person's file's own column names, read as the file has them. */
-const ident = (s: string): string => `"${s.replace(/"/g, '""')}"`;
-const literal = (s: string): string => `'${s.replace(/'/g, "''")}'`;
-
 /**
  * A table made from a person's own file (plan A2's second source), in one transaction: the table made empty by the
  * server's statements (a header alone: its column types the server's), then the file's rows put in -- each declared
@@ -151,7 +149,7 @@ const literal = (s: string): string => `'${s.replace(/'/g, "''")}'`;
  * name: read_csv and read_parquet read a name as a glob (`sales[2024].csv` matches nothing). The table's names are the
  * planner's (`seed`); returned, to drop it by later.
  */
-export async function loadFileTable(sink: FileSink, source: SeedSource, model: string,
+export async function loadFileTable(sink: FileSink, source: SeedSource & HostOperationsSource, databaseType: string, model: string,
   target: { readonly database: string; readonly schema: string; readonly table: string; readonly columns: readonly { readonly name: string }[] },
   file: { readonly name: string; readonly bytes: Uint8Array }, as: string): Promise<TableSeed> {
   const format = /\.csv$/i.test(file.name) ? 'csv' : /\.parquet$/i.test(file.name) ? 'parquet' : undefined;
@@ -162,19 +160,28 @@ export async function loadFileTable(sink: FileSink, source: SeedSource, model: s
   }]);
   const seed = made!.seed;
   const registered = `${as}.${format}`;
+  // the transaction's steps and the rows put in: the planner's statements (D5), each declared column from the file's
+  // column of its name -- a CSV's read as text, a Parquet's as typed, DuckDB converting each value to its column's type
+  const [begin, insert, commit, rollback] = await source.hostOperations(databaseType, [
+    { op: 'transaction', step: 'begin' },
+    {
+      op: 'insert', target: { schema: target.schema, name: target.table, declared: true },
+      // the planner's own columns: each as declared, the name a file's header says (no store quotes)
+      columns: seed.columns.map((c) => ({ target: c.name, from: c.name })),
+      from: { file: { at: registered, format: format === 'csv' ? 'csvText' : 'parquet' } },
+    },
+    { op: 'transaction', step: 'commit' },
+    { op: 'transaction', step: 'rollback' },
+  ]);
   // a copy: the database takes the buffer it is given, and the caller keeps its bytes (Studio puts them in again)
   await sink.registerFileBuffer(registered, file.bytes.slice());
-  const read = format === 'csv' ? `read_csv(${literal(registered)}, header = true, all_varchar = true)` : `read_parquet(${literal(registered)})`;
   try {
-    await sink.run('BEGIN TRANSACTION');
+    for (const sql of begin!) await sink.run(sql);
     try {
-      for (const sql of seed.sql) await sink.run(sql);
-      await sink.run(`INSERT INTO ${seed.table} (${seed.columns.map((c) => c.sql).join(', ')}) `
-        + `SELECT ${seed.columns.map((c) => ident(c.name)).join(', ')} FROM ${read}`);
-      await sink.run('COMMIT');
+      for (const sql of [...seed.sql, ...insert!, ...commit!]) await sink.run(sql);
     } catch (e) {
       try {
-        await sink.run('ROLLBACK');
+        for (const sql of rollback!) await sink.run(sql);
       } catch (r) {
         throw new Error(`${e instanceof Error ? e.message : String(e)} -- and putting the table back failed: ${r instanceof Error ? r.message : String(r)}`);
       }

@@ -4,8 +4,9 @@
 // it is reset -- or from nowhere yet.
 
 import type { QueryEngine } from './engine.ts';
-import { databaseOf, databaseTables, dataTables, loadFileTable, seeded, type FileSink, type SeedSource } from './model-data.ts';
+import { databaseOf, databaseTables, dataTables, loadFileTable, type FileSink, type SeedSource } from './model-data.ts';
 import type { ProjectDatabases, ProjectEngine, ProjectRunner } from './project-data.ts';
+import type { HostOperationsSource } from './host-operations.ts';
 
 type Elements = Parameters<typeof dataTables>[0];
 
@@ -57,9 +58,9 @@ interface PutFile {
 export class TabTables {
   readonly #projects: ProjectDatabases;
   readonly #runner: ProjectRunner;
-  readonly #host: QueryEngine;
+  readonly #host: QueryEngine & { readonly databaseType: string };
   readonly #sink: Pick<FileSink, 'registerFileBuffer' | 'dropFile'>;
-  readonly #source: SeedSource;
+  readonly #source: SeedSource & HostOperationsSource;
   /** The tables a person's file fills, by `schema.table`: the person's own state. */
   readonly #files = new Map<string, PutFile>();
   /** How many times the person's files changed; the database there now was made at `#current.files`. */
@@ -78,8 +79,8 @@ export class TabTables {
    * registered for a read, and let go of after (the tab's database); `source`: the planner's statements for a table a
    * file fills.
    */
-  constructor(projects: ProjectDatabases, runner: ProjectRunner, host: QueryEngine,
-    files: Pick<FileSink, 'registerFileBuffer' | 'dropFile'>, source: SeedSource) {
+  constructor(projects: ProjectDatabases, runner: ProjectRunner, host: QueryEngine & { readonly databaseType: string },
+    files: Pick<FileSink, 'registerFileBuffer' | 'dropFile'>, source: SeedSource & HostOperationsSource) {
     this.#projects = projects;
     this.#runner = runner;
     this.#host = host;
@@ -117,8 +118,9 @@ export class TabTables {
     const { engine } = await this.#open(model);
     const declared = databaseTables(model.elements);
     const tests = new Map(dataTables(model.elements).map((t) => [key(t.schema, t.table), t.element]));
-    const named = await seeded(this.#source, model.text, declared.map((t) => ({
-      database: t.database, schema: t.schema, table: t.table, csv: t.columns.map((c) => c.name).join(','), element: '',
+    // each table's rows counted by the planner's statement for it (D5), the table named as the model declares it
+    const counts = await this.#source.hostOperations(this.#host.databaseType, declared.map((t) => ({
+      op: 'count' as const, from: { relation: { schema: t.schema, name: t.table, declared: true } },
     })));
     const out: TableState[] = [];
     for (const [i, t] of declared.entries()) {
@@ -128,7 +130,7 @@ export class TabTables {
       const source: TableSource = file !== undefined ? { kind: 'file', name: file.name } : element !== undefined ? { kind: 'test', element } : { kind: 'none' };
       let rows: number | undefined;
       try {
-        rows = Number((await engine.run(`SELECT COUNT(*) AS n FROM ${named[i]!.seed.table}`, 0)).columns[0]!.values[0]);
+        rows = Number((await engine.run(counts[i]![0]!, 0)).columns[0]!.values[0]);
       } catch {
         rows = undefined;     // not made yet: nothing fills it
       }
@@ -182,6 +184,6 @@ export class TabTables {
       ...(this.#sink.dropFile ? { dropFile: (name: string) => this.#sink.dropFile!(name) } : {}),
       run: (sql) => engine.run(sql, 0),
     };
-    await loadFileTable(sink, this.#source, model.text, target, file, `upload-${++this.#uploads}`);
+    await loadFileTable(sink, this.#source, this.#host.databaseType, model.text, target, file, `upload-${++this.#uploads}`);
   }
 }

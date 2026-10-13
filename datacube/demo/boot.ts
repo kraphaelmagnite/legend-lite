@@ -233,7 +233,7 @@ export type MakePlanner = (status: HTMLElement) => Promise<Engine>;
 /** Where the demo's shared model and tables live: `#>{trades::DB.TRADES}#`. */
 export const SOURCE = accessor('trades::DB', 'TRADES');
 /** Where the demo cube snaps; its copy is planned by the page's own planner (the model is DuckDB's). */
-export const SNAP_TARGET: Omit<SnapTarget, 'planner'> = {
+export const SNAP_TARGET: Omit<SnapTarget, 'planner' | 'host'> = {
   table: 'TRADES_SNAP',
   source: accessor('trades::DB', 'TRADES_SNAP'),
   conversions: [],

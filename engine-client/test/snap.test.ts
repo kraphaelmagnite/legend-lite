@@ -7,6 +7,8 @@ import path from 'node:path';
 import { after, before, describe, it } from 'node:test';
 
 import { DuckDbEngine, type ArrowishConnection } from '../src/duckdb.ts';
+import type { WasmGrammar } from '../src/legend/wasm-grammar.ts';
+import { loadPlanner } from './planner.ts';
 import { element } from '../../pure-protocol/src/index.ts';
 
 /** The live source, and where a snap goes: the model would declare both. */
@@ -19,7 +21,11 @@ import {
 
 let engine: DuckDbEngine;
 
+/** The planner, which writes each copy's statements (D5). */
+let planner: WasmGrammar;
+
 before(async () => {
+  planner = await loadPlanner();
   const duckdb = engineClientRequire('@duckdb/duckdb-wasm/blocking');
   const dist = path.dirname(engineClientRequire.resolve('@duckdb/duckdb-wasm/blocking'));
   const db = await duckdb.createDuckDB(
@@ -54,14 +60,14 @@ after(async () => {
 
 describe('SnapManager', () => {
   it('starts live and reads from the live source', () => {
-    const s = new SnapManager(engine);
+    const s = new SnapManager(engine, null, planner);
     assert.equal(s.state.mode, 'live');
     assert.equal(s.isSnapped, false);
     assert.equal(s.sourceFor(LIVE), LIVE);
   });
 
   it('freezes rows and reports what was taken, and when', async () => {
-    const s = new SnapManager(engine);
+    const s = new SnapManager(engine, null, planner);
     const before = Date.now();
     const info = await s.snap('SELECT * FROM trades', 1, { target: target('snap_a') });
 
@@ -76,7 +82,7 @@ describe('SnapManager', () => {
   it('is genuinely frozen: live changes do not reach the snap', async () => {
     // its own live table, so the row it adds reaches no other test (Bazel workplan P3-10)
     await engine.run('CREATE TABLE trades_frozen AS SELECT * FROM trades', 0);
-    const s = new SnapManager(engine);
+    const s = new SnapManager(engine, null, planner);
     const { table: snapped } = await s.snap('SELECT * FROM trades_frozen', 1, { target: target('snap_frozen') });
 
     // The world moves on underneath.
@@ -98,7 +104,7 @@ describe('SnapManager', () => {
   });
 
   it('returns to live on release', async () => {
-    const s = new SnapManager(engine);
+    const s = new SnapManager(engine, null, planner);
     await s.snap('SELECT * FROM trades', 1, { target: target('snap_released') });
     await s.release();
     assert.equal(s.state.mode, 'live');
@@ -106,7 +112,7 @@ describe('SnapManager', () => {
   });
 
   it('refuses a snap beyond the row ceiling, before materialising', async () => {
-    const s = new SnapManager(engine);
+    const s = new SnapManager(engine, null, planner);
     const estimate = await s.preflight(
       'SELECT * FROM range(20000000)',
       1,
@@ -126,7 +132,7 @@ describe('SnapManager', () => {
   });
 
   it('gives each snap its own table so two can coexist', async () => {
-    const s = new SnapManager(engine);
+    const s = new SnapManager(engine, null, planner);
     const a = await s.snap('SELECT * FROM trades WHERE region = 0', 1, { target: target('snap_region_0') });
     const b = await s.snap('SELECT * FROM trades WHERE region = 1', 2, { target: target('snap_region_1') });
     assert.notEqual(a.table, b.table);

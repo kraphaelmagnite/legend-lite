@@ -266,9 +266,9 @@ function warehouseService(config: TabConfig, location: { readonly href: string }
       const session = await driver.signInWithKey(binding, config.warehouse, key);
       return { session, objects: await driver.listObjects(binding, session) };
     },
-    live: (session, catalog) => {
+    live: (session, catalog, databaseType) => {
       if (ready === undefined) throw new Error('the warehouse is read once signed in: sign in first');
-      return new ready.driver.WarehouseEngine(ready.binding, session, catalog);
+      return new ready.driver.WarehouseEngine(ready.binding, session, catalog, undefined, databaseType);
     },
   };
 }

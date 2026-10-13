@@ -241,6 +241,8 @@ export const SYSTEM_CLOCK: Clock = {
 
 export class WarehouseEngine implements QueryEngine {
   readonly name = 'warehouse';
+  /** Its catalog's database type (`DuckDB`, `Postgres`): what a statement run on it is written for (Snap's count). */
+  readonly databaseType: string;
   readonly #binding: WarehouseBinding;
   /** Renewed in place when the same user signs in again (`renew`) or the token is refreshed. */
   #session: WarehouseSession;
@@ -249,7 +251,9 @@ export class WarehouseEngine implements QueryEngine {
   #refreshTimer: unknown;
   readonly #clock: Clock;
 
-  constructor(binding: WarehouseBinding, session: WarehouseSession, catalog = 'main', clock: Clock = SYSTEM_CLOCK) {
+  constructor(binding: WarehouseBinding, session: WarehouseSession, catalog = 'main', clock: Clock = SYSTEM_CLOCK,
+    databaseType = 'DuckDB') {
+    this.databaseType = databaseType;
     this.#binding = binding;
     this.#session = session;
     this.#catalog = catalog;
