@@ -66,6 +66,9 @@ test_suite(
         "//tools/guards:markdown_inputs_test",
         "//tools/guards:workflows_test",
         "//tools/guards:ci_scripts_test",
+        # no SQL spelled by the tab's apps or Python's host, two halves of one rule (D5, tools/guards/host_sql.txt)
+        "//tools/guards:host_sql_test",
+        "//python:host_sql_test",
         "//tools/browser:revision_test",
         "//tools/bump:bump_test",
         "//tools/java_run:pins_test",

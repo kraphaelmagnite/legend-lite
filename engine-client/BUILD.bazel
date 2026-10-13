@@ -219,6 +219,7 @@ filegroup(
 test_suite(
     name = "tests",
     tests = [
+        ":arrow_ipc_test",
         ":model_data_test",
         ":snap_test",
         ":update_generated_test",

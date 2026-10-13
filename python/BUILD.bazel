@@ -328,6 +328,22 @@ py_test(
     ],
 )
 
+# THE HOST-SQL GUARD, its Python half (tools/guards/host_sql.txt; docs/ONE_PLATFORM_PROGRAM_2026_10_12.md D5): no module
+# of Python's host spells SQL -- each string of every legend_lite module, read by Python's own parser, held to the rule.
+# Its TypeScript half is //tools/guards:host_sql_test.
+py_test(
+    name = "host_sql_test",
+    size = "small",
+    srcs = ["tests/test_host_sql.py"],
+    data = glob(["legend_lite/*.py"]) + ["//tools/guards:host_sql.txt"],
+    env = {
+        "HOST_SQL_PACKAGE": "$(rlocationpath legend_lite/__init__.py)",
+        "HOST_SQL_RULE": "$(rlocationpath //tools/guards:host_sql.txt)",
+    },
+    main = "tests/test_host_sql.py",
+    deps = ["@rules_python//python/runfiles"],
+)
+
 # a small Iceberg table written for the tests (G5), its files named by the URLs a test serves them at
 py_library(
     name = "iceberg_table",
