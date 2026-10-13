@@ -2,7 +2,7 @@
 // each place queries run: IN THE BROWSER (the tab's planner writes the SQL, DuckDB-WASM runs it,
 // saved queries in IndexedDB -- no server), ON legend-lite's SERVER (it executes and keeps saved
 // queries; started here with an empty store) and ON A WAREHOUSE (the tab's planner writes the SQL,
-// the warehouse's DuckDB runs it as the signed-in user; started here, empty, seeded by the app).
+// the warehouse's DuckDB runs it as the signed-in user; started here, its fixture loaded as its owner).
 // The same steps, each asserting what a person would see -- rows, not "a request was made". Exit
 // code 0 when every step holds in all three.
 //
@@ -92,7 +92,7 @@ await new Promise((r) => site.listen(0, '127.0.0.1', r));
 const SITE_PORT = site.address().port;
 
 // ---- a warehouse, for the warehouse mode: the native image DataCube's live_snap_test runs, its
-// data in this run's directory; alice owns it (the demo's seed creates its tables as her)
+// data in this run's directory; alice owns it (its fixture loaded as her before its suite: seedWarehouse)
 const SITE_ORIGIN = `http://127.0.0.1:${SITE_PORT}`;
 const warehouse = spawn(runfileFromEnv('WAREHOUSE_BINARY'), [
   '--port', '0', '--data', join(store, 'warehouse'), '--user', 'alice:alice-pw', '--owner', 'alice',
@@ -109,6 +109,24 @@ const warehouseUrl = new Promise((ok, fail) => {
   warehouse.on('error', (e) => fail(new Error(`the warehouse did not start: ${e.message}`)));
 });
 warehouseUrl.catch(() => {});
+
+/**
+ * The warehouse's fixture (demo/models/trading-seed.sql), loaded as its owner through the warehouse's own API before
+ * its suite -- a real server's data, never the page's to load (docs/ONE_PLATFORM_PROGRAM_2026_10_12.md D5b).
+ */
+async function seedWarehouse() {
+  const url = await warehouseUrl;
+  const owner = (await (await fetch(`${url}/sql/v1/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ user: 'alice', password: 'alice-pw' }) })).json()).token;
+  for (const line of (await readFile(join(ROOT, 'demo', 'models', 'trading-seed.sql'), 'utf8')).split('\n')) {
+    const sql = line.trim();
+    if (sql === '' || sql.startsWith('--')) continue;
+    const said = await (await fetch(`${url}/sql/v1/statements`, { method: 'POST',
+      headers: { Authorization: `Bearer ${owner}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sql, catalog: 'main', waitMs: 30_000 }) })).json();
+    if (said.state !== 'succeeded') throw new Error(`the warehouse's fixture: ${sql}: ${JSON.stringify(said)}`);
+  }
+}
 
 async function waitForEngine() {
   // bounded: a server that stays up but never prints its port would otherwise wait out the test's whole timeout
@@ -527,6 +545,7 @@ try {
   await suite('In the browser (DuckDB-WASM, no server)', '');
   await olderLayouts();
   await suite("On legend-lite's server", '?config=config-server.json');
+  await seedWarehouse();
   await suite('On a warehouse (its DuckDB, signed in)', '?config=config-warehouse.json', true);
 } finally {
   await browser?.close();

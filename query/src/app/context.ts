@@ -20,13 +20,13 @@ export interface ProjectConfig {
 
 /**
  * Where queries run. In the browser (`duckdb-wasm`: DuckDB in this tab, each project's rows its Data elements', C5;
- * `warehouse`: the warehouse's DuckDB, as the signed-in user, its fixture's rows `seed`) the tab's planner writes the
- * SQL and saved queries stay in this browser. On a `server` (legend-lite's, or legend-engine) the
+ * `warehouse`: the warehouse's DuckDB, as the signed-in user, its tables the warehouse's own) the tab's planner writes
+ * the SQL and saved queries stay in this browser. On a `server` (legend-lite's, or legend-engine) the
  * server executes and keeps saved queries.
  */
 export type ExecutionConfig =
   | { readonly kind: 'duckdb-wasm'; readonly user: string }
-  | { readonly kind: 'warehouse'; readonly url: string; readonly catalog?: string; readonly seed?: readonly string[] }
+  | { readonly kind: 'warehouse'; readonly url: string; readonly catalog?: string }
   | { readonly kind: 'server'; readonly engine: string };
 
 /**

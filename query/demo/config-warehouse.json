@@ -1,5 +1,5 @@
 {
-  "execution": { "kind": "warehouse", "url": "http://127.0.0.1:9090", "seed": ["./models/trading-seed.sql"] },
+  "execution": { "kind": "warehouse", "url": "http://127.0.0.1:9090" },
   "planner": { "worker": "./planner-worker.js", "vendor": "./vendor/" },
   "projects": [
     {

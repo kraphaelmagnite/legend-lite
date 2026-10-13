@@ -32,21 +32,8 @@ async function text(url: string): Promise<string> {
 }
 
 /**
- * The warehouse's fixture (config-warehouse.json `seed`): each SQL file's statements (one per line; `--` comments
- * skipped) run on the warehouse, a real server's data. In this tab a project's rows are its Data elements' (C5).
- */
-async function seed(engine: QueryEngine, files: readonly string[]): Promise<void> {
-  for (const f of files) {
-    for (const line of (await text(f)).split('\n')) {
-      const stmt = line.trim();
-      if (stmt && !stmt.startsWith('--')) await engine.run(stmt, 0);
-    }
-  }
-}
-
-/**
  * A warehouse catalog's database type, what a statement run on it is written for (Snap's count): as the warehouse
- * lists it -- or, for its own catalog (`main`) with nothing in it yet (the fixture loads after sign-in), its DuckDB.
+ * lists it -- or, for its own catalog (`main`) with nothing in it this user may read (an empty warehouse), its DuckDB.
  */
 async function catalogType(binding: WarehouseBinding, session: WarehouseSession, catalog: string): Promise<string> {
   const listed = (await listObjects(binding, session)).find((o) => o.catalog === catalog)?.databaseType;
@@ -141,10 +128,6 @@ async function boot(): Promise<void> {
       const catalog = exec.catalog ?? 'main';
       runner = new WarehouseEngine(binding, session, catalog, await catalogType(binding, session, catalog));
       user = session.principal;
-      if (exec.seed?.length) {
-        starting('Loading the demo data');
-        await seed(runner, exec.seed);
-      }
     }
     engine = new BrowserEngine(planner!, runner, user);
     cubeRows = { kind: 'sql', engine: runner };
