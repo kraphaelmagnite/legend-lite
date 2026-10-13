@@ -163,7 +163,7 @@ export class AppContext {
   async activate(p: LoadedProject): Promise<void> {
     if (!this.tabProjects) return;
     const { databases, runner, host } = this.tabProjects;
-    runner.use(p.ownData ? (await databases.engineFor(p.context.code, p.gav, host)).engine : undefined);
+    runner.use(p.ownData ? (await databases.engineFor(p.context.code, host)).engine : undefined);
   }
 
   /**

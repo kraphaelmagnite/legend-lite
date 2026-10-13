@@ -219,13 +219,13 @@ def session_setup(database_type: str) -> list[str]:
     return _json.loads(_answer(library().call('lite_session_setup', database_type)))
 
 
-def project_data(model: str, identity: str, database_type: str) -> dict[str, Any]:
+def project_data(model: str, database_type: str) -> dict[str, Any]:
     """A project's own database on a database of the given type (docs/ONE_PLATFORM_PROGRAM_2026_10_12.md C5): where
-    ``model``'s Data rows live on this host, kept by ``identity`` (a project version's coordinates; ``''`` for the
-    model's text). ``name``, and the statements of each step in order: ``open`` makes it, ``use`` points a connection
-    of its own at it, ``fill`` makes and fills every table a relational Data element fills (on that connection),
-    ``close`` drops it. A database without the operations is refused by name."""
-    return _json.loads(_answer(library().call('lite_project_data', model, identity, database_type)))
+    ``model``'s Data rows live on this host, named by what it holds (the model's Databases and Data rows: an edited row
+    is a fresh database). ``name``, and the statements of each step in order: ``open`` makes it, ``use`` points a
+    connection of its own at it, ``fill`` makes and fills every table a relational Data element fills (on that
+    connection), ``close`` drops it. A database without the operations is refused by name."""
+    return _json.loads(_answer(library().call('lite_project_data', model, database_type)))
 
 
 

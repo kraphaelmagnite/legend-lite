@@ -504,8 +504,7 @@ class Engine:
         self.planner = planner if planner is not None else NativePlanner()
         # a project's own rows, when Query or Studio served here runs one of its queries (C5): each project
         # version in a database of its own inside the frames' DuckDB, made by the native library's statements
-        self.projects = ProjectDatabases(frames.connection, guard=frames.holding,
-                                         on_library_thread=lambda call: _workers().submit(call).result())
+        self.projects = ProjectDatabases(frames.connection, guard=frames.holding)
         self._pages_folder = Path(pages) if pages is not None else None
         self.site = Path(site).resolve() if site is not None else None
         if self.site is not None and not self.site.is_dir():

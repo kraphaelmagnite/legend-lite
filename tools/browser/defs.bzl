@@ -18,7 +18,8 @@ CHROMIUM_COMPATIBLE = compatible_with(CHROMIUM_PLATFORMS.keys())
 def browser_test(name, entry_point, data = [], env = {}, tags = [], size = "medium", **kwargs):
     """A node_test (tools/js/defs.bzl) that drives the Chromium Bazel fetched (tools/browser/extensions.bzl), nothing from $HOME.
 
-    The harness imports //tools/browser:pinned-chromium.mjs before 'playwright', serves on
+    The harness imports //tools/browser:pinned-chromium.mjs before 'playwright' (a harness that loads Playwright
+    from anywhere but beside its own script calls `hermetic()` on it: site/verify.mjs), serves on
     127.0.0.1 port 0, writes temp files under TEST_TMPDIR and artifacts under
     TEST_UNDECLARED_OUTPUTS_DIR.
     """

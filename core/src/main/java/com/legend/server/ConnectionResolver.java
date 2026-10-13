@@ -15,10 +15,10 @@ import java.sql.SQLException;
  * database and specification is opened. In-memory connections are cached in the
  * content-addressed {@link HandleStore} (D5): the key hashes the
  * connection DEFINITION + FQN + the model's STORE declarations (type
- * audit D100), so the same stores + definition keep their database
- * across requests (tables persist — the feature) while an EDITED
- * definition or store gets a fresh one (an FQN-only key desynced:
- * engine planCache scar). A specification or database type not built is
+ * audit D100) + its Data rows (C5: a held one is made holding them), so the
+ * same stores + definition + rows keep their database across requests
+ * (tables persist — the feature) while an EDITED definition, store or row
+ * gets a fresh one (an FQN-only key desynced: engine planCache scar). A specification or database type not built is
  * refused by name (the folds to in-memory are gone, C3b).
  */
 final class ConnectionResolver {
@@ -150,14 +150,18 @@ final class ConnectionResolver {
     /** {@code made} filled from the model's Data rows, by the statements its database's dialect writes for them. */
     private static void filled(Connection made, com.legend.compiler.element.ModelContext ctx, ConnectionDefinition def)
             throws SQLException {
+        boolean done = false;
         try (java.sql.Statement st = made.createStatement()) {
             for (String sql : com.legend.setup.ProjectData.fill(ctx,
                     com.legend.database.Databases.dialect(def.databaseType()))) {
                 st.execute(sql);
             }
-        } catch (SQLException e) {
-            made.close();
-            throw e;
+            done = true;
+        } finally {
+            // a Data element refused (a table no Database declares), or a statement: the database made is let go
+            if (!done) {
+                made.close();
+            }
         }
     }
 
@@ -213,7 +217,9 @@ final class ConnectionResolver {
                 String rows = com.legend.setup.ProjectData.rowsKey(ctx);
                 Hash key = rows.isEmpty() ? contentKey(storesKey, def)
                         : Hash.combine(contentKey(storesKey, def), Hash.ofUtf8(rows));
-                yield Lease.borrowed(STORE.getOrOpen(key, ConnectionResolver::dead, () -> {
+                // opened outside the store's lock (Compiler Rewrite's review): a database loaded with its rows, as
+                // PlanSessions opens its held ones -- a failed open forgotten, a later caller for the key waiting
+                yield Lease.borrowed(STORE.getOrOpenSlowly(key, ConnectionResolver::dead, () -> {
                     Connection made = com.legend.exec.Sessions.openHeld(h);
                     if (!rows.isEmpty()) {
                         filled(made, ctx, def);

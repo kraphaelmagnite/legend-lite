@@ -161,15 +161,15 @@ Database demo::party::OtherDB
   });
 });
 
-/** Every keeper a test made: each test drops its databases, as a tab drops its own as it leaves. */
+/** Every keeper a test made: each test drops its databases (the cases share one DuckDB). */
 const keepers: ProjectDatabases[] = [];
 /** The tab's project databases over this file's DuckDB: each on a connection of its own, as the tab's start opens one. */
-const projectsOf = (options: { readonly idleMs?: number; readonly most?: number } = {}): ProjectDatabases => {
+const projectsOf = (): ProjectDatabases => {
   const made = new ProjectDatabases({
     databaseType: 'DuckDB',
     run: (sql) => engine.run(sql, 0),
     connect: async () => new DuckDbEngine(db.connect() as ArrowishConnection),
-  }, planner, options);
+  }, planner);
   keepers.push(made);
   return made;
 };
@@ -180,69 +180,51 @@ afterEach(async () => {
 describe("each version of a project in a database of its own (C5, ProjectDatabases)", () => {
   it("answers each version's own rows at once -- none swapped for another -- and the tab's own connection sees none", async () => {
     const projects = projectsOf();
-    const [one, head] = await Promise.all([
-      projects.engineFor(partyText(V1), 'p:1.0.0', engine),
-      projects.engineFor(partyText(V2), 'p:HEAD', engine),
-    ]);
-    assert.ok(one.fresh && head.fresh);
+    const [one, head] = await Promise.all([projects.engineFor(partyText(V1), engine), projects.engineFor(partyText(V2), engine)]);
     const [a, b, c] = await Promise.all([rowsOf('PARTY', one.engine), rowsOf('PARTY', head.engine), rowsOf('PARTY', one.engine)]);
     assert.deepEqual([a, b, c].map((rows) => rows.map((r) => r[0])), [[1, 2], [3], [1, 2]]);
     await assert.rejects(rowsOf('PARTY'), /PARTY/);
-    assert.equal((await projects.engineFor(partyText(V1), 'p:1.0.0', engine)).fresh, false);
-    await projects.dropAll();
-    assert.deepEqual(projects.names, []);
   });
 
-  it('makes one database for one version asked for twice at once', async () => {
+  it('makes one database for one content asked for twice at once, and keeps it: the same engine every time', async () => {
     const projects = projectsOf();
-    const [a, b] = await Promise.all([
-      projects.engineFor(partyText(V1), 'p:1.0.0', engine),
-      projects.engineFor(partyText(V1), 'p:1.0.0', engine),
-    ]);
+    let made = 0;
+    const count = async (): Promise<void> => { made++; };
+    const [a, b] = await Promise.all([projects.engineFor(partyText(V1), engine, count), projects.engineFor(partyText(V1), engine, count)]);
     assert.equal(a.name, b.name);
-    assert.equal(projects.names.length, 1);
-    await projects.dropAll();
+    assert.equal(a.engine, b.engine);
+    assert.equal((await projects.engineFor(partyText(V1), engine, count)).engine, a.engine);
+    assert.equal(made, 1);
+    assert.deepEqual(projects.names, [a.name]);
+  });
+
+  it('names a database by what it holds: an edited row another, the same rows the same whatever else changed', async () => {
+    const projects = projectsOf();
+    const v1 = await projects.engineFor(partyText(V1), engine);
+    const edited = await projects.engineFor(partyText(V1.replace('Halberd', 'Kestrel')), engine);
+    const withAClass = await projects.engineFor(`${partyText(V1)}\n###Pure\nClass demo::party::Other { x: Integer[1]; }\n`, engine);
+    assert.notEqual(edited.name, v1.name);
+    assert.equal(withAClass.name, v1.name);
+    assert.deepEqual((await rowsOf('PARTY', edited.engine)).map((r) => r[1]), ['Meridian Capital', 'Kestrel Securities']);
+    // the first one's rows as they were: a SNAPSHOT republished with new rows is never answered with the old, nor the old with the new
+    assert.deepEqual((await rowsOf('PARTY', v1.engine)).map((r) => r[1]), ['Meridian Capital', 'Halberd Securities']);
   });
 
   it("runs a model with no Data rows on the tab's own connection: no database of its own", async () => {
     const projects = projectsOf();
     const bare = partyText(V1).replace(/###Data[\s\S]*$/, '');
-    const answer = await projects.engineFor(bare, 'p:bare', engine);
+    const answer = await projects.engineFor(bare, engine);
     assert.equal(answer.engine, engine);
     assert.equal(answer.name, undefined);
     assert.deepEqual(projects.names, []);
   });
 
-  it('drops a database left idle, and makes it again when next asked', async () => {
-    const projects = projectsOf({ idleMs: 20 });
-    const one = await projects.engineFor(partyText(V1), 'p:1.0.0', engine);
-    await rowsOf('PARTY', one.engine);
-    assert.equal(projects.names.length, 1);
-    await new Promise((r) => setTimeout(r, 80));
-    assert.deepEqual(projects.names, []);
-    const left = await engine.run('SELECT database_name FROM duckdb_databases()', 0);
-    assert.ok(!left.columns[0]!.values.includes(one.name!), String(left.columns[0]!.values));
-    assert.equal((await projects.engineFor(partyText(V1), 'p:1.0.0', engine)).fresh, true);
-    await projects.dropAll();
-  });
-
-  it('drops the least recently used idle database past the most it keeps', async () => {
-    const projects = projectsOf({ most: 2 });
-    const a = await projects.engineFor(partyText(V1), 'p:a', engine);
-    const b = await projects.engineFor(partyText(V1), 'p:b', engine);
-    await rowsOf('PARTY', a.engine);      // a used last: b is the least recently used
-    const c = await projects.engineFor(partyText(V2), 'p:c', engine);
-    assert.deepEqual([...projects.names].sort(), [a.name, c.name].sort());
-    assert.ok(!projects.names.includes(b.name!));
-    await projects.dropAll();
-  });
-
-  it("is not closed by one of its users: closing its engine leaves the database to its keeper", async () => {
+  it('forgets a make that failed, and makes it again when next asked', async () => {
     const projects = projectsOf();
-    const one = await projects.engineFor(partyText(V1), 'p:1.0.0', engine);
-    await one.engine.close();
-    assert.deepEqual((await rowsOf('PARTY', one.engine)).map((r) => r[0]), [1, 2]);
-    await projects.dropAll();
+    await assert.rejects(projects.engineFor(partyText(V1), engine, async () => { throw new Error('the person\'s file failed'); }), /failed/);
+    assert.deepEqual(projects.names, []);
+    const again = await projects.engineFor(partyText(V1), engine);
+    assert.deepEqual((await rowsOf('PARTY', again.engine)).map((r) => r[0]), [1, 2]);
   });
 });
 
@@ -410,7 +392,7 @@ Data demo::plain::PlainData
 
 describe("a project's own database (C5), the planner's statements run in DuckDB-WASM", () => {
   it("holds the project's rows in a database of their own, beside the tab's table of the same name, untouched", async () => {
-    const project = await planner.projectData(partyText(V1), 'demo:party:1.0.0', 'DuckDB');
+    const project = await planner.projectData(partyText(V1), 'DuckDB');
     assert.match(project.name, /^__project_[0-9a-f]{16}$/);
     // the tab's own table, of the very name the project declares
     await engine.run('CREATE SCHEMA IF NOT EXISTS "PARTY"', 0);
@@ -428,18 +410,13 @@ describe("a project's own database (C5), the planner's statements run in DuckDB-
     await engine.run('DROP TABLE "PARTY"."PARTY"', 0);
   });
 
-  it('names each identity its own, and the model text when there is none', async () => {
-    const [a, b, c] = await Promise.all([
-      planner.projectData(partyText(V1), 'demo:party:1.0.0', 'DuckDB'),
-      planner.projectData(partyText(V1), 'demo:party:1.0.1', 'DuckDB'),
-      planner.projectData(partyText(V1), '', 'DuckDB'),
-    ]);
-    assert.equal(new Set([a.name, b.name, c.name]).size, 3);
-    assert.equal((await planner.projectData(partyText(V1), '', 'DuckDB')).name, c.name);
-    assert.notEqual((await planner.projectData(partyText(V2), '', 'DuckDB')).name, c.name);
+  it('names a database by what it holds: the same rows the same name, other rows another', async () => {
+    const [a, b] = await Promise.all([planner.projectData(partyText(V1), 'DuckDB'), planner.projectData(partyText(V1), 'DuckDB')]);
+    assert.equal(a.name, b.name);
+    assert.notEqual((await planner.projectData(partyText(V2), 'DuckDB')).name, a.name);
   });
 
   it('is refused by name on a database without it', async () => {
-    await assert.rejects(planner.projectData(partyText(V1), 'demo:party:1.0.0', 'Postgres'), /a project's own database on Postgres is not built/);
+    await assert.rejects(planner.projectData(partyText(V1), 'Postgres'), /a project's own database on Postgres is not built/);
   });
 });

@@ -27,7 +27,7 @@ KINDS: dict[str, tuple[str, Callable[[dict[str, Any]], tuple[str, ...]]]] = {
     'executeAnswer': ('lite_execute_json_answer', lambda m: (m['plan'], m['wire'])),
     'testData': ('lite_test_data_sql', lambda m: (m['model'], m['database'], m['tables'])),
     'sessionSetup': ('lite_session_setup', lambda m: (m['databaseType'],)),
-    'projectData': ('lite_project_data', lambda m: (m['model'], m['identity'], m['databaseType'])),
+    'projectData': ('lite_project_data', lambda m: (m['model'], m['databaseType'])),
     'warm': ('lite_warm_model', lambda m: (m['model'],)),
 }
 

@@ -333,15 +333,14 @@ public final class Boundary {
 
     /**
      * A project's own database on a database of the given type (docs/ONE_PLATFORM_PROGRAM_2026_10_12.md C5,
-     * {@code com.legend.setup.ProjectData}): where {@code model}'s Data rows live on a host, kept by {@code identity}
-     * (a project version's coordinates; empty, the model's text). {@code {"name", "open", "use", "fill", "close"}},
-     * each but the name the statements in order: make it, point a connection of its own at it, make and fill every
-     * table a relational Data element fills (on that connection), drop it. A database without the operations is
-     * refused by name.
+     * {@code com.legend.setup.ProjectData}): where {@code model}'s Data rows live on a host, named by what it holds
+     * (the model's Databases and Data rows). {@code {"name", "open", "use", "fill", "close"}}, each but the name the
+     * statements in order: make it, point a connection of its own at it, make and fill every table a relational Data
+     * element fills (on that connection), drop it. A database without the operations is refused by name.
      */
-    public static String projectData(String model, String identity, String databaseType) {
+    public static String projectData(String model, String databaseType) {
         com.legend.setup.ProjectData p = com.legend.setup.ProjectData.of(com.legend.Compiler.compileModel(model),
-                identity.isEmpty() ? model : identity, dialectOf(databaseType));
+                dialectOf(databaseType));
         java.util.Map<String, Object> out = new java.util.LinkedHashMap<>();
         out.put("name", p.name());
         out.put("open", p.open());

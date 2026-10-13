@@ -849,7 +849,7 @@ export function pageSources(d: SourcesOf): PageSources {
     // beside it, in its own. On Python, Python runs a project's model in its own (the host's runner).
     let versioned: QueryEngine | undefined;
     if (local && !project) {
-      versioned = (await (await local.projects()).engineFor(model, key, local.engine)).engine;
+      versioned = (await (await local.projects()).engineFor(model, local.engine)).engine;
     } else if (local && project) {
       await once(seeded, key, async () => {
         for (const url of project.seed) {

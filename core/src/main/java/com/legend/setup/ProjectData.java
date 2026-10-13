@@ -23,7 +23,10 @@ import java.util.List;
  * ({@link HostOperations}), and the rows are written by that database's dialect, as the server seeds its own
  * ({@link CsvSeed}). A database without the operations refuses by name.
  *
- * @param name  the database's name: from the identity it is kept by, so two versions never share one
+ * @param name  the database's name, from its content alone ({@link #contentKey}: the model's Databases and Data rows),
+ *              never a caller's label -- so an edited row or table is a fresh database, a project whose rows are
+ *              unchanged keeps its own whatever else changed, and a version republished under the same coordinates
+ *              (a SNAPSHOT) with new rows is never answered with the old
  * @param open  the statements that make it, empty
  * @param use   the statements that point a connection of its own at it
  * @param fill  the statements, run on that connection, that make every table a relational Data element fills and put
@@ -42,15 +45,23 @@ public record ProjectData(String name, List<String> open, List<String> use, List
         close = List.copyOf(close);
     }
 
-    /**
-     * The project's database for the compiled model {@code ctx} on {@code dialect}'s database, kept by {@code identity}
-     * (a project version's coordinates; or, with none, the model's text -- Studio's workspace, whose text changes).
-     */
-    public static ProjectData of(ModelContext ctx, String identity, SqlDialect dialect) {
+    /** The project's database for the compiled model {@code ctx} on {@code dialect}'s database. */
+    public static ProjectData of(ModelContext ctx, SqlDialect dialect) {
         HostOperations host = HostOperations.of(dialect);
-        String name = PREFIX + com.legend.cache.Hash.ofUtf8(identity).hex().substring(0, 16);
+        String name = PREFIX + com.legend.cache.Hash.ofUtf8(contentKey(ctx)).hex().substring(0, 16);
         return new ProjectData(name, host.openDatabase(name), host.useDatabase(name), fill(ctx, dialect),
                 host.closeDatabase(name));
+    }
+
+    /**
+     * What a project's database holds, as text: every Database the model declares (its tables' shapes, which the fill
+     * makes them with) and its Data rows ({@link #rowsKey}). Two models that agree on both hold the same database.
+     */
+    public static String contentKey(ModelContext ctx) {
+        StringBuilder out = new StringBuilder();
+        ctx.databases().sorted(java.util.Comparator.comparing(DatabaseDefinition::qualifiedName))
+                .forEach(db -> out.append(db).append('\n'));
+        return out.append("--\n").append(rowsKey(ctx)).toString();
     }
 
     /**

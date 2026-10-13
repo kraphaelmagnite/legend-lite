@@ -271,18 +271,19 @@ class ProjectQueries(Served):
         self.assertTrue(said['ok'] and said['answer'].startswith('OK\n'), said)
         self.assertEqual(len(self.server.engine.projects.names), 1)
 
-    def test_dropped_when_idle_and_made_again(self):
-        projects = self.server.engine.projects
-        projects._idle = 0.05
-        self.assertEqual(self.post('/api/pure/v1/execution/execute', self.project_input())[0], 200)
-        for _ in range(100):
-            if not projects.names:
-                break
-            time.sleep(0.02)
-        self.assertEqual(projects.names, [])
-        attached = self.frames.connection.execute('SELECT count(*) FROM duckdb_databases() WHERE NOT internal')
-        self.assertEqual(attached.fetchone()[0], 1)
-        self.assertEqual(self.post('/api/pure/v1/execution/execute', self.project_input())[0], 200)
+    def test_kept_for_the_process_and_named_by_what_it_holds(self):
+        for _ in range(2):
+            self.assertEqual(self.post('/api/pure/v1/execution/execute', self.project_input())[0], 200)
+        # the same rows, another class beside them: the same database, no second one made
+        with_a_class = PARTY.replace('###Relational', 'Class demo::party::Other { x: Integer[1]; }\n\n###Relational', 1)
+        self.assertEqual(self.post('/api/pure/v1/execution/execute', self.project_input(with_a_class))[0], 200)
+        self.assertEqual(len(self.server.engine.projects.names), 1)
+
+    def test_a_data_element_over_an_undeclared_table_is_refused_by_name(self):
+        bad = PARTY.replace('PARTY.PARTY:\n', 'PARTY.NOPE:\n')
+        status, _, body = self.post('/api/pure/v1/execution/execute', self.project_input(bad))
+        self.assertEqual(status, 500, body)
+        self.assertIn('fills PARTY.NOPE, which no Database of the model declares', json.loads(body)['message'])
 
 
 class Refusals(Served):

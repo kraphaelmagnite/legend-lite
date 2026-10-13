@@ -4,7 +4,7 @@
 // it is reset -- or from nowhere yet.
 
 import type { QueryEngine } from './engine.ts';
-import { databaseOf, databaseTables, dataTables, loadFileTable, seeded, type FileSink, type SeedSource } from './model-data.ts';
+import { databaseOf, databaseTables, dataTables, loadDataTables, loadFileTable, seeded, type FileSink, type SeedSource } from './model-data.ts';
 import type { ProjectDatabases, ProjectEngine, ProjectRunner } from './project-data.ts';
 
 type Elements = Parameters<typeof dataTables>[0];
@@ -44,10 +44,11 @@ interface PutFile {
 }
 
 /**
- * The tables of the model a workspace runs (Studio's), in this tab: the model's own database (project-data.ts, kept by
- * the model's text: an edit is a database of its own, the one before dropped when idle), its Data rows there, and a
- * person's file for a table put in over them -- again into each database the workspace's model is made in. The
- * screens run on `runner`, pointed at the model's database as it loads.
+ * The tables of the model a workspace runs (Studio's), in this tab: the model's own database (project-data.ts, named
+ * by what it holds: an edit to a Data row or a table is a database of its own), its Data rows there, and a person's
+ * file for a table put in over them -- into each database the workspace's model is made in, as it is made, before any
+ * query reaches it; or, a model with no Data rows, onto the tab's own connection. The screens run on `runner`, pointed
+ * at the model's database as it loads.
  */
 export class TabTables {
   readonly #projects: ProjectDatabases;
@@ -57,6 +58,8 @@ export class TabTables {
   readonly #source: SeedSource;
   /** The tables a person's file fills, by `schema.table`. */
   readonly #files = new Map<string, PutFile>();
+  /** Those of them on the tab's own connection (a model with no Data rows runs there), by `schema.table`. */
+  readonly #onHost = new Set<string>();
   #uploads = 0;
 
   /**
@@ -86,17 +89,21 @@ export class TabTables {
     const project = await this.#open(model);
     const drop = await this.#putFile(model, project.engine, schema, table, file);
     this.#files.set(key(schema, table), { schema, table, name: file.name, bytes: file.bytes, drop });
+    if (project.name === undefined) this.#onHost.add(key(schema, table));
   }
 
-  /** `schema.table` back to the model's own rows (none: no table): its database made afresh, the other files kept. */
+  /** `schema.table` back to the model's own rows -- the planner's statements for its Data element's -- or, none, no table. */
   async reset(model: Model, schema: string, table: string): Promise<void> {
     const file = this.#files.get(key(schema, table));
     this.#files.delete(key(schema, table));
-    const project = await this.#projects.engineFor(model.text, '', this.#host);
-    // a model with Data rows: its database made again; one with none runs on the tab's own, where the file's table goes
-    if (project.name !== undefined) await this.#projects.drop(project.name);
-    else if (file) await project.engine.run(file.drop, 0);
-    await this.load(model);
+    const project = await this.#open(model);
+    if (file) await project.engine.run(file.drop, 0);
+    this.#onHost.delete(key(schema, table));
+    const own = dataTables(model.elements).filter((t) => t.schema === schema && t.table === table);
+    if (project.name !== undefined && own.length > 0) {
+      await loadDataTables({ run: (sql) => project.engine.run(sql, 0) }, await seeded(this.#source, model.text, own));
+    }
+    this.#runner.use(project.engine);
   }
 
   /** Every table the model declares: where its rows are from, and how many there are (counted by the planner's name). */
@@ -123,11 +130,20 @@ export class TabTables {
     return out;
   }
 
-  /** The model's database: made and filled the first time, a person's files put in again over its rows. */
+  /**
+   * The model's database: made and filled the first time, a person's files put in over its rows as it is made; or,
+   * a model with no Data rows, the tab's own connection, each file put there once.
+   */
   async #open(model: Model): Promise<ProjectEngine> {
-    const project = await this.#projects.engineFor(model.text, '', this.#host);
-    if (project.fresh) {
-      for (const file of this.#files.values()) await this.#putFile(model, project.engine, file.schema, file.table, file);
+    const project = await this.#projects.engineFor(model.text, this.#host, async (engine) => {
+      for (const file of this.#files.values()) await this.#putFile(model, engine, file.schema, file.table, file);
+    });
+    if (project.name === undefined) {
+      for (const [k, file] of this.#files) {
+        if (this.#onHost.has(k)) continue;
+        await this.#putFile(model, project.engine, file.schema, file.table, file);
+        this.#onHost.add(k);
+      }
     }
     return project;
   }

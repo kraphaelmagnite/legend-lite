@@ -227,18 +227,20 @@ Data demo::party::PartyData
 
     def test_duckdbs_statements(self):
         from legend_lite.compiler import project_data
-        p = project_data(self.PARTY, 'demo:party:1.0.0', 'DuckDB')
+        p = project_data(self.PARTY, 'DuckDB')
         self.assertRegex(p['name'], r'^__project_[0-9a-f]{16}$')
         self.assertEqual(p['open'], [f"ATTACH ':memory:' AS \"{p['name']}\""])
         self.assertEqual(p['use'], [f'USE "{p["name"]}"'])
         self.assertEqual(p['close'], [f'DETACH DATABASE IF EXISTS "{p["name"]}"'])
         self.assertTrue(any('Meridian Capital' in s for s in p['fill']), p['fill'])
-        self.assertNotEqual(project_data(self.PARTY, '', 'DuckDB')['name'], p['name'])
+        # named by what it holds: the same rows the same name, an edited row another
+        self.assertEqual(project_data(self.PARTY + '\n', 'DuckDB')['name'], p['name'])
+        self.assertNotEqual(project_data(self.PARTY.replace('Meridian', 'Kestrel'), 'DuckDB')['name'], p['name'])
 
     def test_another_database_refused_by_name(self):
         from legend_lite.compiler import project_data
         with self.assertRaisesRegex(ll.LegendError, "a project's own database on Postgres is not built"):
-            project_data(self.PARTY, 'demo:party:1.0.0', 'Postgres')
+            project_data(self.PARTY, 'Postgres')
 
 
 class Hosting(unittest.TestCase):

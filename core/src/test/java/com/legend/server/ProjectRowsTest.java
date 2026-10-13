@@ -56,8 +56,19 @@ class ProjectRowsTest {
     @Test
     void aProjectsQueryAnswersItsOwnRows() throws Exception {
         assertEquals(List.of("Halberd Securities", "Meridian Capital"), names(PARTY));
-        // asked again: the same database, its rows not made twice
+        // asked again: the same rows
         assertEquals(List.of("Halberd Securities", "Meridian Capital"), names(PARTY));
+    }
+
+    /** A Data element over a table no Database declares: every query on the model refused by name (the database the
+     *  server made for it let go), where before C5 it ran on an empty database. */
+    @Test
+    void aDataElementOverAnUndeclaredTableIsRefusedByName() {
+        String bad = PARTY.replace("PARTY.PARTY:\n", "PARTY.NOPE:\n");
+        IllegalArgumentException refused = org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class,
+                () -> names(bad));
+        assertEquals("the Data element proj::PartyData fills PARTY.NOPE, which no Database of the model declares",
+                refused.getMessage());
     }
 
     @Test

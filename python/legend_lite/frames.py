@@ -461,10 +461,14 @@ class Frames:
         key = name.lower()
         if key in self._tables or key in self._files:
             return True
+        # this database's own and its temporary ones, which a bare name reads: a project's database attached beside it
+        # (C5) holds none of the names a file may take
         found = self.connection.execute(
-            "SELECT count(*) FROM duckdb_tables() WHERE lower(table_name) = lower(?)", [name]).fetchone()[0]
+            "SELECT count(*) FROM duckdb_tables() WHERE database_name IN (current_database(), 'temp') "
+            "AND lower(table_name) = lower(?)", [name]).fetchone()[0]
         found += self.connection.execute(
-            "SELECT count(*) FROM duckdb_views() WHERE NOT internal AND lower(view_name) = lower(?)", [name]).fetchone()[0]
+            "SELECT count(*) FROM duckdb_views() WHERE NOT internal AND database_name IN (current_database(), 'temp') "
+            "AND lower(view_name) = lower(?)", [name]).fetchone()[0]
         return found > 0
 
     def taken(self, name: str) -> bool:

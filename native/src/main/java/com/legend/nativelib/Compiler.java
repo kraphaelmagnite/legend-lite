@@ -244,12 +244,11 @@ public final class Compiler {
 
     /** A project's own database on a database of the given type ({@code Boundary.projectData}). */
     @CEntryPoint(name = "lite_project_data")
-    static CCharPointer projectData(IsolateThread thread, CCharPointer model, CCharPointer identity,
-            CCharPointer databaseType) {
+    static CCharPointer projectData(IsolateThread thread, CCharPointer model, CCharPointer databaseType) {
         String a;
         try {
-            String m = text(model), i = text(identity), d = text(databaseType);
-            a = Folded.of(() -> Boundary.projectData(m, i, d));
+            String m = text(model), d = text(databaseType);
+            a = Folded.of(() -> Boundary.projectData(m, d));
         } catch (Throwable failure) {
             a = Folded.failure(failure);
         }

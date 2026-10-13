@@ -208,8 +208,8 @@ export class WasmGrammar implements Grammar {
    * A project's own database on a database of that type (C5, Boundary.projectData): its name and the statements that
    * make it, point a connection at it, fill it from the model's Data elements, and drop it.
    */
-  async projectData(model: string, identity: string, databaseType: string): Promise<ProjectDataStatements> {
-    return JSON.parse(unfold(await this.#port.ask({ kind: 'projectData', model, identity, databaseType }))) as ProjectDataStatements;
+  async projectData(model: string, databaseType: string): Promise<ProjectDataStatements> {
+    return JSON.parse(unfold(await this.#port.ask({ kind: 'projectData', model, databaseType }))) as ProjectDataStatements;
   }
 
   /** Build the planner's boot layer for this model now, before a person waits on it. */

@@ -747,9 +747,13 @@ D5 claimed from the dialect program (`docs/DIALECT_LEAK_CENSUS_AND_PLAN_2026_10_
   made exactly as the model declares them, so the compiler's SQL runs unchanged. On DuckDB that is an attached
   in-memory database (`ATTACH ':memory:'`), with a connection of its own pointed at it (`USE`). That is the corpus's
   `DuckWorkspaces` shape (session-topology ruling 2026-08-14: about 10% faster than a database per session).
-- **Kept while in use, dropped when idle.** It is rebuilt from the model the next time, so dropping early is never
-  wrong. Its name comes from the project version, or from the model's text when the host has no version for it
-  (Studio's workspace), so two versions never share one.
+- **Named by what it holds, and kept** (the user, 2026-10-13: "do we need any delete strategy at all?" -- no). Its
+  name is the hash of the model's Databases and Data rows (`ProjectData.contentKey`), never a caller's label: an edited
+  row or table is a fresh database, a class edited beside unchanged rows keeps the one it has, and a SNAPSHOT
+  republished with new rows under the same coordinates is never answered with the old (Plan Gen's review). Each is kept
+  for the life of the page or process, as legend-lite's server keeps its own: a tab mostly shows one project, and a new
+  database is only another project's or an edited row's. So nothing a screen holds goes stale. A cap comes back only if
+  a measured page or process holds too much (the case to watch: a long Studio session editing large Data rows).
 - **Never beside a person's own tables.** Python's dataframes and the tab's files stay in the host's own database.
   No name can clash, and dropping a project's database is one statement.
 - **Not tied to DuckDB.** "A project's own database" is the platform's concept, in Java. How a database makes one is
@@ -819,14 +823,21 @@ they land), an audit.
 - **2, the planner's question:** `Boundary.projectData`, the planner-protocol kind `projectData` (the tab's module and
   Python's native library, `lite_project_data`). `Boundary.testDataSql` keeps DuckDB's dialect until its callers move
   in step 4.
-- **3, the tab:** engine-client's `ProjectDatabases` (idle 15 minutes, at most eight open, the least recently used
-  idle one dropped past that; a model with no Data rows runs on the tab's own connection) and `ProjectRunner`;
+- **3, the tab:** engine-client's `ProjectDatabases` (made once, kept for the page; a model with no Data rows runs on
+  the tab's own connection; `made` runs as it is made, before any query reaches it) and `ProjectRunner`;
   `duckdb-tab.ts` `connect` sets every connection up alike. DataCube's saved queries, Query's projects by name and
-  Studio's tables use it; `TestData` and `withTestData` deleted.
-- **5, Python:** `legend_lite/projects.py`, the twin (a daemon idle timer, its drop on the compiler's threads under the
-  frames' lock). The engine's execute runs a project's model on its project's cursor.
+  Studio's tables use it (a person's files put in as each database is made, or onto the tab's own connection for a
+  model with no Data rows; a reset refills its one table); `TestData` and `withTestData` deleted.
+- **5, Python:** `legend_lite/projects.py`, the twin (made once under the frames' lock, kept; one use at a time per
+  project, a DuckDB connection being unsafe across threads; a model that does not read as a model is no project's, any
+  other refusal said as it is). The engine's execute runs a project's model on its project's cursor.
 - **6, the server:** `ConnectionResolver` makes its kept in-memory database holding the model's Data rows, keyed by
-  them too. PARK-35 closed.
+  them too, opened outside the store's lock (`getOrOpenSlowly`, as `PlanSessions` opens its held ones), the database
+  let go when a fill is refused. Two changes of behaviour: a model whose Data element is refused (a table no Database
+  declares) has every query refused by name, where before it ran on an empty database; and a model text with Data rows
+  and one without, over the same stores, no longer share the database a caller seeded (ConnectionIsolationTest's
+  feature holds for models without Data rows). The server keeps every database for its life, as it always has
+  (`HandleStore`, no eviction): an edited row adds one. PARK-35 closed.
 - **7, PARK-33:** saved queries on every host, read by the host's compiler (`EngineService.reading`) and opened over
   the host's rows; Python's plan-and-run and held planner requests answer over a project's model held beside its
   database. PARK-33 closed.
@@ -836,7 +847,9 @@ they land), an audit.
     (`//datacube:python_engine_test`);
   - the tab: two versions answered at once, each its own rows (`//engine-client:model_data_test`); Query on a project
     by name at HEAD, then 1.0.0 (`//site:verify_test`);
-  - the server: `ProjectRowsTest`;
+  - the server: `ProjectRowsTest`, through `QueryService.execute` -- not Query's run in a browser against the server,
+    PARK-35's acceptance as written: the browser tests' runs on legend-lite's server use the demo's seeded project,
+    with no Data rows;
   - all of `//gates:datacube`, `//gates:ui` and `//gates:sdlc` after step 3 (182 tests), `//core:core_tests`,
     `//core:guardrails` and both stress suites after step 6.
 - **Not measured yet:** the fill and query timings this section asks for; the corpus onto the same operation (the

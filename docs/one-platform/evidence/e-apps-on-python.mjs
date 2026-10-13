@@ -18,6 +18,8 @@
 // Measured 2026-10-13 (Apple silicon laptop): all eight checks ok -- the demo published in 293 ms, the Depot's four
 // projects listed -- with no page error and no failed call, but the last run's
 // execute, refused 500 as PARK-35 says ("a project's queries run only in a browser tab for now").
+// (2026-10-13, later: C5 closed PARK-35 -- a project's query on Python now runs on its own rows, so the refusal
+// this records was the state on E's day; datacube/test/python-engine/python-engine.mjs measures the run now.)
 import { createRequire } from 'node:module';
 import http from 'node:http';
 const links = JSON.parse(process.argv[2]);

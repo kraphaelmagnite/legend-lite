@@ -132,8 +132,8 @@ public final class TabExports {
 
     /** {@link Boundary#projectData}. */
     @JSExport
-    public static String projectDataOrError(String model, String identity, String databaseType) {
-        return Folded.of(() -> Boundary.projectData(model, identity, databaseType));
+    public static String projectDataOrError(String model, String databaseType) {
+        return Folded.of(() -> Boundary.projectData(model, databaseType));
     }
 
     // ---- warming and probes

@@ -28,7 +28,7 @@ _ARITY = {
     'lite_relation_type_held': 2, 'lite_plan_text_held': 3, 'lite_relation_type_text_held': 2, 'lite_test_data_sql': 3,
     'lite_database_from_catalog': 1, 'lite_table_model': 1, 'lite_catalog_columns_sql': 2, 'lite_session_setup': 1,
     # a project's own database (C5)
-    'lite_project_data': 3,
+    'lite_project_data': 2,
     'lite_pure_v1': 3, 'lite_execute_plan': 2, 'lite_pure_v1_refusal': 1,
     # the planner protocol's execute halves for a host's own database, and its warm (C2)
     'lite_execute_json_plan': 2, 'lite_execute_json_answer': 2, 'lite_warm_model': 1,

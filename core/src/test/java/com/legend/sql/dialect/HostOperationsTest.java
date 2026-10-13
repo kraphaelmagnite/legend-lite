@@ -65,7 +65,7 @@ class HostOperationsTest {
 
     @Test
     void aProjectsRowsInADatabaseOfTheirOwn() throws SQLException {
-        ProjectData project = ProjectData.of(com.legend.Compiler.compileModel(MODEL), "demo:1.0.0", new DuckDb());
+        ProjectData project = ProjectData.of(com.legend.Compiler.compileModel(MODEL), new DuckDb());
         assertTrue(project.name().matches("__project_[0-9a-f]{16}"), project.name());
         try (Connection c = DriverManager.getConnection("jdbc:duckdb:"); Statement st = c.createStatement()) {
             // a person's own table, of the very name the project declares, in the host's own database
@@ -97,13 +97,19 @@ class HostOperationsTest {
         }
     }
 
+    /** Named by what it holds (Plan Gen's review, 2026-10-13): never a caller's label, so a SNAPSHOT republished under
+     *  the same coordinates with new rows is never answered with the old. */
     @Test
-    void eachIdentityItsOwnName() {
-        var ctx = com.legend.Compiler.compileModel(MODEL);
-        assertEquals(ProjectData.of(ctx, "demo:1.0.0", new DuckDb()).name(),
-                ProjectData.of(ctx, "demo:1.0.0", new DuckDb()).name());
-        assertNotEquals(ProjectData.of(ctx, "demo:1.0.0", new DuckDb()).name(),
-                ProjectData.of(ctx, "demo:1.0.1", new DuckDb()).name());
+    void namedByWhatItHolds() {
+        String name = ProjectData.of(com.legend.Compiler.compileModel(MODEL), new DuckDb()).name();
+        // the same Databases and rows, another class beside them: the same database, no refill
+        String withAClass = MODEL.replace("###Data", "###Pure\nClass demo::Other { x: Integer[1]; }\n\n###Data");
+        assertEquals(name, ProjectData.of(com.legend.Compiler.compileModel(withAClass), new DuckDb()).name());
+        // an edited row, or an edited table, is another
+        assertNotEquals(name, ProjectData.of(com.legend.Compiler.compileModel(MODEL.replace("2,Grace", "3,Edsger")),
+                new DuckDb()).name());
+        assertNotEquals(name, ProjectData.of(com.legend.Compiler.compileModel(MODEL.replace("VARCHAR(50)", "VARCHAR(60)")),
+                new DuckDb()).name());
     }
 
     @Test
@@ -117,7 +123,7 @@ class HostOperationsTest {
                 assertTrue(refused.getMessage().contains(" on " + name + " is not built"), refused.getMessage());
             }
             assertThrows(DialectCapability.class,
-                    () -> ProjectData.of(com.legend.Compiler.compileModel(MODEL), "demo:1.0.0", d), name);
+                    () -> ProjectData.of(com.legend.Compiler.compileModel(MODEL), d), name);
         }
     }
 
@@ -125,7 +131,7 @@ class HostOperationsTest {
     void aDataElementFillingNoDeclaredTableIsRefused() {
         String model = MODEL.replace("default.Code:", "default.Missing:");
         IllegalArgumentException refused = assertThrows(IllegalArgumentException.class,
-                () -> ProjectData.of(com.legend.Compiler.compileModel(model), "demo:1.0.0", new DuckDb()));
+                () -> ProjectData.of(com.legend.Compiler.compileModel(model), new DuckDb()));
         assertEquals("the Data element demo::Rows fills default.Missing, which no Database of the model declares",
                 refused.getMessage());
     }
