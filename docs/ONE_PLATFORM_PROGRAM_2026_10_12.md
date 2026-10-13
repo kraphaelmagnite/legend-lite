@@ -825,9 +825,12 @@ they land), an audit.
   in step 4.
 - **3, the tab:** engine-client's `ProjectDatabases` (made once, kept for the page; a model with no Data rows runs on
   the tab's own connection; `made` runs as it is made, before any query reaches it) and `ProjectRunner`;
-  `duckdb-tab.ts` `connect` sets every connection up alike. DataCube's saved queries, Query's projects by name and
-  Studio's tables use it (a person's files put in as each database is made, or onto the tab's own connection for a
-  model with no Data rows; a reset refills its one table); `TestData` and `withTestData` deleted.
+  `duckdb-tab.ts` `connect` sets every connection up alike. DataCube's saved queries and Query's projects by name use
+  it. Studio's tables hold ONE database at a time, the workspace's own (`own`, even with no Data rows): whenever what
+  fills it changes (a Data row or a table edited, an undo, a file reset) it is dropped and made again from the model
+  and the person's files as they are now (the user: "blow away and recreate"; nothing about earlier databases is
+  tracked), the screens pointed at the new one before the old is dropped; a class edited keeps it. `TestData` and
+  `withTestData` deleted.
 - **5, Python:** `legend_lite/projects.py`, the twin (made once under the frames' lock, kept; one use at a time per
   project, a DuckDB connection being unsafe across threads; a model that does not read as a model is no project's, any
   other refusal said as it is). The engine's execute runs a project's model on its project's cursor.

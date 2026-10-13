@@ -219,6 +219,20 @@ describe("each version of a project in a database of its own (C5, ProjectDatabas
     assert.deepEqual(projects.names, []);
   });
 
+  it("gives a model with no Data rows a database of its own when asked; its owner's drop lets it go, made again after", async () => {
+    const projects = projectsOf();
+    const bare = partyText(V1).replace(/###Data[\s\S]*$/, '');
+    const own = await projects.engineFor(bare, engine, undefined, { own: true });
+    assert.notEqual(own.engine, engine);
+    assert.equal(projects.names.length, 1);
+    await projects.drop(own.name!);
+    assert.deepEqual(projects.names, []);
+    const again = await projects.engineFor(partyText(V1), engine);
+    await projects.drop(again.name!);
+    const third = await projects.engineFor(partyText(V1), engine);
+    assert.deepEqual((await rowsOf('PARTY', third.engine)).map((r) => r[0]), [1, 2]);
+  });
+
   it('forgets a make that failed, and makes it again when next asked', async () => {
     const projects = projectsOf();
     await assert.rejects(projects.engineFor(partyText(V1), engine, async () => { throw new Error('the person\'s file failed'); }), /failed/);
@@ -229,10 +243,11 @@ describe("each version of a project in a database of its own (C5, ProjectDatabas
 });
 
 /** Studio's tables over this file's DuckDB: the model's database, and the runner the screens run on. */
-function tabTables(): { tabs: TabTables; runner: ProjectRunner } {
+function tabTables(): { tabs: TabTables; runner: ProjectRunner; projects: ProjectDatabases } {
   const runner = new ProjectRunner(engine);
   const register = async (name: string, bytes: Uint8Array): Promise<void> => db.registerFileBuffer(name, bytes);
-  return { tabs: new TabTables(projectsOf(), runner, engine, register, planner), runner };
+  const projects = projectsOf();
+  return { tabs: new TabTables(projects, runner, engine, register, planner), runner, projects };
 }
 
 describe("a table's rows from a person's file (plan A2)", () => {
@@ -299,6 +314,20 @@ describe("a table's rows from a person's file (plan A2)", () => {
     await tabs.load(a);
     assert.deepEqual((await rows()).map((r) => r[1]), ['Meridian Capital', 'Halberd Securities']);
     assert.deepEqual((await tabs.tables(a))[0]!.source, { kind: 'test', element: 'demo::party::PartyData' });
+  });
+
+  it('holds one database at a time: what fills it changed, the one before dropped; a class edited, the same one', async () => {
+    const made = tabTables();
+    runner = made.runner;
+    const a = await version(V1);
+    await made.tabs.load(a);
+    const first = made.projects.names;
+    await made.tabs.load(await modelOf(`${partyText(V1)}\n###Pure\nClass demo::party::Other { x: Integer[1]; }\n`));
+    assert.deepEqual(made.projects.names, first);
+    await made.tabs.load(await version(V2));
+    assert.equal(made.projects.names.length, 1);
+    assert.notDeepEqual(made.projects.names, first);
+    assert.deepEqual((await rows()).map((r) => r[0]), [3]);
   });
 
   it("fills a table from a file whose name DuckDB would read as a pattern (sales[2024].csv)", async () => {

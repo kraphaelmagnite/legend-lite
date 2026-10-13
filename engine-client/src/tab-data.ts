@@ -4,7 +4,7 @@
 // it is reset -- or from nowhere yet.
 
 import type { QueryEngine } from './engine.ts';
-import { databaseOf, databaseTables, dataTables, loadDataTables, loadFileTable, seeded, type FileSink, type SeedSource } from './model-data.ts';
+import { databaseOf, databaseTables, dataTables, loadFileTable, seeded, type FileSink, type SeedSource } from './model-data.ts';
 import type { ProjectDatabases, ProjectEngine, ProjectRunner } from './project-data.ts';
 
 type Elements = Parameters<typeof dataTables>[0];
@@ -33,27 +33,21 @@ export interface TableState {
 
 const key = (schema: string, table: string): string => `${schema}.${table}`;
 
-/** A person's file for a table: its name and bytes (put in again when the model's database is made afresh). */
+/** A person's file for a table: its name and bytes (put in again whenever the workspace's database is made). */
 interface PutFile {
   readonly schema: string;
   readonly table: string;
   readonly name: string;
   readonly bytes: Uint8Array;
-  /** The planner's statement that drops the table it made. */
-  readonly drop: string;
 }
 
-/** The tab's own connection, as `#held` names it (a model with no Data rows runs there). */
-const HOST = '';
-
 /**
- * The tables of the model a workspace runs (Studio's), in this tab: the model's own database (project-data.ts, named
- * by what it holds: an edit to a Data row or a table is a database of its own, and an undo finds the one before), its
- * Data rows there, and a person's file for a table put in over them; or, a model with no Data rows, the tab's own
- * connection. Every database is brought up to date with the person's files each time it is opened -- each file it
- * lacks put in, each one reset since taken out and its table refilled from its Data element -- and when it is made,
- * before any query reaches it (Studio's review: a database kept is one a workspace comes back to). The screens run on
- * `runner`, pointed at the model's database as it loads.
+ * The tables of the model a workspace runs (Studio's), in this tab: ONE database at a time, the workspace's own
+ * (project-data.ts) -- its model's Data rows, and a person's file for a table put in over them. Whenever what fills it
+ * changes -- a Data row or a table edited, an undo, a file reset -- it is dropped and made again from the model and the
+ * person's files as they are now, so it can never hold anything else (the user, 2026-10-13: "blow away and recreate";
+ * nothing about earlier databases is tracked). An edit that changes neither (a class) keeps it: it is named by what it
+ * holds. A file put goes straight into the database there. The screens run on `runner`, pointed at it.
  */
 export class TabTables {
   readonly #projects: ProjectDatabases;
@@ -61,14 +55,16 @@ export class TabTables {
   readonly #host: QueryEngine;
   readonly #register: FileSink['registerFileBuffer'];
   readonly #source: SeedSource;
-  /** The tables a person's file fills now, by `schema.table`. */
+  /** The tables a person's file fills, by `schema.table`: the person's own state. */
   readonly #files = new Map<string, PutFile>();
-  /** What each database holds of them, by its name (HOST for the tab's own connection): the file put there, by table. */
-  readonly #held = new Map<string, Map<string, PutFile>>();
+  /** How many times the person's files changed; the database there now was made at `#current.files`. */
+  #filesChanged = 0;
+  /** The database there now: its name, and the files' count it was made with. */
+  #current: { readonly name: string; readonly files: number } | undefined;
   #uploads = 0;
 
   /**
-   * `host`: the tab's own connection (a model with no Data rows runs there); `register`: where a file's bytes go (the
+   * `host`: the tab's own connection (no model's database is ever it here); `register`: where a file's bytes go (the
    * tab's database); `source`: the planner's statements for a table a file fills.
    */
   constructor(projects: ProjectDatabases, runner: ProjectRunner, host: QueryEngine, register: FileSink['registerFileBuffer'],
@@ -80,10 +76,9 @@ export class TabTables {
     this.#source = source;
   }
 
-  /** The model's database, made and filled the first time, up to date with the person's files, and the screens on it. */
+  /** The workspace's database for the model as it is now, and the screens on it. */
   async load(model: Model): Promise<void> {
-    const project = await this.#open(model);
-    this.#runner.use(project.engine);
+    await this.#open(model);
   }
 
   /**
@@ -91,18 +86,17 @@ export class TabTables {
    * declares it makes (databaseOf: none, or two, is refused). A refused file leaves the table as it was.
    */
   async put(model: Model, schema: string, table: string, file: { readonly name: string; readonly bytes: Uint8Array }): Promise<void> {
-    const project = await this.#open(model);
-    const drop = await this.#putFile(model, project.engine, schema, table, file);
-    const put: PutFile = { schema, table, name: file.name, bytes: file.bytes, drop };
-    this.#files.set(key(schema, table), put);
-    this.#heldBy(project.name ?? HOST).set(key(schema, table), put);
+    const { engine } = await this.#open(model);
+    await this.#putFile(model, engine, schema, table, file);
+    this.#files.set(key(schema, table), { schema, table, name: file.name, bytes: file.bytes });
+    // the database there holds it already: it is as the files are now
+    this.#current = { name: this.#current!.name, files: ++this.#filesChanged };
   }
 
-  /** `schema.table` back to the model's own rows -- its Data element's, by the planner's statements -- or, none, no table. */
+  /** `schema.table` back to the model's own rows (none: no table): the database made again without the file. */
   async reset(model: Model, schema: string, table: string): Promise<void> {
-    this.#files.delete(key(schema, table));
-    const project = await this.#open(model);
-    this.#runner.use(project.engine);
+    if (this.#files.delete(key(schema, table))) this.#filesChanged++;
+    await this.#open(model);
   }
 
   /** Every table the model declares: where its rows are from, and how many there are (counted by the planner's name). */
@@ -129,51 +123,36 @@ export class TabTables {
     return out;
   }
 
-  /** The model's database (made and brought up to date as it is made, before any query), brought up to date again. */
+  /**
+   * The workspace's database for `model` as it is now: the one there when nothing that fills it changed, else made
+   * from the model's Data rows and the person's files (they go in before any query reaches it), the screens pointed at
+   * it, and the one before dropped -- after, so a run the screens began on it finishes there.
+   */
   async #open(model: Model): Promise<ProjectEngine> {
-    const project = await this.#projects.engineFor(model.text, this.#host, (engine, name) => this.#sync(model, engine, name));
-    await this.#sync(model, project.engine, project.name ?? HOST);
+    const made = async (engine: QueryEngine): Promise<void> => {
+      for (const file of this.#files.values()) await this.#putFile(model, engine, file.schema, file.table, file);
+    };
+    const want = { own: true } as const;
+    let project = await this.#projects.engineFor(model.text, this.#host, made, want);
+    const name = project.name!;
+    if (this.#current?.name === name && this.#current.files !== this.#filesChanged) {
+      // the same model, the person's files changed (a reset): made again
+      await this.#projects.drop(name);
+      project = await this.#projects.engineFor(model.text, this.#host, made, want);
+    }
+    const before = this.#current?.name;
+    this.#current = { name, files: this.#filesChanged };
+    this.#runner.use(project.engine);
+    if (before !== undefined && before !== name) await this.#projects.drop(before);
     return project;
   }
 
-  /**
-   * `name`'s database up to date with the person's files: each it lacks, or holds an earlier file of, put in; each it
-   * holds that was reset since taken out, and its table refilled from its Data element (a project's database; the
-   * tab's own connection holds no Data rows).
-   */
-  async #sync(model: Model, engine: QueryEngine, name: string): Promise<void> {
-    const held = this.#heldBy(name);
-    for (const [k, file] of this.#files) {
-      if (held.get(k) === file) continue;
-      await this.#putFile(model, engine, file.schema, file.table, file);
-      held.set(k, file);
-    }
-    for (const [k, had] of [...held]) {
-      if (this.#files.has(k)) continue;
-      await engine.run(had.drop, 0);
-      held.delete(k);
-      const own = dataTables(model.elements).filter((t) => t.schema === had.schema && t.table === had.table);
-      if (name !== HOST && own.length > 0) {
-        await loadDataTables({ run: (sql) => engine.run(sql, 0) }, await seeded(this.#source, model.text, own));
-      }
-    }
-  }
-
-  #heldBy(name: string): Map<string, PutFile> {
-    let held = this.#held.get(name);
-    if (!held) {
-      held = new Map();
-      this.#held.set(name, held);
-    }
-    return held;
-  }
-
-  /** A file put into `schema.table` on `engine`; answers the planner's statement that drops the table. */
+  /** A file put into `schema.table` on `engine`. */
   async #putFile(model: Model, engine: QueryEngine, schema: string, table: string,
-    file: { readonly name: string; readonly bytes: Uint8Array }): Promise<string> {
+    file: { readonly name: string; readonly bytes: Uint8Array }): Promise<void> {
     const database = databaseOf(model.elements, schema, table, 'a file fills');
     const target = databaseTables(model.elements).find((t) => t.database === database && t.schema === schema && t.table === table)!;
     const sink: FileSink = { registerFileBuffer: this.#register, run: (sql) => engine.run(sql, 0) };
-    return (await loadFileTable(sink, this.#source, model.text, target, file, `upload-${++this.#uploads}`)).drop;
+    await loadFileTable(sink, this.#source, model.text, target, file, `upload-${++this.#uploads}`);
   }
 }
