@@ -36,7 +36,7 @@ from typing import Any, Callable, Iterator
 import duckdb
 import pyarrow as pa
 
-from . import _json, compiler
+from . import _host, _json, compiler
 
 LIVE = 'live'
 SNAPPED = 'snapped'
@@ -116,10 +116,6 @@ def _arrow(frame: Any) -> pa.Table:
     return pa.table(frame)
 
 
-def _quoted(name: str) -> str:
-    return '"' + name.replace('"', '""') + '"'
-
-
 class Table:
     """A registered frame: its Legend model and the queries over it. Unusable once its name is registered
     again or unregistered."""
@@ -132,7 +128,8 @@ class Table:
         # the frame (or function) it was registered with, as given: what a page's grid asks for by name is it
         self.given = given
         self._registered = f'{_OWN}{name}'
-        self._target = 'main.' + _quoted(name)
+        # its table or view, in the database's own main schema: named for the host's operations (D5)
+        self._target = _host.name(name, schema='main')
         self._schema: pa.Schema | None = None
         self._closed = False
         self.model = ''
@@ -148,10 +145,11 @@ class Table:
         """Puts the frame in DuckDB as the table it is named, reads its catalog, and writes its model."""
         con = self._frames.connection
         con.register(self._registered, arrow)
-        kind = 'VIEW' if self.mode == LIVE else 'TABLE'
+        kind = 'view' if self.mode == LIVE else 'table'
         # a view whose columns changed is dropped, not replaced: the copy below may change its kind of select
-        con.execute(f'DROP {kind} IF EXISTS {self._target}')
-        con.execute(f'CREATE {kind} {self._target} AS SELECT * FROM {self._registered}')
+        _host.run(con, {'op': 'drop', 'kind': kind, 'target': self._target},
+                  {'op': 'relation', 'kind': kind, 'target': self._target,
+                   'from': {'relation': _host.name(self._registered)}})
         if self.mode == SNAPPED:
             con.unregister(self._registered)
         rows = con.execute(compiler.catalog_columns_sql('main', self.name)).fetchall()
@@ -164,9 +162,9 @@ class Table:
             'columns': [dict(zip(_CATALOG_FIELDS, row)) for row in rows],
         })
         if written['conversions']:
-            select = written['copySelectList']
-            source = self._registered if self.mode == LIVE else self._target
-            con.execute(f'CREATE OR REPLACE {kind} {self._target} AS SELECT {select} FROM {source}')
+            source = _host.name(self._registered) if self.mode == LIVE else self._target
+            _host.run(con, {'op': 'relation', 'kind': kind, 'target': self._target, 'replace': True,
+                            'selectList': written['copySelectList'], 'from': {'relation': source}})
         self.model = written['model']
         self.runtime = written['runtime']
         self.source = written['source']
@@ -183,7 +181,7 @@ class Table:
     def _drop(self) -> None:
         """Takes the frame out of DuckDB, and makes this handle unusable."""
         con = self._frames.connection
-        con.execute(f"DROP {'VIEW' if self.mode == LIVE else 'TABLE'} IF EXISTS {self._target}")
+        _host.run(con, {'op': 'drop', 'kind': 'view' if self.mode == LIVE else 'table', 'target': self._target})
         if self.mode == LIVE:
             con.unregister(self._registered)
         if self.held is not None:
@@ -421,7 +419,8 @@ class Frames:
                 dropped = self._files.pop(name.lower(), None)
                 if dropped is not None:
                     dropped[3].close()
-                self.connection.execute(f'DROP {"VIEW" if view else "TABLE"} IF EXISTS main."{name}"')
+                _host.run(self.connection, {'op': 'drop', 'kind': 'view' if view else 'table',
+                                            'target': _host.name(name, schema='main')})
                 raise
 
     def keep_file(self, name: str, model: str, view: bool = False) -> None:
@@ -463,13 +462,7 @@ class Frames:
             return True
         # this database's own and its temporary ones, which a bare name reads: a project's database attached beside it
         # (C5) holds none of the names a file may take
-        found = self.connection.execute(
-            "SELECT count(*) FROM duckdb_tables() WHERE database_name IN (current_database(), 'temp') "
-            "AND lower(table_name) = lower(?)", [name]).fetchone()[0]
-        found += self.connection.execute(
-            "SELECT count(*) FROM duckdb_views() WHERE NOT internal AND database_name IN (current_database(), 'temp') "
-            "AND lower(view_name) = lower(?)", [name]).fetchone()[0]
-        return found > 0
+        return _host.count(self.connection, {'op': 'nameTaken', 'name': name}) > 0
 
     def taken(self, name: str) -> bool:
         """Whether ``name`` is a frame's or a page's file's table: a frame of that name cannot be registered."""
@@ -477,13 +470,7 @@ class Frames:
             return name.lower() in self._tables or name.lower() in self._files
 
     def _exists(self, name: str) -> bool:
-        found = self.connection.execute(
-            "SELECT count(*) FROM duckdb_tables() WHERE database_name = current_database() AND schema_name = 'main'"
-            " AND lower(table_name) = lower(?)", [name]).fetchone()[0]
-        found += self.connection.execute(
-            "SELECT count(*) FROM duckdb_views() WHERE database_name = current_database() AND schema_name = 'main'"
-            " AND NOT internal AND lower(view_name) = lower(?)", [name]).fetchone()[0]
-        return found > 0
+        return _host.count(self.connection, {'op': 'relationExists', 'name': _host.name(name, schema='main')}) > 0
 
     def unregister(self, name: str) -> None:
         """Takes a frame's table out of the database; its handle stops working."""
@@ -499,7 +486,8 @@ class Frames:
             files, self._files = list(self._files.values()), {}
             try:
                 for name, _model, view, _held in files:
-                    self.connection.execute(f'DROP {"VIEW" if view else "TABLE"} IF EXISTS main."{name}"')
+                    _host.run(self.connection, {'op': 'drop', 'kind': 'view' if view else 'table',
+                                                'target': _host.name(name, schema='main')})
             finally:
                 # every model let go, a drop that failed or not, and every model a page sent
                 for _name, _model, _view, held in files:

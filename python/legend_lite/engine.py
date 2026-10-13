@@ -52,7 +52,7 @@ import duckdb
 import pyarrow as pa
 import pyarrow.ipc
 
-from . import _json, _planner, compiler, warehouse
+from . import _host, _json, _planner, compiler, warehouse
 from .compiler import LegendError
 from ._library import library
 from .frames import Frames, UntypedColumn, typed_by_plan
@@ -219,11 +219,6 @@ def _on_planner_threads(planner: Any) -> Callable[..., Any]:
     return lambda f, *a: f(*a)
 
 
-def _quoted_name(name: str) -> str:
-    """A name as DuckDB quotes it."""
-    return '"' + name.replace('"', '""') + '"'
-
-
 def _arrow_rows(rows: pa.Table, planned: str, receipt: dict[str, Any] | None = None) -> Answer:
     """A plan-and-run's rows, as Arrow, the planner's answer in their schema's metadata (``legend.plan``), and where
     they were read when not here (``legend.receipt``: a warehouse table's, its statement and its reader)."""
@@ -280,7 +275,7 @@ def remote_url(url: str) -> bool:
 @functools.cache
 def _duckdb_platform() -> str:
     """The platform DuckDB names its extensions by here (``osx_arm64``, ``linux_amd64``, ``windows_amd64``, ...)."""
-    return duckdb.connect().execute('PRAGMA platform').fetchone()[0]
+    return _host.ask(duckdb.connect(), {'op': 'platform'})[0][0]
 
 
 def private(path: str) -> bool:
@@ -441,8 +436,10 @@ class _WarehouseTable:
     go."""
 
     def __init__(self, held: compiler.HeldModel, written: dict[str, Any], schema: str, name: str,
-                 where: warehouse.Warehouse, catalog: str) -> None:
+                 where: warehouse.Warehouse, catalog: str, database_type: str = 'DuckDB') -> None:
         self.held = held
+        # its catalog's database type (the catalog entry's): what a statement run on the warehouse is written for
+        self.database_type = database_type
         self.written = written
         self.schema = schema
         self.name = name
@@ -759,14 +756,12 @@ class Engine:
         by name (measured 2026-10-13). A table refused keeps the keys its page gave on the connection, scoped to its own
         URL, as a mount that fails does (PARK-29)."""
         connection = self.frames.connection
-        lists = [row[0] for row in connection.execute('SELECT manifest_list FROM iceberg_snapshots(?)', [url]).fetchall()]
+        lists = [row[0] for row in _host.ask(connection, {'op': 'icebergManifestLists', 'url': url})]
         named = lists
         if all(remote_url(path) for path in named) and lists:
-            named = [row[0] for row in connection.execute(
-                'SELECT DISTINCT manifest_path FROM read_avro(?)', [lists]).fetchall()]
+            named = [row[0] for row in _host.ask(connection, {'op': 'icebergManifests', 'lists': lists})]
             if all(remote_url(path) for path in named):
-                named = [row[0] for row in connection.execute(
-                    'SELECT file_path FROM iceberg_metadata(?)', [url]).fetchall()]
+                named = [row[0] for row in _host.ask(connection, {'op': 'icebergDataFiles', 'url': url})]
         local = next((path for path in named if not remote_url(path)), None)
         if local is None:
             return None
@@ -779,11 +774,7 @@ class Engine:
         repository it would be fetched from is the same folder, and installing on its own is off."""
         if self._extensions is not None:
             return
-        folder_text = str(folder).replace("'", "''")
-        for statement in (f"SET extension_directory = '{folder_text}'",
-                          f"SET custom_extension_repository = '{folder_text}'",
-                          'SET autoinstall_known_extensions = false'):
-            self.frames.connection.execute(statement)
+        _host.run(self.frames.connection, {'op': 'extensionDirectory', 'folder': str(folder)})
         self._extensions = folder
 
     def _file_part(self, body: str) -> Answer:
@@ -987,7 +978,8 @@ class Engine:
             kept = self._warehouse_tables.get(written['model'])
             if kept is None:
                 self._warehouse_tables[written['model']] = _WarehouseTable(
-                    held, written, schema, name, warehouse.Warehouse(signed.session, catalog), catalog)
+                    held, written, schema, name, warehouse.Warehouse(signed.session, catalog), catalog,
+                    found['databaseType'])
                 spare = None
             elif not kept.reads(url, catalog):
                 refusal = (f'{schema}.{name} is open already, with the same columns, from {kept.warehouse.base_url} '
@@ -1019,10 +1011,10 @@ class Engine:
         with table.copying:
             with self.frames.holding():
                 # the shared connection, under its lock as every other use of it
-                database = self.frames.connection.execute('SELECT current_database()').fetchone()[0]
+                database = _host.ask(self.frames.connection, {'op': 'currentDatabase'})[0][0]
             # the copy by its whole name: a schema the warehouse names (temp, an attached database's) never reaches
             # another catalog's table
-            target = f'{_quoted_name(database)}.{_quoted_name(table.schema)}.{_quoted_name(table.name)}'
+            target = _host.name(table.name, schema=table.schema, database=database)
             if asked['op'] == 'release':
                 with self.frames.holding():
                     if table.holders == 1:
@@ -1042,8 +1034,11 @@ class Engine:
             except LegendError as refused:
                 return _said(422, f'the snap could not be planned: {refused}')
             try:
-                # counted where the rows are, before anything is copied (the tab's preflight)
-                counted = _arrow_of(table.warehouse.arrow_chunks(f'SELECT count(*) AS n FROM ({plan.sql})'))
+                # counted where the rows are, before anything is copied (the tab's preflight), by the catalog's own
+                # database's statement (a Postgres catalog asks for a subquery's alias: D5)
+                (counting,) = _host.statements({'op': 'count', 'from': {'query': plan.sql}},
+                                               database_type=table.database_type)
+                counted = _arrow_of(table.warehouse.arrow_chunks(counting))
                 rows = int(counted.column(0)[0].as_py()) if counted.num_rows else 0
                 if rows > _MAX_SNAP_ROWS:
                     return _said(422, f'{rows:,} rows exceeds the {_MAX_SNAP_ROWS:,} row snap limit. Narrow the filter, '
@@ -1065,11 +1060,11 @@ class Engine:
                 connection.register(landing, pulled)
                 try:
                     if not self._schema_exists(database, table.schema):
-                        connection.execute(f'CREATE SCHEMA {_quoted_name(database)}.{_quoted_name(table.schema)}')
+                        _host.run(connection, {'op': 'schema', 'database': database, 'name': table.schema})
                         table.made_schema = True
-                    select = '*' if not conversions else '* REPLACE (' + ', '.join(
-                        f"{c['sql']} AS {_quoted_name(c['column'])}" for c in conversions) + ')'
-                    connection.execute(f'CREATE OR REPLACE TABLE {target} AS SELECT {select} FROM {landing}')
+                    _host.run(connection, {'op': 'relation', 'kind': 'table', 'target': target, 'replace': True,
+                                           'replacing': [{'column': c['column'], 'sql': c['sql']} for c in conversions],
+                                           'from': {'relation': _host.name(landing)}})
                 except duckdb.Error as refused:
                     # nothing left of a copy that failed: no table, and no schema it made
                     self._drop_copy(table, database, target)
@@ -1084,30 +1079,22 @@ class Engine:
                 said = table.frozen
         return Answer(200, 'application/json', json.dumps(said).encode('utf-8'))
 
-    def _drop_copy(self, table: _WarehouseTable, database: str, target: str) -> None:
+    def _drop_copy(self, table: _WarehouseTable, database: str, target: dict[str, Any]) -> None:
         """A table's copy dropped, and the schema it made when nothing else is in it now."""
         table.frozen = None
-        self.frames.connection.execute(f'DROP TABLE IF EXISTS {target}')
+        connection = self.frames.connection
+        _host.run(connection, {'op': 'drop', 'kind': 'table', 'target': target})
         if table.made_schema:
-            left = self.frames.connection.execute(
-                'SELECT count(*) FROM duckdb_tables() WHERE database_name = ? AND schema_name = ?',
-                [database, table.schema]).fetchone()[0]
-            if left == 0:
-                self.frames.connection.execute(f'DROP SCHEMA IF EXISTS {_quoted_name(database)}.{_quoted_name(table.schema)}')
+            if _host.count(connection, {'op': 'tablesIn', 'database': database, 'schema': table.schema}) == 0:
+                _host.run(connection, {'op': 'dropSchema', 'database': database, 'name': table.schema})
             table.made_schema = False
 
     def _table_exists(self, database: str, schema: str, name: str) -> bool:
-        return self.frames.connection.execute(
-            'SELECT count(*) FROM duckdb_tables() WHERE database_name = ? AND lower(schema_name) = lower(?)'
-            ' AND lower(table_name) = lower(?)', [database, schema, name]).fetchone()[0] > 0 or \
-            self.frames.connection.execute(
-                'SELECT count(*) FROM duckdb_views() WHERE database_name = ? AND lower(schema_name) = lower(?)'
-                ' AND lower(view_name) = lower(?)', [database, schema, name]).fetchone()[0] > 0
+        return _host.count(self.frames.connection,
+                           {'op': 'relationExists', 'name': _host.name(name, schema=schema, database=database)}) > 0
 
     def _schema_exists(self, database: str, schema: str) -> bool:
-        return self.frames.connection.execute(
-            'SELECT count(*) FROM duckdb_schemas() WHERE database_name = ? AND lower(schema_name) = lower(?)',
-            [database, schema]).fetchone()[0] > 0
+        return _host.count(self.frames.connection, {'op': 'schemaExists', 'database': database, 'schema': schema}) > 0
 
     def _warehouse_table_of(self, body: str) -> _WarehouseTable | None:
         """The warehouse table a plan-and-run's model is the model of, or None."""
