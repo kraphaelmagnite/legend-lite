@@ -226,6 +226,15 @@ def host_operations(database_type: str, operations: list[dict[str, Any]]) -> lis
     return _json.loads(_answer(library().call('lite_host_operations', database_type, _json.dumps(operations))))
 
 
+def snap_held(handle: int, lambda_json: str, runtime: str, copy: dict[str, Any]) -> dict[str, Any]:
+    """A snap's statements (docs/ONE_PLATFORM_PROGRAM_2026_10_12.md D5b; the tab's ``LitePlanner.snap`` asks the same
+    question): the pull, ``lambda_json`` planned over the model held against ``runtime``, and every statement its copy
+    takes, so the host passes no SQL back. ``copy``: ``{"live", "store", "target", "landing"?, "catalog"?}`` -- where the
+    rows are and go, the copy's name (and its landing's), the source's catalog rows (its conversions applied in the
+    copy). Answered ``{"pull": {"sql", "type"}, "count", "converts", "prepare", "copy", "dropLanding"}``."""
+    return _json.loads(_answer(library().call('lite_snap_held', str(handle), lambda_json, runtime, _json.dumps(copy))))
+
+
 def project_data(model: str, database_type: str) -> dict[str, Any]:
     """A project's own database on a database of the given type (docs/ONE_PLATFORM_PROGRAM_2026_10_12.md C5): where
     ``model``'s Data rows live on this host, named by what it holds (the model's Databases and Data rows: an edited row

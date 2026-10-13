@@ -160,11 +160,12 @@ class Table:
             'convertible': True,
             'databaseType': 'DuckDB',
             'columns': [dict(zip(_CATALOG_FIELDS, row)) for row in rows],
+            # the rebuild the writer's own statement (D5b), none when no column converts
+            'rebuild': {'kind': kind, 'target': self._target,
+                        'from': _host.name(self._registered) if self.mode == LIVE else self._target},
         })
-        if written['conversions']:
-            source = _host.name(self._registered) if self.mode == LIVE else self._target
-            _host.run(con, {'op': 'relation', 'kind': kind, 'target': self._target, 'replace': True,
-                            'selectList': written['copySelectList'], 'from': {'relation': source}})
+        for statement in written.get('rebuild') or []:
+            con.execute(statement)
         self.model = written['model']
         self.runtime = written['runtime']
         self.source = written['source']

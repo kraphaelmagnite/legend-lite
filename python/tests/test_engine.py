@@ -1168,9 +1168,14 @@ class WarehouseOnPython(unittest.TestCase):
 
     def test_a_copy_that_fails_leaves_nothing(self):
         m = self.opened()
-        # a conversion DuckDB refuses: the copy fails after its schema is made
-        self.engine._warehouse_tables[m['model']].written['conversions'] = [{'column': 'qty', 'sql': 'no_such_function(qty)'}]
-        status, body = self.call({'op': 'snap', 'model': m['model'], 'pull': self.query(m)})
+        # a copy DuckDB refuses: it fails after its schema is made (the planner's statements, one made to fail here)
+        from legend_lite import compiler
+        real = compiler.snap_held
+
+        def failing(*args):
+            return {**real(*args), 'copy': ['CREATE TABLE "trading"."POSITIONS" AS SELECT no_such_function(1)']}
+        with mock.patch.object(compiler, 'snap_held', failing):
+            status, body = self.call({'op': 'snap', 'model': m['model'], 'pull': self.query(m)})
         self.assertEqual(status, 422, body)
         self.assertIn('could not be copied', body.decode())
         made = self.frames.connection.execute("SELECT count(*) FROM duckdb_schemas() WHERE schema_name = 'trading'").fetchone()[0]
