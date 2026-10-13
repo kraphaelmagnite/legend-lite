@@ -124,7 +124,7 @@ function inTabSession(grammar: WasmGrammar, duckdbVendor: string, user: string):
       return {
         engine: new BrowserEngine(grammar, runner, user),
         sql: runner,
-        tables: new TabTables(projects, runner, tab.engine, (name, bytes) => tab.data.registerFileBuffer(name, bytes), grammar),
+        tables: new TabTables(projects, runner, tab.engine, tab.data, grammar),
       };
     }));
   return {

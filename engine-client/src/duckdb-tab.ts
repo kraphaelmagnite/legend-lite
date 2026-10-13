@@ -59,6 +59,7 @@ export async function startDuckDbInTab(vendor: string,
     engine,
     data: {
       registerFileBuffer: (name, bytes) => db.registerFileBuffer(name, bytes),
+      dropFile: async (name) => { await db.dropFile(name); },
       run: (sql) => engine.run(sql, 0),
     },
     db,

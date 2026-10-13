@@ -58,7 +58,7 @@ export class TabTables {
   readonly #projects: ProjectDatabases;
   readonly #runner: ProjectRunner;
   readonly #host: QueryEngine;
-  readonly #register: FileSink['registerFileBuffer'];
+  readonly #sink: Pick<FileSink, 'registerFileBuffer' | 'dropFile'>;
   readonly #source: SeedSource;
   /** The tables a person's file fills, by `schema.table`: the person's own state. */
   readonly #files = new Map<string, PutFile>();
@@ -74,15 +74,16 @@ export class TabTables {
   #uploads = 0;
 
   /**
-   * `host`: the tab's own connection (no model's database is ever it here); `register`: where a file's bytes go (the
-   * tab's database); `source`: the planner's statements for a table a file fills.
+   * `host`: the tab's own connection (no model's database is ever it here); `files`: where a file's bytes are
+   * registered for a read, and let go of after (the tab's database); `source`: the planner's statements for a table a
+   * file fills.
    */
-  constructor(projects: ProjectDatabases, runner: ProjectRunner, host: QueryEngine, register: FileSink['registerFileBuffer'],
-    source: SeedSource) {
+  constructor(projects: ProjectDatabases, runner: ProjectRunner, host: QueryEngine,
+    files: Pick<FileSink, 'registerFileBuffer' | 'dropFile'>, source: SeedSource) {
     this.#projects = projects;
     this.#runner = runner;
     this.#host = host;
-    this.#register = register;
+    this.#sink = files;
     this.#source = source;
   }
 
@@ -176,7 +177,11 @@ export class TabTables {
     file: { readonly name: string; readonly bytes: Uint8Array }): Promise<void> {
     const database = databaseOf(model.elements, schema, table, 'a file fills');
     const target = databaseTables(model.elements).find((t) => t.database === database && t.schema === schema && t.table === table)!;
-    const sink: FileSink = { registerFileBuffer: this.#register, run: (sql) => engine.run(sql, 0) };
+    const sink: FileSink = {
+      registerFileBuffer: (name, bytes) => this.#sink.registerFileBuffer(name, bytes),
+      ...(this.#sink.dropFile ? { dropFile: (name: string) => this.#sink.dropFile!(name) } : {}),
+      run: (sql) => engine.run(sql, 0),
+    };
     await loadFileTable(sink, this.#source, model.text, target, file, `upload-${++this.#uploads}`);
   }
 }

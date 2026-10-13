@@ -243,11 +243,27 @@ describe("each version of a project in a database of its own (C5, ProjectDatabas
 });
 
 /** Studio's tables over this file's DuckDB: the model's database, and the runner the screens run on. */
+/**
+ * Files as the browser's DuckDB-WASM takes them: the buffer handed over (transferred to its worker, the caller's view
+ * left empty), and let go of by name (Studio's review: Node's blocking bindings copy, which hid a person's file going
+ * empty the second time it went in). The names registered now, to see that none is left behind.
+ */
+const registered = new Set<string>();
+const asTheBrowserTakesThem = {
+  registerFileBuffer: async (name: string, bytes: Uint8Array): Promise<void> => {
+    const taken = structuredClone(bytes, { transfer: [bytes.buffer] });
+    db.registerFileBuffer(name, taken);
+    registered.add(name);
+  },
+  dropFile: async (name: string): Promise<void> => {
+    registered.delete(name);
+  },
+};
+
 function tabTables(): { tabs: TabTables; runner: ProjectRunner; projects: ProjectDatabases } {
   const runner = new ProjectRunner(engine);
-  const register = async (name: string, bytes: Uint8Array): Promise<void> => db.registerFileBuffer(name, bytes);
   const projects = projectsOf();
-  return { tabs: new TabTables(projects, runner, engine, register, planner), runner, projects };
+  return { tabs: new TabTables(projects, runner, engine, asTheBrowserTakesThem, planner), runner, projects };
 }
 
 describe("a table's rows from a person's file (plan A2)", () => {
@@ -314,6 +330,18 @@ describe("a table's rows from a person's file (plan A2)", () => {
     await tabs.load(a);
     assert.deepEqual((await rows()).map((r) => r[1]), ['Meridian Capital', 'Halberd Securities']);
     assert.deepEqual((await tabs.tables(a))[0]!.source, { kind: 'test', element: 'demo::party::PartyData' });
+  });
+
+  it("puts a person's file in again after the browser's DuckDB took its bytes, and leaves no registration behind", async () => {
+    const tabs = tables();
+    const v1 = await version(V1);
+    await tabs.put(v1, 'PARTY', 'PARTY', { name: 'parties.csv', bytes: enc('ID,NAME,COUNTRY\n7,Osprey Fund,NZ\n') });
+    // a Data row edited: the database made again, the file put in again from the bytes kept
+    const edited = await version(V1.replace('Halberd', 'Kestrel'));
+    await tabs.load(edited);
+    assert.deepEqual(await rows(), [[7, 'Osprey Fund', 'NZ']]);
+    assert.deepEqual((await tabs.tables(edited))[0]!.source, { kind: 'file', name: 'parties.csv' });
+    assert.deepEqual([...registered], []);
   });
 
   it("keeps a file the model no longer takes out of the database, the rest of the workspace running (Studio's review)", async () => {

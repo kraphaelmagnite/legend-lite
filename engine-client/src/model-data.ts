@@ -128,9 +128,14 @@ export interface DataSink {
   run(sql: string): Promise<unknown>;
 }
 
-/** A sink that also takes a file's bytes: a person's own file (Parquet is binary). */
+/**
+ * A sink that also takes a file's bytes: a person's own file (Parquet is binary). DuckDB-WASM takes the buffer it is
+ * given (it hands it to its worker: the view is empty after), so the caller's bytes are copied before they go in; a
+ * file registered for one read is let go of after it (`dropFile`, where the sink can).
+ */
 export interface FileSink extends DataSink {
   registerFileBuffer(name: string, bytes: Uint8Array): Promise<void>;
+  dropFile?(name: string): Promise<void>;
 }
 
 /** A name as DuckDB reads it: a person's file's own column names, read as the file has them. */
@@ -157,21 +162,27 @@ export async function loadFileTable(sink: FileSink, source: SeedSource, model: s
   }]);
   const seed = made!.seed;
   const registered = `${as}.${format}`;
-  await sink.registerFileBuffer(registered, file.bytes);
+  // a copy: the database takes the buffer it is given, and the caller keeps its bytes (Studio puts them in again)
+  await sink.registerFileBuffer(registered, file.bytes.slice());
   const read = format === 'csv' ? `read_csv(${literal(registered)}, header = true, all_varchar = true)` : `read_parquet(${literal(registered)})`;
-  await sink.run('BEGIN TRANSACTION');
   try {
-    for (const sql of seed.sql) await sink.run(sql);
-    await sink.run(`INSERT INTO ${seed.table} (${seed.columns.map((c) => c.sql).join(', ')}) `
-      + `SELECT ${seed.columns.map((c) => ident(c.name)).join(', ')} FROM ${read}`);
-    await sink.run('COMMIT');
-  } catch (e) {
+    await sink.run('BEGIN TRANSACTION');
     try {
-      await sink.run('ROLLBACK');
-    } catch (r) {
-      throw new Error(`${e instanceof Error ? e.message : String(e)} -- and putting the table back failed: ${r instanceof Error ? r.message : String(r)}`);
+      for (const sql of seed.sql) await sink.run(sql);
+      await sink.run(`INSERT INTO ${seed.table} (${seed.columns.map((c) => c.sql).join(', ')}) `
+        + `SELECT ${seed.columns.map((c) => ident(c.name)).join(', ')} FROM ${read}`);
+      await sink.run('COMMIT');
+    } catch (e) {
+      try {
+        await sink.run('ROLLBACK');
+      } catch (r) {
+        throw new Error(`${e instanceof Error ? e.message : String(e)} -- and putting the table back failed: ${r instanceof Error ? r.message : String(r)}`);
+      }
+      throw e;
     }
-    throw e;
+  } finally {
+    // the rows are the table's now (or the table is as it was): the file is not read again
+    await sink.dropFile?.(registered);
   }
   return seed;
 }
