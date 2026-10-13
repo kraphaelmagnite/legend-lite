@@ -157,6 +157,14 @@ describe('SnapManager', () => {
     assert.equal(s.isSnapped, false);
   });
 
+  it('refuses a host operation that carries SQL, by name: no operation has a field for it (D5b)', async () => {
+    await assert.rejects(planner.hostOperations('DuckDB', [{
+      op: 'relation', kind: 'table', target: { name: 'x' }, selectList: 'upper(x)', from: { relation: { name: 'y' } },
+    } as never]), /relation operation has no field 'selectList'/);
+    await assert.rejects(planner.hostOperations('DuckDB', [{ op: 'count', from: { query: 'SELECT 1' } } as never]),
+      /a source is a relation, a file or a remote file/);
+  });
+
   it('gives each snap its own table so two can coexist', async () => {
     const s = new SnapManager(engine, null, planner);
     const a = await s.snap(snaps, pullOf('trades'), 1, { target: target('snap_region_0') });

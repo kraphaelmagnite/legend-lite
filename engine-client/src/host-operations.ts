@@ -18,16 +18,13 @@ export type HostSource =
   /** A file the database reads by a registered name or a path: sniffed CSV with a header, CSV as text (a declared
    *  table's file), Parquet, or JSON (each record's keys its columns). */
   | { readonly file: { readonly at: string; readonly format: 'csv' | 'csvText' | 'parquet' | 'json' } }
-  | { readonly remote: { readonly url: string; readonly format: 'csv' | 'parquet' | 'iceberg' } }
-  /** A query a planner wrote, for this database. */
-  | { readonly query: string };
+  | { readonly remote: { readonly url: string; readonly format: 'csv' | 'parquet' | 'iceberg' } };
 
 export type HostOperation =
-  /** A relation made: replacing one of its name or not; its columns the planner's copy select list, or every column
-   *  with `replacing`'s replaced (the planner's expressions), or every column. */
+  /** A relation made from a source, every column as it has it: replacing one of its name or not. No operation carries
+   *  SQL (D5b): a snap's and a rebuild's statements are the planner's own answers (snap.ts, the table model). */
   | {
     readonly op: 'relation'; readonly kind: 'table' | 'view'; readonly target: HostName; readonly replace?: boolean;
-    readonly selectList?: string; readonly replacing?: readonly { readonly column: string; readonly sql: string }[];
     readonly from: HostSource;
   }
   /** Rows put into a declared table, each declared column from the source's column of its name. */

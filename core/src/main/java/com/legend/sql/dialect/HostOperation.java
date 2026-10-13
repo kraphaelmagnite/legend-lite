@@ -11,8 +11,9 @@ import java.util.Map;
  * dialect program's decision D5): what the tab and Python's host used to spell as SQL themselves -- a file read into a
  * table, a remote file mounted, a copy made, rows counted, an extension, a secret, a catalog question. A host names the
  * operation and its data; the database's {@link HostOperations} writes the statements (names quoted, values written as
- * literals), and a database without one refuses it by name. Data only: no SQL text here, but a query a planner wrote
- * ({@link Source.Query}) and a select list a planner wrote ({@link MakeRelation#selectList}).
+ * literals), and a database without one refuses it by name. Data only: no field holds SQL (D5b) -- a statement around
+ * a planner's own SQL (a snap's count and copy, a table's rebuild) is the planner's to write, asked as a question of its
+ * own ({@link HostOperations#countOf}, {@link HostOperations#copyOf}).
  */
 public sealed interface HostOperation {
 
@@ -55,10 +56,6 @@ public sealed interface HostOperation {
         /** A file the database reads from a remote address, in a format. */
         record Remote(String url, RemoteFormat format) implements Source {
         }
-
-        /** A query a planner wrote, for this database. */
-        record Query(String sql) implements Source {
-        }
     }
 
     /** How a file is read: sniffed CSV with a header; CSV with a header, every column as text (a declared table's file,
@@ -71,19 +68,9 @@ public sealed interface HostOperation {
     /** A relation's kind. */
     enum Kind { TABLE, VIEW }
 
-    /** A column replaced as a copy is made (Snap's conversions): its name, and the planner's expression for it. */
-    record Conversion(String column, String sql) {
-    }
-
-    /**
-     * A relation made from a source: {@code replace} an existing one of its name or not; its columns the planner's copy
-     * select list ({@code selectList}), or every column with {@code replacing}'s replaced, or every column.
-     */
-    record MakeRelation(Kind kind, Name target, boolean replace, @com.legend.base.Nullable String selectList,
-            List<Conversion> replacing, Source from) implements HostOperation {
-        public MakeRelation {
-            replacing = List.copyOf(replacing);
-        }
+    /** A relation made from a source, every column as the source has it: {@code replace} an existing one of its name or
+     *  not. */
+    record MakeRelation(Kind kind, Name target, boolean replace, Source from) implements HostOperation {
     }
 
     /** One column put in: the declared column's name, and the source's column it is read from (a file's header). */

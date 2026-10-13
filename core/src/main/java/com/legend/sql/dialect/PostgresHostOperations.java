@@ -6,9 +6,10 @@ package com.legend.sql.dialect;
 import java.util.List;
 
 /**
- * Postgres's host operations ({@link HostOperations}): the one a host asks of a Postgres database today, a query's rows
- * counted -- Snap's preflight on a warehouse's catalog that is Postgres (docs/ONE_PLATFORM_PROGRAM_2026_10_12.md D5),
- * written as Postgres reads it, its subquery aliased as Postgres before 16 requires. Every other is refused by name.
+ * Postgres's host operations ({@link HostOperations}): the one a host needs of a Postgres database today, a planner's
+ * query counted ({@link #countOf}) -- Snap's preflight on a warehouse's catalog that is Postgres
+ * (docs/ONE_PLATFORM_PROGRAM_2026_10_12.md D5, D5b), written as Postgres reads it, its subquery aliased as Postgres
+ * before 16 requires. Every other is refused by name.
  */
 final class PostgresHostOperations implements HostOperations {
 
@@ -35,9 +36,6 @@ final class PostgresHostOperations implements HostOperations {
 
     @Override
     public List<String> statements(HostOperation operation) {
-        if (operation instanceof HostOperation.Count c && c.from() instanceof HostOperation.Source.Query q) {
-            return List.of("SELECT count(*) AS n FROM (" + q.sql() + ") AS counted");
-        }
         throw HostOperations.refusal(operation, "Postgres");
     }
 

@@ -53,13 +53,6 @@ export interface InferredModel {
   readonly runtime: string;
   /** The relation the cube reads from, as protocol. */
   readonly source: ValueSpecification;
-  /**
-   * SQL over a column that a COPY of the table applies so it holds its declared type: an upload's
-   * rewrite, a Snap. A read-only source reads such a column (a zoned timestamp) as stored.
-   */
-  readonly conversions: readonly { readonly column: string; readonly sql: string }[];
-  /** The select list a copy applies: `* REPLACE (<conversion> AS "<column>", ...)`, or `*`. */
-  readonly copySelectList: string;
   /** Columns left out: the source cannot convert them, or no Database type holds them (bytes). */
   readonly excluded: readonly string[];
   /**

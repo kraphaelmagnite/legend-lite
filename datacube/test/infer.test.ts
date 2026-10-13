@@ -57,7 +57,8 @@ describe('the model for a table', () => {
   ];
 
   it('writes a model the planner can compile', async () => {
-    const m = await writer.tableModel(described, { table: 'trades', convertible: true, databaseType: 'DuckDB' });
+    const m = await writer.tableModel(described, { table: 'trades', convertible: true, databaseType: 'DuckDB',
+      rebuild: { kind: 'table', target: { name: 'trades' }, from: { name: 'trades' } } });
     assert.match(m.model, /###Relational/);
     assert.match(m.model, /Database local::DB/);
     assert.match(m.model, /Table trades/);
@@ -70,7 +71,8 @@ describe('the model for a table', () => {
     assert.match(m.model, /###Runtime/);
     assert.equal(m.runtime, 'local::RT');
     assert.equal((await print(lambda([], m.source))), '|#>{local::DB.trades}#');
-    assert.deepEqual(m.conversions, []);
+    // nothing converts: no rebuild
+    assert.deepEqual(m.rebuild, []);
   });
 
   it('quotes a column name that needs it, and leaves a keyword bare', async () => {
@@ -99,16 +101,20 @@ describe('the model for a table', () => {
 
   it('names what a copy must convert, and keeps a type Pure cannot name on any source', async () => {
     const cols = [col_('id', 'BIGINT'), col_('at', 'TIMESTAMP WITH TIME ZONE'), col_('ref', 'UUID')];
-    const upload = await writer.tableModel(cols, { table: 't', convertible: true, databaseType: 'DuckDB' });
-    assert.deepEqual(upload.conversions, [{ column: 'at', sql: `CAST(timezone('UTC', "at") AS TIMESTAMP)` }]);
+    const rebuild = { kind: 'table' as const, target: { name: 't' }, from: { name: 't' } };
+    const upload = await writer.tableModel(cols, { table: 't', convertible: true, databaseType: 'DuckDB', rebuild });
+    // the rebuild the writer's own statement (D5b): each converted column in its place
+    assert.deepEqual(upload.rebuild,
+      [`CREATE OR REPLACE TABLE "t" AS SELECT * REPLACE (CAST(timezone('UTC', "at") AS TIMESTAMP) AS "at") FROM "t"`]);
     assert.match(upload.model, /at TIMESTAMP/);
     // a zoned timestamp is read in place, as its UTC instant under the UTC session; its conversion is
     // still the copy's (a Snap). A UUID is OTHER: read as its text wherever it is used, on every source.
-    const warehouse = await writer.tableModel(cols, { table: 't', schema: 's', convertible: false, databaseType: 'DuckDB' });
+    const warehouse = await writer.tableModel(cols, { table: 't', schema: 's', convertible: false, databaseType: 'DuckDB', rebuild });
     assert.deepEqual(warehouse.excluded, []);
     assert.match(warehouse.model, / at TIMESTAMP/);
     assert.match(warehouse.model, / ref OTHER/);
-    assert.deepEqual(warehouse.conversions, [{ column: 'at', sql: `CAST(timezone('UTC', "at") AS TIMESTAMP)` }]);
+    assert.deepEqual(warehouse.rebuild,
+      [`CREATE OR REPLACE TABLE "t" AS SELECT * REPLACE (CAST(timezone('UTC', "at") AS TIMESTAMP) AS "at") FROM "t"`]);
   });
 
   it('reads a Postgres table by Postgres\'s rules: an array and an inet are text, json a Variant, bytes left out', async () => {
@@ -160,8 +166,9 @@ describe('the model for a table', () => {
 
   it('leaves bytes out by name, on every source, and opens the rest', async () => {
     for (const convertible of [true, false]) {
-      const m = await writer.tableModel([col_('id', 'BIGINT'), col_('photo', 'BLOB')], { table: 't', convertible, databaseType: 'DuckDB' });
-      assert.deepEqual([m.excluded, m.conversions], [['photo'], []]);
+      const m = await writer.tableModel([col_('id', 'BIGINT'), col_('photo', 'BLOB')], { table: 't', convertible, databaseType: 'DuckDB',
+        rebuild: { kind: 'table', target: { name: 't' }, from: { name: 't' } } });
+      assert.deepEqual([m.excluded, m.rebuild], [['photo'], []]);
       assert.doesNotMatch(m.model, /photo/);
     }
   });
@@ -169,8 +176,9 @@ describe('the model for a table', () => {
   it('declares a nested column a Variant as stored, on any source (docs/VARIANT_STORAGE_CENSUS_2026_09_27.md)', async () => {
     const cols = [col_('items', 'LIST', 'STRUCT(sku VARCHAR)[]'), col_('attrs', 'MAP', 'MAP(VARCHAR, INTEGER)')];
     for (const convertible of [true, false]) {
-      const m = await writer.tableModel(cols, { table: 't', convertible, databaseType: 'DuckDB' });
-      assert.deepEqual([m.conversions, m.excluded], [[], []]);
+      const m = await writer.tableModel(cols, { table: 't', convertible, databaseType: 'DuckDB',
+        rebuild: { kind: 'table', target: { name: 't' }, from: { name: 't' } } });
+      assert.deepEqual([m.rebuild, m.excluded], [[], []]);
       assert.match(m.model, /items SEMISTRUCTURED,\n\s*attrs SEMISTRUCTURED/);
     }
   });

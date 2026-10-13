@@ -6,8 +6,9 @@
 # upper case, then a space; or a lower-case statement's shape. A site kept is named with its reason.
 #
 # What it holds is the literals a host writes: a statement built from parts none of which begins one ('DROP' + ' T')
-# is not seen, and the three operation fields that carry SQL (a source query, a select list, a conversion) carry the
-# planner's text, read from its answers.
+# is not seen. No operation has a field that holds SQL (D5b: HostOperationsTest's noOperationHasAFieldThatHoldsSql, and
+# the planner refuses a field an operation has not): a statement around the planner's own SQL -- a snap's count and
+# copy, a table's rebuild -- is the planner's answer, run as given.
 #
 # Sections: [typescript] and [python], the folders each half reads (every .ts but .d.ts under one; every .py in one);
 # [keywords]; [shapes], each a regular expression a literal's text may not begin with (Java's and Python's alike);

@@ -26,8 +26,7 @@ class HostOperationsPostgresTest {
     @Test
     void aPlannersQueryCountedOnPostgres() throws SQLException {
         String query = "SELECT x FROM generate_series(1, 7) AS g(x) WHERE x % 2 = 1";
-        List<String> statements = HostOperations.of(new Postgres())
-                .statements(new HostOperation.Count(new HostOperation.Source.Query(query)));
+        List<String> statements = HostOperations.of(new Postgres()).countOf(query);
         assertEquals(1, statements.size(), statements.toString());
         try (Connection pg = DriverManager.getConnection(EmbeddedPostgres.shared().jdbcUrl("postgres"));
                 Statement s = pg.createStatement();

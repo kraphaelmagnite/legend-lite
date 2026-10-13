@@ -150,20 +150,19 @@ class HostOperationsTest {
     void duckDbsNamedOperations() {
         var file = HostOperation.Name.of("pivot");
         assertEquals("CREATE OR REPLACE TABLE \"pivot\" AS SELECT * FROM read_csv('upload-1.csv', AUTO_DETECT=TRUE, HEADER=TRUE)",
-                one(new HostOperation.MakeRelation(HostOperation.Kind.TABLE, file, true, null, List.of(),
-                        new HostOperation.Source.File("upload-1.csv", HostOperation.FileFormat.CSV))));
-        assertEquals("CREATE OR REPLACE TABLE \"pivot\" AS SELECT \"a\", CAST(\"b\" AS VARCHAR) AS \"b\" FROM \"pivot\"",
                 one(new HostOperation.MakeRelation(HostOperation.Kind.TABLE, file, true,
-                        "\"a\", CAST(\"b\" AS VARCHAR) AS \"b\"", List.of(), new HostOperation.Source.Relation(file))));
+                        new HostOperation.Source.File("upload-1.csv", HostOperation.FileFormat.CSV))));
         assertEquals("CREATE VIEW \"t\" AS SELECT * FROM \"__reg\"", one(new HostOperation.MakeRelation(HostOperation.Kind.VIEW,
-                HostOperation.Name.of("t"), false, null, List.of(), new HostOperation.Source.Relation(HostOperation.Name.of("__reg")))));
+                HostOperation.Name.of("t"), false, new HostOperation.Source.Relation(HostOperation.Name.of("__reg")))));
         assertEquals("CREATE OR REPLACE VIEW \"r\" AS SELECT * FROM iceberg_scan('s3://b/t')", one(new HostOperation.MakeRelation(
-                HostOperation.Kind.VIEW, HostOperation.Name.of("r"), true, null, List.of(),
+                HostOperation.Kind.VIEW, HostOperation.Name.of("r"), true,
                 new HostOperation.Source.Remote("s3://b/t", HostOperation.RemoteFormat.ICEBERG))));
-        assertEquals("CREATE OR REPLACE TABLE \"db\".\"s\".\"t\" AS SELECT * REPLACE (CAST(x AS VARCHAR) AS \"x\") FROM (SELECT 1 AS x)",
-                one(new HostOperation.MakeRelation(HostOperation.Kind.TABLE, new HostOperation.Name("db", "s", "t", false), true,
-                        null, List.of(new HostOperation.Conversion("x", "CAST(x AS VARCHAR)")),
-                        new HostOperation.Source.Query("SELECT 1 AS x"))));
+        // a planner's own SQL wrapped in Java, never a host's (D5b): a copy of a plan, its conversion in place, and a count
+        assertEquals(List.of("CREATE OR REPLACE TABLE \"db\".\"s\".\"t\" AS SELECT * REPLACE (CAST(x AS VARCHAR) AS \"x\") "
+                + "FROM (SELECT 1 AS x)"), DUCK.copyOf(HostOperation.Kind.TABLE, new HostOperation.Name("db", "s", "t", false),
+                        new HostOperations.CopyFrom.PlannedQuery("SELECT 1 AS x"),
+                        List.of(new CatalogModel.Conversion("x", "CAST(x AS VARCHAR)"))));
+        assertEquals(List.of("SELECT count(*) AS n FROM (SELECT 1 AS x)"), DUCK.countOf("SELECT 1 AS x"));
         assertEquals("INSERT INTO PARTY.PARTY (ID, NAME, \"order\") SELECT \"ID\", \"first name\", \"order\" FROM read_csv('f.csv', header = true, all_varchar = true)",
                 one(new HostOperation.Insert(HostOperation.Name.declared("PARTY", "PARTY"),
                         List.of(new HostOperation.Column("ID", "ID"), new HostOperation.Column("NAME", "first name"),
@@ -192,21 +191,22 @@ class HostOperationsTest {
         try (Connection c = DriverManager.getConnection("jdbc:duckdb:"); Statement st = c.createStatement()) {
             var t = HostOperation.Name.of("people");
             for (HostOperation op : List.of(
-                    new HostOperation.MakeRelation(HostOperation.Kind.TABLE, t, true, null, List.of(),
+                    new HostOperation.MakeRelation(HostOperation.Kind.TABLE, t, true,
                             new HostOperation.Source.File(csv.toString(), HostOperation.FileFormat.CSV)),
-                    new HostOperation.MakeRelation(HostOperation.Kind.TABLE, t, true, null,
-                            List.of(new HostOperation.Conversion("first name", "upper(\"first name\")")),
-                            new HostOperation.Source.Relation(t)),
                     new HostOperation.MakeSchema(null, "firm"),
                     new HostOperation.MakeRelation(HostOperation.Kind.VIEW, new HostOperation.Name(null, "firm", "v", false), false,
-                            null, List.of(), new HostOperation.Source.Query("SELECT ID FROM people")))) {
+                            new HostOperation.Source.Relation(t)))) {
                 for (String sql : DUCK.statements(op)) {
                     st.execute(sql);
                 }
             }
+            for (String sql : DUCK.copyOf(HostOperation.Kind.TABLE, t, new HostOperations.CopyFrom.Relation(t),
+                    List.of(new CatalogModel.Conversion("first name", "upper(\"first name\")")))) {
+                st.execute(sql);
+            }
             assertEquals(List.of("ADA", "GRACE"), rows(st, "SELECT \"first name\" FROM people ORDER BY ID"));
             assertEquals(List.of("2"), rows(st, one(new HostOperation.Count(new HostOperation.Source.Relation(t)))));
-            assertEquals(List.of("2"), rows(st, one(new HostOperation.Count(new HostOperation.Source.Query("SELECT * FROM firm.v")))));
+            assertEquals(List.of("2"), rows(st, DUCK.countOf("SELECT * FROM firm.v").get(0)));
             assertEquals(List.of("1"), rows(st, one(new HostOperation.NameTaken("PEOPLE"))));
             assertEquals(List.of("1"), rows(st, one(new HostOperation.RelationExists(new HostOperation.Name(null, "FIRM", "V", false)))));
             assertEquals(List.of("1"), rows(st, one(new HostOperation.SchemaExists(null, "Firm"))));
@@ -225,12 +225,50 @@ class HostOperationsTest {
     @Test
     void postgresCountsWithTheAliasItAsksFor() {
         HostOperations pg = HostOperations.of(new Postgres());
-        assertEquals(List.of("SELECT count(*) AS n FROM (SELECT 1) AS counted"),
-                pg.statements(new HostOperation.Count(new HostOperation.Source.Query("SELECT 1"))));
+        assertEquals(List.of("SELECT count(*) AS n FROM (SELECT 1) AS counted"), pg.countOf("SELECT 1"));
+        assertThrows(DialectCapability.class, () -> pg.copyOf(HostOperation.Kind.TABLE, HostOperation.Name.of("t"),
+                new HostOperations.CopyFrom.PlannedQuery("SELECT 1"), List.of()));
         DialectCapability refused = assertThrows(DialectCapability.class,
                 () -> pg.statements(new HostOperation.Extensions(List.of("httpfs"))));
         assertTrue(refused.getMessage().contains("Extensions on Postgres is not built"), refused.getMessage());
         assertThrows(DialectCapability.class, () -> HostOperations.of(new H2()).statements(new HostOperation.CurrentDatabase()));
+    }
+
+    /**
+     * No operation carries SQL (D5b): every text field of every operation record -- and of the names and sources in
+     * them -- is one of the names below, each data a database quotes or writes as a literal. A field added beside them
+     * fails here, so whoever adds one says what it holds.
+     */
+    @Test
+    void noOperationHasAFieldThatHoldsSql() {
+        java.util.Set<String> data = java.util.Set.of("database", "schema", "name", "at", "url", "target", "from", "scope",
+                "folder", "names", "lists", "credentials");
+        java.util.List<String> found = new java.util.ArrayList<>();
+        java.util.Deque<Class<?>> todo = new java.util.ArrayDeque<>(List.of(HostOperation.class));
+        java.util.Set<Class<?>> seen = new java.util.HashSet<>();
+        while (!todo.isEmpty()) {
+            Class<?> c = todo.pop();
+            if (!seen.add(c)) {
+                continue;
+            }
+            if (c.isSealed()) {
+                todo.addAll(List.of(c.getPermittedSubclasses()));
+            }
+            for (Class<?> nested : c.getDeclaredClasses()) {
+                todo.add(nested);
+            }
+            if (!c.isRecord()) {
+                continue;
+            }
+            for (java.lang.reflect.RecordComponent rc : c.getRecordComponents()) {
+                String type = rc.getGenericType().getTypeName();
+                if (type.contains("String") && !data.contains(rc.getName())) {
+                    found.add(c.getSimpleName() + "." + rc.getName() + ": " + type);
+                }
+            }
+        }
+        assertTrue(seen.size() > 30, "the walk saw " + seen.size() + " types: it is not looking");
+        assertEquals(List.of(), found, "an operation's text field not named as data");
     }
 
     /** Credentials in their order: a key with a quote in it, and SSL off. */

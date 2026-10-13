@@ -33,11 +33,44 @@ final class HostOperationsJson {
         return out;
     }
 
+    /** Each operation's fields beside {@code op}: any other is refused by name -- an operation carries data, never SQL. */
+    private static final Map<String, java.util.Set<String>> FIELDS = Map.ofEntries(
+            Map.entry("relation", java.util.Set.of("kind", "target", "replace", "from")),
+            Map.entry("insert", java.util.Set.of("target", "columns", "from")),
+            Map.entry("drop", java.util.Set.of("kind", "target")),
+            Map.entry("schema", java.util.Set.of("database", "name")),
+            Map.entry("dropSchema", java.util.Set.of("database", "name")),
+            Map.entry("count", java.util.Set.of("from")),
+            Map.entry("secret", java.util.Set.of("name", "scope", "credentials")),
+            Map.entry("extensions", java.util.Set.of("names")),
+            Map.entry("extensionRepository", java.util.Set.of("url")),
+            Map.entry("extensionDirectory", java.util.Set.of("folder")),
+            Map.entry("fileSearchPath", java.util.Set.of("folder")),
+            Map.entry("transaction", java.util.Set.of("step")),
+            Map.entry("nameTaken", java.util.Set.of("name")),
+            Map.entry("relationExists", java.util.Set.of("name")),
+            Map.entry("tablesIn", java.util.Set.of("database", "schema")),
+            Map.entry("schemaExists", java.util.Set.of("database", "schema")),
+            Map.entry("currentDatabase", java.util.Set.of()),
+            Map.entry("platform", java.util.Set.of()),
+            Map.entry("icebergManifestLists", java.util.Set.of("url")),
+            Map.entry("icebergManifests", java.util.Set.of("lists")),
+            Map.entry("icebergDataFiles", java.util.Set.of("url")));
+
     private static HostOperation operation(Json.Obj o) {
         String op = string(o, "op");
+        java.util.Set<String> fields = FIELDS.get(op);
+        if (fields == null) {
+            throw new IllegalArgumentException("a host's operation is not one this platform names: " + op);
+        }
+        for (String field : o.fields().keySet()) {
+            if (!"op".equals(field) && !fields.contains(field)) {
+                throw new IllegalArgumentException("a host's " + op + " operation has no field '" + field + "'");
+            }
+        }
         return switch (op) {
             case "relation" -> new HostOperation.MakeRelation(kind(string(o, "kind")), name(object(o, "target")),
-                    bool(o, "replace"), stringOrNull(o, "selectList"), conversions(o), source(object(o, "from")));
+                    bool(o, "replace"), source(object(o, "from")));
             case "insert" -> new HostOperation.Insert(name(object(o, "target")), columns(o), source(object(o, "from")));
             case "drop" -> new HostOperation.Drop(kind(string(o, "kind")), name(object(o, "target")));
             case "schema" -> new HostOperation.MakeSchema(stringOrNull(o, "database"), string(o, "name"));
@@ -107,25 +140,7 @@ final class HostOperationsJson {
                 default -> throw new IllegalArgumentException("a remote file is csv, parquet or iceberg, not " + format);
             });
         }
-        if (o.has("query")) {
-            return new HostOperation.Source.Query(string(o, "query"));
-        }
-        throw new IllegalArgumentException("a source is a relation, a file, a remote file or a query");
-    }
-
-    private static List<HostOperation.Conversion> conversions(Json.Obj o) {
-        List<HostOperation.Conversion> out = new ArrayList<>();
-        if (!o.has("replacing")) {
-            return out;
-        }
-        if (!(o.get("replacing") instanceof Json.Arr arr)) {
-            throw new IllegalArgumentException("a relation's replacing is an array");
-        }
-        for (Json.Node n : arr.items()) {
-            Json.Obj c = object(n, "a conversion");
-            out.add(new HostOperation.Conversion(string(c, "column"), string(c, "sql")));
-        }
-        return out;
+        throw new IllegalArgumentException("a source is a relation, a file or a remote file");
     }
 
     private static List<HostOperation.Column> columns(Json.Obj o) {

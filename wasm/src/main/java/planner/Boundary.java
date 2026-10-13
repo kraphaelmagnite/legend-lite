@@ -271,7 +271,7 @@ public final class Boundary {
      * {@code {"table", "schema"?, "pkg"? (default "local"), "convertible", "databaseType", "snapDatabaseType"?,
      * "columns": [catalog rows]}} in;
      * {@code {"model", "runtime", "snapRuntime"?, "source" (protocol), "accessor" (its Pure text),
-     * "conversions": [{"column","sql"}], "copySelectList", "excluded": [name], "bitColumns": [name]}} out.
+     * "excluded": [name], "bitColumns": [name]}} out.
      * {@code bitColumns}: the columns declared BIT (DuckDB's BOOLEAN), which legend-engine types TinyInt.
      * {@code "rebuild": {"kind", "target", "from"}} in (names as a host operation's): {@code "rebuild": [statement]} out,
      * the statements that make {@code target} from {@code from} with the table's conversions applied, none when no
@@ -304,8 +304,6 @@ public final class Boundary {
         }
         out.put("source", sourceOf(db));
         out.put("accessor", db.accessor());
-        out.put("conversions", conversionsOf(db));
-        out.put("copySelectList", db.copySelectList());
         out.put("excluded", db.excluded());
         out.put("bitColumns", bitColumns);
         if (in.has("rebuild")) {

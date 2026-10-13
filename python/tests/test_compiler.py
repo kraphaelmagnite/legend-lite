@@ -101,11 +101,14 @@ class Compiling(unittest.TestCase):
     def test_writes_a_tables_whole_model_from_its_catalog(self):
         m = ll.table_model({'table': 'orders', 'pkg': 'shop', 'convertible': True, 'databaseType': 'DuckDB',
                             'columns': [{'name': 'id', 'dataType': 'BIGINT', 'logicalType': 'BIGINT', 'notNull': True},
-                                        {'name': 'big', 'dataType': 'UBIGINT', 'logicalType': 'UBIGINT'}]})
+                                        {'name': 'big', 'dataType': 'UBIGINT', 'logicalType': 'UBIGINT'}],
+                            'rebuild': {'kind': 'table', 'target': {'name': 'orders'}, 'from': {'name': 'orders'}}})
         self.assertEqual(m['runtime'], 'shop::RT')
         self.assertIn('Database shop::DB', m['model'])
         self.assertIn('RelationalDatabaseConnection shop::Conn', m['model'])
-        self.assertEqual(m['copySelectList'], '* REPLACE (CAST("big" AS DECIMAL(20,0)) AS "big")')
+        self.assertEqual(m['rebuild'],
+                         ['CREATE OR REPLACE TABLE "orders" AS SELECT * REPLACE (CAST("big" AS DECIMAL(20,0)) AS "big") '
+                          'FROM "orders"'])
         self.assertEqual([(c.name, c.type) for c in ll.relation_type(m['model'], {'_type': 'lambda', 'body': [m['source']], 'parameters': []})],
                          [('id', 'Integer'), ('big', 'Decimal')])
         self.assertNotIn('snapRuntime', m)
@@ -124,7 +127,7 @@ class Compiling(unittest.TestCase):
                     '        open BIT\n    )\n)\n')
         self.assertEqual(m['model'], database + '\n' + connection('Conn', 'RT') + '\n' + connection('SnapConn', 'SnapRT'))
         self.assertEqual((m['runtime'], m['snapRuntime'], m['accessor']), ('shop::RT', 'shop::SnapRT', '#>{shop::DB.orders}#'))
-        self.assertEqual((m['conversions'], m['copySelectList'], m['excluded'], m['bitColumns']), ([], '*', [], ['open']))
+        self.assertEqual((m['excluded'], m['bitColumns'], 'rebuild' in m), ([], ['open'], False))
 
     def test_a_held_model_is_compiled_once_and_plans_as_a_model_given_each_time(self):
         # docs/DATACUBE_MODEL_DESIGN_2026_10_10.md §9: the same answers, the model compiled once

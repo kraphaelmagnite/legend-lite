@@ -142,15 +142,21 @@ class CatalogModelTest {
         assertEquals("#>{t::DB.s.orders}#", db.accessor());
     }
 
-    /** A copy's select list names each converted column once, quoted as the writer quotes it, and is a plain star
-     *  when nothing converts. */
+    /** A copy (HostOperations.copyOf: an upload's rewrite, a snap) names each converted column once, quoted as the
+     *  writer quotes it, and is a plain star when nothing converts. */
     @Test
     void aCopyAppliesEveryConversionUnderItsColumnsName() {
         CatalogModel.Database db = CatalogModel.database("t::DB", null, "orders",
                 catalog("id BIGINT, \"at\" TIMESTAMP WITH TIME ZONE, big UBIGINT"), new DuckDb(), true);
-        assertEquals("* REPLACE (CAST(timezone('UTC', \"at\") AS TIMESTAMP) AS \"at\", CAST(\"big\" AS DECIMAL(20,0)) AS \"big\")",
-                db.copySelectList());
-        assertEquals("*", CatalogModel.database("t::DB", null, "t", catalog("id BIGINT"), new DuckDb(), true).copySelectList());
+        HostOperations duck = HostOperations.of(new DuckDb());
+        HostOperation.Name orders = HostOperation.Name.of("orders");
+        HostOperations.CopyFrom from = new HostOperations.CopyFrom.Relation(orders);
+        assertEquals(List.of("CREATE OR REPLACE TABLE \"orders\" AS SELECT * REPLACE (CAST(timezone('UTC', \"at\") AS "
+                + "TIMESTAMP) AS \"at\", CAST(\"big\" AS DECIMAL(20,0)) AS \"big\") FROM \"orders\""),
+                duck.copyOf(HostOperation.Kind.TABLE, orders, from, db.conversions()));
+        assertEquals(List.of("CREATE OR REPLACE TABLE \"orders\" AS SELECT * FROM \"orders\""),
+                duck.copyOf(HostOperation.Kind.TABLE, orders, from, CatalogModel.database("t::DB", null, "orders",
+                        catalog("id BIGINT"), new DuckDb(), true).conversions()));
     }
 
     @Test

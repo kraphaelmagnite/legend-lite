@@ -56,7 +56,7 @@ final class DuckDbHostOperations implements HostOperations {
     public List<String> statements(HostOperation operation) {
         return switch (operation) {
             case HostOperation.MakeRelation m -> List.of("CREATE " + (m.replace() ? "OR REPLACE " : "") + kind(m.kind())
-                    + " " + name(m.target()) + " AS SELECT " + columns(m) + " FROM " + source(m.from()));
+                    + " " + name(m.target()) + " AS SELECT * FROM " + source(m.from()));
             case HostOperation.Insert i -> List.of("INSERT INTO " + name(i.target()) + " ("
                     + String.join(", ", i.columns().stream().map(c -> DIALECT.physicalName(c.target())).toList())
                     + ") SELECT " + String.join(", ", i.columns().stream().map(c -> quoted(c.from())).toList())
@@ -150,18 +150,6 @@ final class DuckDbHostOperations implements HostOperations {
         };
     }
 
-    /** A relation made's columns: the planner's copy select list, every column with conversions in place, or all. */
-    private static String columns(HostOperation.MakeRelation m) {
-        if (m.selectList() != null) {
-            return m.selectList();
-        }
-        if (m.replacing().isEmpty()) {
-            return "*";
-        }
-        return "* REPLACE (" + String.join(", ",
-                m.replacing().stream().map(c -> c.sql() + " AS " + quoted(c.column())).toList()) + ")";
-    }
-
     private static String source(HostOperation.Source source) {
         return switch (source) {
             case HostOperation.Source.Relation r -> name(r.name());
@@ -179,7 +167,6 @@ final class DuckDbHostOperations implements HostOperations {
                 case PARQUET -> "read_parquet(" + literal(r.url()) + ")";
                 case ICEBERG -> "iceberg_scan(" + literal(r.url()) + ")";
             };
-            case HostOperation.Source.Query q -> "(" + q.sql() + ")";
         };
     }
 

@@ -200,10 +200,11 @@ def table_model(table: dict[str, Any]) -> dict[str, Any]:
     writer DataCube's tables and Python's frames share (the compiler's ``tableModelOrError``).
 
     Takes ``{"table", "schema"?, "pkg"? (default "local"), "convertible", "databaseType",
-    "snapDatabaseType"?, "columns": [catalog rows]}``. Returns ``{"model", "runtime", "snapRuntime"?,
-    "source", "accessor", "conversions", "copySelectList", "excluded", "bitColumns"}``: ``model`` is Pure
-    text, ``source`` the relation that reads the table (a tree; ``accessor`` its text), ``copySelectList``
-    the select list a copy applies so it holds the declared types."""
+    "snapDatabaseType"?, "columns": [catalog rows], "rebuild"?: {"kind", "target", "from"}}``. Returns ``{"model",
+    "runtime", "snapRuntime"?, "source", "accessor", "excluded", "bitColumns", "rebuild"?}``: ``model`` is Pure text,
+    ``source`` the relation that reads the table (a tree; ``accessor`` its text), ``rebuild`` the statements that make
+    ``target`` from ``from`` with the table's conversions applied, so it holds the declared types (none when no column
+    converts)."""
     return _json.loads(_answer(library().call('lite_table_model', _json.dumps(table))))
 
 
