@@ -332,3 +332,39 @@ Data demo::plain::PlainData
     await assert.rejects(tRows(), /T/);
   });
 });
+
+describe("a project's own database (C5), the planner's statements run in DuckDB-WASM", () => {
+  it("holds the project's rows in a database of their own, beside the tab's table of the same name, untouched", async () => {
+    const project = await planner.projectData(partyText(V1), 'demo:party:1.0.0', 'DuckDB');
+    assert.match(project.name, /^__project_[0-9a-f]{16}$/);
+    // the tab's own table, of the very name the project declares
+    await engine.run('CREATE SCHEMA IF NOT EXISTS "PARTY"', 0);
+    await engine.run('CREATE OR REPLACE TABLE "PARTY"."PARTY" (ID INTEGER, NAME VARCHAR, COUNTRY VARCHAR)', 0);
+    await engine.run("INSERT INTO \"PARTY\".\"PARTY\" VALUES (9, 'the tab''s own', 'XX')", 0);
+    for (const sql of project.open) await engine.run(sql, 0);
+    const own = new DuckDbEngine(db.connect() as ArrowishConnection);
+    for (const sql of [...project.use, ...project.fill]) await own.run(sql, 0);
+    assert.deepEqual(await rowsOf('PARTY', own), [[1, 'Meridian Capital', 'US'], [2, 'Halberd Securities', 'GB']]);
+    assert.deepEqual(await rowsOf('PARTY'), [[9, "the tab's own", 'XX']]);
+    await own.close();
+    for (const sql of project.close) await engine.run(sql, 0);
+    const left = await engine.run('SELECT database_name FROM duckdb_databases()', 0);
+    assert.ok(!left.columns[0]!.values.includes(project.name), String(left.columns[0]!.values));
+    await engine.run('DROP TABLE "PARTY"."PARTY"', 0);
+  });
+
+  it('names each identity its own, and the model text when there is none', async () => {
+    const [a, b, c] = await Promise.all([
+      planner.projectData(partyText(V1), 'demo:party:1.0.0', 'DuckDB'),
+      planner.projectData(partyText(V1), 'demo:party:1.0.1', 'DuckDB'),
+      planner.projectData(partyText(V1), '', 'DuckDB'),
+    ]);
+    assert.equal(new Set([a.name, b.name, c.name]).size, 3);
+    assert.equal((await planner.projectData(partyText(V1), '', 'DuckDB')).name, c.name);
+    assert.notEqual((await planner.projectData(partyText(V2), '', 'DuckDB')).name, c.name);
+  });
+
+  it('is refused by name on a database without it', async () => {
+    await assert.rejects(planner.projectData(partyText(V1), 'demo:party:1.0.0', 'Postgres'), /a project's own database on Postgres is not built/);
+  });
+});

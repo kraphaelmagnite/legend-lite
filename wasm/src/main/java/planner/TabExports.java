@@ -130,6 +130,12 @@ public final class TabExports {
         return Folded.of(() -> Boundary.sessionSetup(databaseType));
     }
 
+    /** {@link Boundary#projectData}. */
+    @JSExport
+    public static String projectDataOrError(String model, String identity, String databaseType) {
+        return Folded.of(() -> Boundary.projectData(model, identity, databaseType));
+    }
+
     // ---- warming and probes
 
     /** {@link Boundary#warmModel}. */

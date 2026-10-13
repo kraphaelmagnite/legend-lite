@@ -21,6 +21,7 @@ export const REQUEST_KINDS = [
   'executeAnswer',
   'testData',
   'sessionSetup',
+  'projectData',
   'warm',
 ] as const;
 
@@ -50,6 +51,8 @@ export type RequestBody =
   | { readonly kind: 'testData'; readonly model: string; readonly database: string; readonly tables: string }
   // what a session of a database runs before it is queried, so that it answers as the planner's SQL expects
   | { readonly kind: 'sessionSetup'; readonly databaseType: string }
+  // a project's own database on a host's database of that type (C5): kept by `identity` ('' for the model's text)
+  | { readonly kind: 'projectData'; readonly model: string; readonly identity: string; readonly databaseType: string }
   // the planner's boot layer built for a model now, before a person waits on it
   | { readonly kind: 'warm'; readonly model: string };
 

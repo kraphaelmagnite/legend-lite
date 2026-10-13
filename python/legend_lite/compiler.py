@@ -219,6 +219,15 @@ def session_setup(database_type: str) -> list[str]:
     return _json.loads(_answer(library().call('lite_session_setup', database_type)))
 
 
+def project_data(model: str, identity: str, database_type: str) -> dict[str, Any]:
+    """A project's own database on a database of the given type (docs/ONE_PLATFORM_PROGRAM_2026_10_12.md C5): where
+    ``model``'s Data rows live on this host, kept by ``identity`` (a project version's coordinates; ``''`` for the
+    model's text). ``name``, and the statements of each step in order: ``open`` makes it, ``use`` points a connection
+    of its own at it, ``fill`` makes and fills every table a relational Data element fills (on that connection),
+    ``close`` drops it. A database without the operations is refused by name."""
+    return _json.loads(_answer(library().call('lite_project_data', model, identity, database_type)))
+
+
 
 def pure_v1(path: str, query: str, body: str) -> Answer:
     """One call of legend-engine's ``pure/v1`` API, answered by legend-lite's server code (``PureV1Api``) --

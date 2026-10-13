@@ -331,6 +331,26 @@ public final class Boundary {
         return com.legend.json.Json.toCompact(dialectOf(databaseType).sessionSetup());
     }
 
+    /**
+     * A project's own database on a database of the given type (docs/ONE_PLATFORM_PROGRAM_2026_10_12.md C5,
+     * {@code com.legend.setup.ProjectData}): where {@code model}'s Data rows live on a host, kept by {@code identity}
+     * (a project version's coordinates; empty, the model's text). {@code {"name", "open", "use", "fill", "close"}},
+     * each but the name the statements in order: make it, point a connection of its own at it, make and fill every
+     * table a relational Data element fills (on that connection), drop it. A database without the operations is
+     * refused by name.
+     */
+    public static String projectData(String model, String identity, String databaseType) {
+        com.legend.setup.ProjectData p = com.legend.setup.ProjectData.of(com.legend.Compiler.compileModel(model),
+                identity.isEmpty() ? model : identity, dialectOf(databaseType));
+        java.util.Map<String, Object> out = new java.util.LinkedHashMap<>();
+        out.put("name", p.name());
+        out.put("open", p.open());
+        out.put("use", p.use());
+        out.put("fill", p.fill());
+        out.put("close", p.close());
+        return com.legend.json.Json.toCompact(out);
+    }
+
     /** A JSON number field as an Integer, or null when absent or null. */
     private static Integer intOrNull(com.legend.json.Json.Obj o, String field) {
         com.legend.json.Json.Node n = o.has(field) ? o.get(field) : null;

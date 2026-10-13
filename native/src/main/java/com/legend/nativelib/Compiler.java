@@ -242,6 +242,20 @@ public final class Compiler {
         return answer(a);
     }
 
+    /** A project's own database on a database of the given type ({@code Boundary.projectData}). */
+    @CEntryPoint(name = "lite_project_data")
+    static CCharPointer projectData(IsolateThread thread, CCharPointer model, CCharPointer identity,
+            CCharPointer databaseType) {
+        String a;
+        try {
+            String m = text(model), i = text(identity), d = text(databaseType);
+            a = Folded.of(() -> Boundary.projectData(m, i, d));
+        } catch (Throwable failure) {
+            a = Folded.failure(failure);
+        }
+        return answer(a);
+    }
+
     /** One legend-engine pure/v1 call by its path and raw query, as legend-lite's server answers it ({@code Boundary.pureV1}). */
     @CEntryPoint(name = "lite_pure_v1")
     static CCharPointer pureV1(IsolateThread thread, CCharPointer path, CCharPointer rawQuery, CCharPointer body) {

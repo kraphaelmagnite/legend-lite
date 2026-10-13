@@ -11,6 +11,7 @@ import { EngineError, HttpEngine, type Grammar } from './engine.ts';
 import type { RequestBody, Response as PlannerResponse } from './planner-protocol.ts';
 import type { CompileResult, ExecuteInput, PureModelContext, RelationTypeAnswer } from './wire.ts';
 import type { SeedTable, TableSeed } from '../model-data.ts';
+import type { ProjectDataStatements } from '../project-data.ts';
 
 /** Where a request goes: a worker, or (in tests) the module called directly. */
 export interface PlannerPort {
@@ -201,6 +202,14 @@ export class WasmGrammar implements Grammar {
    */
   async sessionSetup(databaseType: string): Promise<readonly string[]> {
     return JSON.parse(unfold(await this.#port.ask({ kind: 'sessionSetup', databaseType }))) as string[];
+  }
+
+  /**
+   * A project's own database on a database of that type (C5, Boundary.projectData): its name and the statements that
+   * make it, point a connection at it, fill it from the model's Data elements, and drop it.
+   */
+  async projectData(model: string, identity: string, databaseType: string): Promise<ProjectDataStatements> {
+    return JSON.parse(unfold(await this.#port.ask({ kind: 'projectData', model, identity, databaseType }))) as ProjectDataStatements;
   }
 
   /** Build the planner's boot layer for this model now, before a person waits on it. */
