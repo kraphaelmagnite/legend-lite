@@ -858,6 +858,51 @@ they land), an audit.
 - **Not measured yet:** the fill and query timings this section asks for; the corpus onto the same operation (the
   dialect program's Phase 6).
 
+#### D5. No SQL text in TypeScript or Python's host (claimed from the dialect program; C5's step 4)
+
+Branch `datacube/d5-host-operations`, stacked on C5. The dialect program's decision D5 (the user's, 2026-10-13): all
+client SQL goes through the platform; the tab's DuckDB-only operations become named operations of the DuckDB dialect,
+refused by every other; a guard bans SQL text. Claimed with Python's twins (IN_FLIGHT, the dialect program's section,
+item 3).
+
+**The design.**
+- **One question, `hostOperations`.** A planner-protocol kind `{kind: 'hostOperations', databaseType, operations}`,
+  `operations` a JSON list of named operations; answered `[[statement, ...], ...]`, one list per operation, by
+  `Boundary.hostOperations` (the tab's module) and its native twin (Python). One round trip for a host's whole step (a
+  file read: the read, the copy, the count). A database without an operation refuses it by name (`DialectCapability`).
+- **The operations** (in `sql/dialect/HostOperations.java`, DuckDB's in `DuckDbHostOperations.java`, beside C5's
+  three; names and values are data, quoted and written by the dialect, never spliced by a host):
+  - a relation made: a table or a view, replacing one or not, its select list the planner's copy list or all, from a
+    source -- a relation, a file read (DuckDB's readers: CSV sniffed with a header, CSV as text for a declared table's
+    file, Parquet, JSON with its records' keys as columns), a remote file (CSV, Parquet, Iceberg), or a query a
+    planner wrote; with columns replaced by conversions (Snap's copy);
+  - rows put into a declared table from a source, each declared column from the file's column of its name;
+  - a relation dropped; a schema made;
+  - rows counted, of a relation or a query (DuckDB as it is; Postgres, a warehouse's catalog, with the alias a
+    subquery needs: the one wrong answer this fixes, Snap's preflight);
+  - a secret (S3's keys, scoped to a source's own path); extensions installed and loaded;
+  - the tab's extension folder (C12's two settings); Python's: its extension directory, no autoinstall, a page's
+    file search path;
+  - a transaction begun, committed, rolled back;
+  - the catalog questions a host asks: whether a name is taken in its own database (and its temporary one), how many
+    relations a schema holds, Iceberg's metadata (a table's manifest lists, their files, its data files).
+- **The demos' seeds become their models' Data elements.** Query's demo and DataCube's configured project load their
+  rows by running a shipped SQL file (`trading-seed.sql`): SQL text the page runs. Their models carry the rows as
+  `###Data` instead, filled by C5's project database; the configs' `seed` lists and the seeded-project path go (and
+  with it the refusal of such a project on Python). The warehouse's seed (`config-warehouse.json`, a real server's
+  data) is not the page's: it stays the warehouse's fixture.
+- **The guard** is a test, not a type: a branded statement type would run through every engine and every test that
+  runs SQL, where a test reading the product sources finds the same. It reads every product `.ts` (DataCube, engine-
+  client, Query, Studio) and `python/legend_lite/*.py`, and fails on SQL text in a string (a statement's leading
+  keyword). Kept sites are named with their reason: a person's own SQL (Studio's SQL editor) is the person's text,
+  carried, never spelled.
+- **Not in D5:** the warehouse's own SQL (D4, the dialect program's); `TestDataGenerator`-style hand SQL in core
+  (the dialect program's Phase 3).
+
+**Proof.** The guard, red on a statement spelled in TypeScript or Python's host. Each operation's DuckDB statements and
+refusals in `HostOperationsTest`; every app's browser tests, Python's engine and headless tests unchanged in what they
+see; Snap's preflight against a Postgres catalog (the warehouse's lane).
+
 #### C4. The small copies
 
 - One table of the site's file types, which Python reads.
