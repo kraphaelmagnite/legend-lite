@@ -19,13 +19,13 @@ export interface ProjectConfig {
 }
 
 /**
- * Where queries run. In the browser (`duckdb-wasm`: DuckDB in this tab, seeded from SQL files;
- * `warehouse`: the warehouse's DuckDB, as the signed-in user) the tab's planner writes the SQL
+ * Where queries run. In the browser (`duckdb-wasm`: DuckDB in this tab, each project's rows its Data elements', C5;
+ * `warehouse`: the warehouse's DuckDB, as the signed-in user, its fixture's rows `seed`) the tab's planner writes the SQL
  * and saved queries stay in this browser. On a `server` (legend-lite's, or legend-engine) the
  * server executes and keeps saved queries.
  */
 export type ExecutionConfig =
-  | { readonly kind: 'duckdb-wasm'; readonly seed?: readonly string[]; readonly user: string }
+  | { readonly kind: 'duckdb-wasm'; readonly user: string }
   | { readonly kind: 'warehouse'; readonly url: string; readonly catalog?: string; readonly seed?: readonly string[] }
   | { readonly kind: 'server'; readonly engine: string };
 
@@ -58,11 +58,6 @@ export interface LoadedProject {
   readonly gav: string;
   readonly context: PureModelContextText;
   readonly graph: ModelGraph;
-  /**
-   * It brings its own rows, where queries run in this tab (a project opened by name: its relational Data elements',
-   * by-name.ts): in the version's own database inside the tab's DuckDB, the screens on it as it opens (activate).
-   */
-  readonly ownData?: boolean;
 }
 
 export function gavOf(p: ProjectConfig): string {
@@ -163,7 +158,7 @@ export class AppContext {
   async activate(p: LoadedProject): Promise<void> {
     if (!this.tabProjects) return;
     const { databases, runner, host } = this.tabProjects;
-    runner.use(p.ownData ? (await databases.engineFor(p.context.code, host)).engine : undefined);
+    runner.use((await databases.engineFor(p.context.code, host)).engine);
   }
 
   /**

@@ -41,8 +41,7 @@ export interface DepotConfig {
 
 /**
  * A project: what a saved query's `groupId:artifactId:versionId` compiles against (`models`, Pure
- * text joined in order), and -- the cube runs in this tab's DuckDB -- the SQL that puts its rows
- * there (`seed`, one statement per line). URLs relative to config.json.
+ * text joined in order; its rows its Data elements', C5). URLs relative to config.json.
  */
 export interface ProjectConfig {
   readonly groupId: string;
@@ -50,7 +49,6 @@ export interface ProjectConfig {
   readonly versionId: string;
   readonly title: string;
   readonly models: readonly string[];
-  readonly seed: readonly string[];
 }
 
 const EMPTY: PageConfig = { legendLite: '', legendEngine: '', warehouse: '', queryStore: '', user: '', projects: [] };
@@ -71,7 +69,6 @@ function projects(v: unknown, base: string): ProjectConfig[] {
       groupId, artifactId, versionId,
       title: text(o['title']) || `${groupId}:${artifactId}`,
       models: models.map(at),
-      seed: texts(o['seed']).map(at),
     }];
   });
 }

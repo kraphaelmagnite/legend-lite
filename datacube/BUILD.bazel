@@ -1379,12 +1379,12 @@ copy_to_directory(
 )
 
 # The projects a saved query compiles against (config.json `projects[]`): the Query app's trading
-# demo, its model and seed served as they are there, never copied into this package.
+# demo, its model and its Data rows served as they are there, never copied into this package.
 copy_to_directory(
     name = "projects",
     srcs = [
         "//query:demo/models/runtime-duckdb.pure",
-        "//query:demo/models/trading-seed.sql",
+        "//query:demo/models/trading-data.pure",
         "//query:demo/models/trading.pure",
     ],
     out = "demo/projects/trading",

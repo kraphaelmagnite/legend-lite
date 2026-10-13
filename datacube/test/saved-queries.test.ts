@@ -24,7 +24,8 @@ import { runfileFromEnv, runfileNamed } from '../../tools/js/runfiles.mts';
 // the trading project as the site serves it (BUILD.bazel `:projects`, from query/demo/models)
 const MODELS = runfileFromEnv('TRADING_PROJECT');
 const record = (name: string): Query => JSON.parse(readFileSync(runfileNamed('SAVED_QUERIES', `${name}.json`), 'utf8')) as Query;
-const MODEL = readFileSync(`${MODELS}/trading.pure`, 'utf8') + '\n' + readFileSync(`${MODELS}/runtime-duckdb.pure`, 'utf8');
+const MODEL = ['trading.pure', 'runtime-duckdb.pure', 'trading-data.pure']
+  .map((f) => readFileSync(`${MODELS}/${f}`, 'utf8')).join('\n');
 
 let engine: DuckDbEngine;
 let elements: ModelElement[];
@@ -33,10 +34,9 @@ const parser = plannerFor(MODEL, 'demo::trading::Runtime');
 before(async () => {
   const db = await openDatabase();
   engine = new DuckDbEngine(db.connection);
-  for (const line of readFileSync(`${MODELS}/trading-seed.sql`, 'utf8').split('\n')) {
-    const sql = line.trim();
-    if (sql && !sql.startsWith('--')) await engine.run(sql, 0);
-  }
+  // the project's rows, its Data element's, in a database of its own as the page makes it (C5, project-data.ts)
+  const project = await parser.projectData(MODEL, engine.databaseType);
+  for (const sql of [...project.open, ...project.use, ...project.fill]) await engine.run(sql, 0);
   elements = await parser.modelElements(MODEL) as ModelElement[];
 });
 

@@ -1,0 +1,61 @@
+###Data
+// The trading demo's rows, for demo::trading::DB where the browser runs it (runtime-duckdb.pure: DuckDB in the tab, or
+// Python's): every app that opens the project fills a database of the project's own from them (C5, engine-client's
+// project-data.ts). The server's H2 connection seeds the same rows itself (runtime-h2.pure), and the warehouse's
+// fixture holds them too (trading-seed.sql).
+Data demo::trading::TradingData
+{
+  Relational
+  #{
+    TRADING.FIRM:
+      'FIRM_ID,LEGAL_NAME,REGION,FOUNDED\n'+
+      '1,Meridian Capital,AMER,1998-04-01\n'+
+      '2,Halberd Securities,EMEA,2004-09-15\n'+
+      '3,Kestrel Partners,APAC,\n'+
+      '4,Northgate Asset Management,AMER,2011-01-20\n';
+    TRADING.PERSON:
+      'PERSON_ID,FIRST_NAME,LAST_NAME,TITLE,AGE,FIRM_ID\n'+
+      '1,Maria,Alvarez,Managing Director,48,1\n'+
+      '2,Kenji,Watanabe,Vice President,37,3\n'+
+      '3,Aoife,O\'Brien,Executive Director,42,2\n'+
+      '4,Peter,Nowak,Analyst,26,2\n'+
+      '5,Sofia,Rossi,,31,1\n'+
+      '6,David,Chen,Associate,,4\n'+
+      '7,Amara,Okafor,Vice President,35,4\n'+
+      '8,Lukas,Schmidt,Analyst,24,\n';
+    TRADING.PRODUCT:
+      'TICKER,NAME,ASSET_CLASS\n'+
+      'AAPL,Apple Inc,EQUITY\n'+
+      'MSFT,Microsoft Corp,EQUITY\n'+
+      'UKT30,UK Gilt 4.25% 2055,RATES\n'+
+      'UST10,US Treasury 10Y,RATES\n'+
+      'EURUSD,Euro / US Dollar,FX\n'+
+      'ITRX,iTraxx Europe Main,CREDIT\n';
+    TRADING.TRADE:
+      'TRADE_ID,TRADE_DATE,SIDE,QUANTITY,PRICE,STATUS,TICKER,TRADER_ID\n'+
+      '1,2024-06-03,BUY,1000,190.5,EXECUTED,AAPL,1\n'+
+      '2,2024-06-03,SELL,2500,191.0,EXECUTED,AAPL,2\n'+
+      '3,2024-06-04,BUY,400,418.25,EXECUTED,MSFT,3\n'+
+      '4,2024-06-04,BUY,1200,415.0,SETTLED,MSFT,1\n'+
+      '5,2024-06-05,SELL,5000000,0.9825,EXECUTED,UKT30,3\n'+
+      '6,2024-06-05,BUY,2000000,0.98,PENDING,UKT30,4\n'+
+      '7,2024-06-06,BUY,10000000,1.0842,EXECUTED,EURUSD,5\n'+
+      '8,2024-06-06,SELL,7500000,1.0851,CANCELLED,EURUSD,7\n'+
+      '9,2024-06-07,BUY,3000000,99.12,EXECUTED,UST10,6\n'+
+      '10,2024-06-07,SELL,25000000,0.55,EXECUTED,ITRX,7\n'+
+      '11,2024-06-10,BUY,800,192.75,EXECUTED,AAPL,5\n'+
+      '12,2024-06-10,SELL,600,420.1,REJECTED,MSFT,\n';
+    TRADING.FIRM_RATING:
+      'FIRM_ID,FROM_Z,THRU_Z,AGENCY,GRADE\n'+
+      '1,2020-01-01,2024-03-01,S&P,A\n'+
+      '1,2024-03-01,9999-12-31,S&P,AA\n'+
+      '2,2019-05-01,2023-06-30,S&P,BBB\n'+
+      '2,2023-06-30,9999-12-31,S&P,BBB+\n'+
+      '4,2022-01-01,9999-12-31,Moody,A3\n';
+    TRADING.PRODUCT_LIMIT:
+      'TICKER,FROM_Z,IN_Z,THRU_Z,OUT_Z,MAX_QTY\n'+
+      'AAPL,2024-01-01,2024-01-01,9999-12-31,2024-02-01,5000\n'+
+      'AAPL,2024-01-01,2024-02-01,9999-12-31,9999-12-31,8000\n'+
+      'MSFT,2024-01-01,2024-01-01,9999-12-31,9999-12-31,3000\n';
+  }#
+}

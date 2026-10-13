@@ -1,10 +1,7 @@
 {
   "execution": {
     "kind": "duckdb-wasm",
-    "user": "me",
-    "seed": [
-      "./models/trading-seed.sql"
-    ]
+    "user": "me"
   },
   "planner": {
     "worker": "./planner-worker.js",
@@ -22,7 +19,8 @@
       "title": "Trading demo",
       "models": [
         "./models/trading.pure",
-        "./models/runtime-duckdb.pure"
+        "./models/runtime-duckdb.pure",
+        "./models/trading-data.pure"
       ]
     }
   ]

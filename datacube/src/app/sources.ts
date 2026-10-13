@@ -802,8 +802,6 @@ export function pageSources(d: SourcesOf): PageSources {
 
   /** Each project's model text, fetched once. */
   const projectModels = new Map<string, Promise<string>>();
-  /** Each configured project's rows (its seed), in the host's database once. */
-  const seeded = new Map<string, Promise<void>>();
   const once = <T,>(cache: Map<string, Promise<T>>, key: string, make: () => Promise<T>): Promise<T> => {
     let p = cache.get(key);
     if (!p) {
@@ -829,8 +827,6 @@ export function pageSources(d: SourcesOf): PageSources {
     const { contextOf, enumerationsOf, enumsAsStrings, projectOf, sourceOf } = await savedQueries();
     const project = projectFor(q);
     if (!project && !modelHome) throw new Error(`“${q.name}” belongs to ${projectOf(q)}, which this page has no model for (config.json projects[], or a depot)`);
-    // a deployment's own project is seeded by SQL into the tab's database: only a tab runs it (R4: never the page's SQL)
-    if (project && !local) throw new Error(`“${q.name}” belongs to ${projectOf(q)}, a project this deployment seeds into a browser tab's database`);
     const key = projectOf(q);
     // the page's own project (config.json projects[]), else the version opened by name from Depot (design Phase 3)
     const model = await once(projectModels, key, async () => (project
@@ -845,22 +841,11 @@ export function pageSources(d: SourcesOf): PageSources {
       if (parsed.body[0]) values.set(v.name, parsed.body[0]);
     }
     let source = sourceOf(lambdaOf, values);
-    // in the tab, a project opened by name brings its own rows: its Data elements' tables, in a database of the
-    // version's own inside the tab's DuckDB (C5, engine-client's project-data.ts) -- another version may be on the page
-    // beside it, in its own. On Python, Python runs a project's model in its own (the host's runner).
-    let versioned: QueryEngine | undefined;
-    if (local && !project) {
-      versioned = (await (await local.projects()).engineFor(model, local.engine)).engine;
-    } else if (local && project) {
-      await once(seeded, key, async () => {
-        for (const url of project.seed) {
-          for (const line of (await queries.fetchText(url)).split('\n')) {
-            const sql = line.trim();
-            if (sql && !sql.startsWith('--')) await local.engine.run(sql, 0);
-          }
-        }
-      });
-    }
+    // in the tab, a project brings its own rows: its Data elements' tables, in a database of the version's own inside
+    // the tab's DuckDB (C5, engine-client's project-data.ts) -- another version may be on the page beside it, in its
+    // own. On Python, Python runs a project's model in its own (the host's runner).
+    const versioned: QueryEngine | undefined = local
+      ? (await (await local.projects()).engineFor(model, local.engine)).engine : undefined;
     const how: ModelOptions = { mapping: context.mapping, enumerations: [...enumerationsOf(elements)] };
     const rows = services.engine.rows(model, context.runtime, how);
     // rule 4: an enumeration column is read as its value's name

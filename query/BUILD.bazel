@@ -17,7 +17,7 @@ npm_link_all_packages(name = "node_modules")
 
 exports_files(["pnpm-lock.yaml", "package.json"])
 
-# The trading project's model and seed: DataCube serves them too, to open a saved query over them.
+# The trading project's model and its Data rows: DataCube serves them too, to open a saved query over them.
 exports_files(
     glob(["demo/models/*"]),
     visibility = [

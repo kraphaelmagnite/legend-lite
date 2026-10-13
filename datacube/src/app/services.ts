@@ -214,7 +214,7 @@ export interface LivePage {
 
 /**
  * A project a saved query can belong to, as the host's configuration names it: what it compiles against (`models`,
- * Pure text joined in order) and the SQL that puts its rows in the host's database (`seed`, one statement per line).
+ * Pure text joined in order). Its rows are its Data elements', in a database of its own where the host runs it (C5).
  */
 export interface ConfiguredProject {
   readonly groupId: string;
@@ -222,7 +222,6 @@ export interface ConfiguredProject {
   readonly versionId: string;
   readonly title: string;
   readonly models: readonly string[];
-  readonly seed: readonly string[];
 }
 
 /** Where saved queries are (upstream's query store API), and the projects the host configured for them. */

@@ -1,7 +1,7 @@
 // The page: read the config (`?config=<file>`, default config.json), start legend-lite's planner
 // in a worker, load each project's model, and connect where queries run:
 //
-//  - duckdb-wasm: DuckDB in this tab, seeded from SQL files -- no server at all;
+//  - duckdb-wasm: DuckDB in this tab, each project's rows its Data elements' (C5) -- no server at all;
 //  - warehouse:   the warehouse's DuckDB, signed in as a user (DataCube's Live plane);
 //  - server:      legend-lite's server (or legend-engine), which executes and keeps saved queries.
 //
@@ -29,8 +29,10 @@ async function text(url: string): Promise<string> {
   return res.text();
 }
 
-/** DuckDB in this tab, from the files `//query:vendor` copies next to the page. */
-/** Run each SQL file's statements (one per line; `--` comments skipped) on the engine. */
+/**
+ * The warehouse's fixture (config-warehouse.json `seed`): each SQL file's statements (one per line; `--` comments
+ * skipped) run on the warehouse, a real server's data. In this tab a project's rows are its Data elements' (C5).
+ */
 async function seed(engine: QueryEngine, files: readonly string[]): Promise<void> {
   for (const f of files) {
     for (const line of (await text(f)).split('\n')) {
@@ -82,7 +84,7 @@ async function boot(): Promise<void> {
     starting('Listing the projects in Depot');
     const { depot } = await connectModelHome(config.depot);
     byName = {
-      load: (g: string, a: string, v: string) => loadByName(depot, grammar, g, a, v, tabProjects !== undefined),
+      load: (g: string, a: string, v: string) => loadByName(depot, grammar, g, a, v),
       versions: (g: string, a: string) => versionsOf(depot, g, a),
     };
     depotProjects = (await depot.projects()).map((p) => ({ groupId: p.groupId, artifactId: p.artifactId }));
@@ -125,10 +127,10 @@ async function boot(): Promise<void> {
       const session = await signIn(binding, exec.url, creds.user, creds.password);
       runner = new WarehouseEngine(binding, session, exec.catalog ?? 'main');
       user = session.principal;
-    }
-    if (exec.seed?.length) {
-      starting('Loading the demo data');
-      await seed(runner, exec.seed);
+      if (exec.seed?.length) {
+        starting('Loading the demo data');
+        await seed(runner, exec.seed);
+      }
     }
     engine = new BrowserEngine(planner!, runner, user);
     cubeRows = { kind: 'sql', engine: runner };
