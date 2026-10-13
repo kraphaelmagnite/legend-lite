@@ -33,12 +33,28 @@ public interface HostOperations {
     /** The statements that drop {@code name} with everything in it; nothing is refused when it is gone already. */
     List<String> closeDatabase(String name);
 
-    /** The host operations of {@code dialect}'s database: DuckDB's, or each refused, naming the database. */
+    /**
+     * The statements of a named operation (docs/ONE_PLATFORM_PROGRAM_2026_10_12.md D5), in order -- none when it has
+     * nothing to do (a secret with no credentials) -- or a {@link DialectCapability} naming it and the database.
+     */
+    List<String> statements(HostOperation operation);
+
+    /** The host operations of {@code dialect}'s database: DuckDB's, Postgres's count (a warehouse's catalog), or each
+     *  refused, naming the database. */
     static HostOperations of(SqlDialect dialect) {
         if (dialect instanceof DuckDb) {
             return DuckDbHostOperations.INSTANCE;
         }
+        if (dialect instanceof Postgres) {
+            return PostgresHostOperations.INSTANCE;
+        }
         return new Refused(dialect.getClass().getSimpleName());
+    }
+
+    /** {@code operation} refused on {@code database}: not written for it. */
+    static DialectCapability refusal(HostOperation operation, String database) {
+        return new DialectCapability("a host's " + operation.getClass().getSimpleName() + " on " + database
+                + " is not built (docs/ONE_PLATFORM_PROGRAM_2026_10_12.md D5)");
     }
 
     /** A database whose host operations are not written yet: each refused, by name. */
@@ -57,6 +73,11 @@ public interface HostOperations {
         @Override
         public List<String> closeDatabase(String name) {
             throw refused();
+        }
+
+        @Override
+        public List<String> statements(HostOperation operation) {
+            throw HostOperations.refusal(operation, database);
         }
 
         private DialectCapability refused() {
