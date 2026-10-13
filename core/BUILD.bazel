@@ -616,6 +616,29 @@ junit_test(
     visibility = ["//gates:__pkg__"],
 )
 
+# Snap's preflight count as Postgres's host operations write it (docs/ONE_PLATFORM_PROGRAM_2026_10_12.md D5), run on the
+# embedded Postgres 16: the count a warehouse whose catalog is Postgres answers before a copy
+junit_test(
+    name = "host_operations_postgres_test",
+    memory_mb = 768,
+    size = "medium",
+    srcs = ["src/test/java/com/legend/sql/dialect/HostOperationsPostgresTest.java"],
+    data = [
+        "@embedded_postgres//:pg/PG_ROOT",
+        "@embedded_postgres//:postgres",
+    ],
+    jvm_flags = ["-Dembedded.postgres.root=$(rlocationpath @embedded_postgres//:pg/PG_ROOT)"],
+    select = ["--select-class=com.legend.sql.dialect.HostOperationsPostgresTest"],
+    runtime_deps = [":drivers"],
+    target_compatible_with = EMBEDDED_POSTGRES_COMPATIBLE,
+    deps = [
+        ":core",
+        "//testing",
+        "@maven_test//:org_junit_jupiter_junit_jupiter_api",
+    ],
+    visibility = ["//gates:__pkg__"],
+)
+
 # the #SQL{...}# island's cases on a real Postgres (docs/LEGEND_SQL_STUDY_2026_10_11.md §3): Postgres is the spec, so
 # each case's recorded answer is checked against Postgres itself, and each island through the Postgres dialect; the
 # same cases run on DuckDB in core_tests_integration (SqlIslandIntegrationTest)
