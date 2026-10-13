@@ -216,8 +216,10 @@ What phase 3 starts from (found by the DataCube line on 2026-10-12; the first po
   - a DuckDB Variant is a `JsonNode`.
 - StrictTime has no case: `SqlType` has no TIME, so the driver's object passes through as it is.
 - A Variant held as a STRUCT is cast to JSON in the SQL only when the query projects. A `SELECT *` answers the raw
-  STRUCT, and each executor writes its JSON its own way. (TS quotes a nested BIGINT: `{"tier":"2"}`.) The planner
-  should always answer a Variant as the database's JSON text. That point went to the Compiler Rewrite line.
+  STRUCT, and each executor writes its JSON its own way. (TS quotes a nested BIGINT: `{"tier":"2"}`.) Fixed by the
+  Compiler Rewrite line (47349d82a; `docs/VARIANT_STORAGE_CENSUS_2026_09_27.md`, "Addendum 2026-10-12: the star
+  egress"). A stored Variant output now leaves the statement as JSON whatever the query's shape, so phase 3 can assume
+  JSON for it.
 
 ## 9. Phase 1 — the query path
 
