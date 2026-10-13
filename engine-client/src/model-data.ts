@@ -50,12 +50,8 @@ export interface SeedTable {
 export interface TableSeed {
   /** The schema, the table with the server's column types, its rows as one INSERT (none for a header alone). */
   readonly sql: readonly string[];
-  /** The table's name in SQL (no schema for the `default` one, as the seed makes it). */
-  readonly table: string;
-  /** The statement that drops it. */
-  readonly drop: string;
-  /** Each declared column: its name as written (what a file's header says) and its name in SQL. */
-  readonly columns: readonly { readonly name: string; readonly sql: string }[];
+  /** Each declared column: its name as written (what a file's header says). */
+  readonly columns: readonly { readonly name: string }[];
 }
 
 /** A table of test data with what the planner gave for it. */

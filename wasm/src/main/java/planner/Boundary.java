@@ -197,11 +197,9 @@ public final class Boundary {
      * is {@code [{schema, table, csv}, ...]}, each a table the Database {@code database} declares (one it
      * does not is refused, by name) and its CSV, header first. For each, in order: {@code sql}, the
      * statements {@code CsvSeed.sqls} gives DuckDB -- the schema, the table made with the server's column
-     * types, its rows as one multi-row INSERT (none for a header alone); and the names the tab needs to
-     * reach that table again, as the same dialect spells them, so the tab spells none itself:
-     * {@code table} (no schema for the {@code default} one, as the seed makes it), {@code drop}, and
-     * {@code columns}, each its declared {@code name} (what a file's header says) and its {@code sql}
-     * name. The model is compiled once per call (one Database's tables).
+     * types, its rows as one multi-row INSERT (none for a header alone); and {@code columns}, each its declared
+     * {@code name} (what a file's header says: a person's file put into the table names its columns so). The model is
+     * compiled once per call (one Database's tables).
      */
     public static String testDataSql(String model, String database, String tablesJson) {
         com.legend.compiler.element.ModelContext ctx = com.legend.Compiler.compileModel(model);
@@ -227,14 +225,10 @@ public final class Boundary {
             java.util.Map<String, Object> seed = new java.util.LinkedHashMap<>();
             seed.put("sql", new java.util.ArrayList<>(com.legend.setup.CsvSeed.sqls(
                     schema + "\n" + table + "\n" + csvNode.value(), database, ctx, duckDb)));
-            seed.put("table", defaultSchema ? duckDb.physicalName(table)
-                    : duckDb.physicalName(schema) + "." + duckDb.physicalName(table));
-            seed.put("drop", duckDb.render(com.legend.setup.Ddl.dropTable(defaultSchema ? null : schema, table)));
             java.util.List<Object> columns = new java.util.ArrayList<>();
             for (com.legend.model.DatabaseDefinition.ColumnDefinition c : def.columns()) {
                 java.util.Map<String, Object> column = new java.util.LinkedHashMap<>();
                 column.put("name", c.name());
-                column.put("sql", duckDb.physicalName(c.name()));
                 columns.add(column);
             }
             seed.put("columns", columns);

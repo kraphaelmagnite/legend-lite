@@ -165,7 +165,7 @@ class Compiling(unittest.TestCase):
         tables = [{'schema': 'default', 'table': 'TRADES', 'csv': 'region,desk,year\nEMEA,Rates,2024\n'}]
         seeds = json.loads(_answer(library().call('lite_test_data_sql', MODEL, 'trades::DB', json.dumps(tables))))
         self.assertEqual(len(seeds), 1)
-        self.assertEqual(seeds[0]['table'], 'TRADES')
+        self.assertEqual(sorted(seeds[0]), ['columns', 'sql'])
         self.assertTrue(any(s.lower().startswith('create table trades') for s in seeds[0]['sql']), seeds[0]['sql'])
         self.assertIn('region', [c['name'].lower() for c in seeds[0]['columns']])
         refused = library().call('lite_test_data_sql', MODEL, 'trades::DB', json.dumps([{'schema': 'default', 'table': 'NOPE', 'csv': 'a\n'}]))
