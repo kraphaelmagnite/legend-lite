@@ -811,6 +811,37 @@ project's rows with a person's own tables.
 (Query, Studio, engine-client), the dialect program through IN_FLIGHT (the new `sql/dialect/` files, announced before
 they land), an audit.
 
+**Built 2026-10-13 (branch `datacube/c5-project-data`), C5's steps; D5's sweep (step 4) next:**
+- **1, the Java:** `setup/ProjectData.java` (name, open, use, fill, close; `rowsKey` and `fill` for a host keeping a
+  database of its own), `sql/dialect/HostOperations.java` with `DuckDbHostOperations.java` (ATTACH, USE, DETACH; every
+  other database refused by name, `DialectCapability`), `ModelContext.dataElements()`. `HostOperationsTest`, in the
+  dialect package's tests.
+- **2, the planner's question:** `Boundary.projectData`, the planner-protocol kind `projectData` (the tab's module and
+  Python's native library, `lite_project_data`). `Boundary.testDataSql` keeps DuckDB's dialect until its callers move
+  in step 4.
+- **3, the tab:** engine-client's `ProjectDatabases` (idle 15 minutes, at most eight open, the least recently used
+  idle one dropped past that; a model with no Data rows runs on the tab's own connection) and `ProjectRunner`;
+  `duckdb-tab.ts` `connect` sets every connection up alike. DataCube's saved queries, Query's projects by name and
+  Studio's tables use it; `TestData` and `withTestData` deleted.
+- **5, Python:** `legend_lite/projects.py`, the twin (a daemon idle timer, its drop on the compiler's threads under the
+  frames' lock). The engine's execute runs a project's model on its project's cursor.
+- **6, the server:** `ConnectionResolver` makes its kept in-memory database holding the model's Data rows, keyed by
+  them too. PARK-35 closed.
+- **7, PARK-33:** saved queries on every host, read by the host's compiler (`EngineService.reading`) and opened over
+  the host's rows; Python's plan-and-run and held planner requests answer over a project's model held beside its
+  database. PARK-33 closed.
+- **Measured:**
+  - in a browser, on Python: Studio on Python loads its demo projects; Query on Python runs the party project by name
+    (5 parties); the query saved there opens from Saved queries on Python's DataCube page (5 parties)
+    (`//datacube:python_engine_test`);
+  - the tab: two versions answered at once, each its own rows (`//engine-client:model_data_test`); Query on a project
+    by name at HEAD, then 1.0.0 (`//site:verify_test`);
+  - the server: `ProjectRowsTest`;
+  - all of `//gates:datacube`, `//gates:ui` and `//gates:sdlc` after step 3 (182 tests), `//core:core_tests`,
+    `//core:guardrails` and both stress suites after step 6.
+- **Not measured yet:** the fill and query timings this section asks for; the corpus onto the same operation (the
+  dialect program's Phase 6).
+
 #### C4. The small copies
 
 - One table of the site's file types, which Python reads.
