@@ -948,38 +948,6 @@ guess); C1 moved the tab onto the server's answer, which already refused it.
 **Anchor.** `is unprobed -- probe legend-engine, do not guess` in `core/src/main/java/com/legend/plan/UpstreamRelationType.java`
 (ParkedWorkLedgerTest).
 
-## PARK-35 — a project's queries run only in a browser tab
-
-**Recorded** 2026-10-13 by the DataCube + Python line, with E (`docs/ONE_PLATFORM_PROGRAM_2026_10_12.md`: Query and
-Studio served by Python, `ll.query()` and `ll.studio()`). Both apps run on Python's SDLC, Depot, saved queries and
-pure/v1: Studio loads, edits, compiles and publishes projects; Query lists the Depot's projects, opens one, builds a
-query and saves it. Running a project's query is the one call that fails.
-
-**What happens today.** A project's rows are its `###Data` elements', which only a browser tab loads, into its own
-DuckDB (`engine-client/src/model-data.ts`, through the planner's `testData`). Python runs queries over the models its
-frames wrote, on its own DuckDB, and refuses any other model (`PureV1Api.hosted`, 500, "a project's queries run only in
-a browser tab for now"). legend-lite's server is the same: its execute opens the runtime's own connection
-(`ConnectionResolver.SOURCE`), a project's `DuckDB { }` an empty in-memory database, so Query on the server has no rows
-either.
-
-**The fix.** One design for both server hosts (the user's rule: a feature on two paths gets one architecture first): a
-project's query run on a database of the project's own, its tables filled from its Data elements by the planner's
-statements (Pure, never the page's SQL: R4), kept per project and version, and closed when no app has it open. PARK-33
-(a saved query opened as a grid on Python's page) is the same mechanism.
-
-**Acceptance.** A query built in Query on Python over a published demo project answers the rows the tab answers for it
-(`query/demo/verify.mjs`'s run, against Python), and the same on legend-lite's server.
-
-**Why parked.** It is a design of its own, on two hosts at once, and E stands without it: everything but the run works.
-The cost while parked: on Python (and on legend-lite's server), Query and Studio build, show and save a project's
-query but give no rows for it; a tab of either app in its own browser plane does.
-
-**When.** Planned: the program's C5, pull request 7 (docs/ONE_PLATFORM_PROGRAM_2026_10_12.md §6), after its design
-question (where a project's database lives, and its life) is the user's.
-
-**Anchor.** The refusal's text in `PureV1Api.hosted` ("a project's queries run only in a browser tab for now"),
-`ParkedWorkLedgerTest`.
-
 ## PARK-36 — a page on Python reads a query's rows whole, never as they come
 
 **Recorded** 2026-10-13 by the DataCube + Python line, at the user's ruling on the program's G2

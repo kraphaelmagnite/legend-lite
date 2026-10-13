@@ -187,12 +187,7 @@ class ParkedWorkLedgerTest {
             // asked for (a Variant's) refuses execute's answer -- the server's since E8, the tab's since C1
             Map.entry("PARK-34 an execute over a column whose relational spelling is unprobed is refused",
                     new Anchor("is unprobed -- probe legend-engine, do not guess",
-                            List.of("UpstreamRelationType.java"))),
-            // PARK-35 (2026-10-13, E): Query and Studio served by Python run no project's query -- its Data elements'
-            // rows are loaded only into a browser tab's DuckDB, on legend-lite's server as on Python
-            Map.entry("PARK-35 a project's queries run only in a browser tab",
-                    new Anchor("a project's queries run only in a \"\\s*\\+\\s*\"browser tab for now",
-                            List.of("PureV1Api.java")))));
+                            List.of("UpstreamRelationType.java")))));
 
     private record Anchor(String pattern, List<String> files) {
     }

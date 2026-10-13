@@ -53,8 +53,26 @@ public record ProjectData(String name, List<String> open, List<String> use, List
                 host.closeDatabase(name));
     }
 
+    /**
+     * What {@code ctx}'s Data rows are, as text: every relational Data element's tables (schema, table, rows), in
+     * order -- empty when it has none. A host keeping a database filled from them keys it by this (legend-lite's server:
+     * an edited row is a fresh database).
+     */
+    public static String rowsKey(ModelContext ctx) {
+        StringBuilder out = new StringBuilder();
+        for (DataDefinition data : ctx.dataElements().toList()) {
+            if (data.body().value() instanceof Protocol.PRelationalCsvData csv) {
+                for (Protocol.PRelationalCsvTable t : csv.tables()) {
+                    out.append(t.schema()).append('\n').append(t.table()).append('\n')
+                            .append(t.values() == null ? "" : t.values()).append("\n-\n");
+                }
+            }
+        }
+        return out.toString();
+    }
+
     /** Every table a relational Data element fills, made and filled by {@code dialect}'s statements, in order. */
-    private static List<String> fill(ModelContext ctx, SqlDialect dialect) {
+    public static List<String> fill(ModelContext ctx, SqlDialect dialect) {
         List<String> out = new ArrayList<>();
         for (DataDefinition data : ctx.dataElements().toList()) {
             // only rows a relational store holds: a model store's or an external format's data is not a table's

@@ -268,7 +268,7 @@ legend_java_library(
             "src/main/java/com/legend/server/PureV1Api.java",
         ],
     ),
-    deps = ["//base", "//json", ":cache", ":compiler", ":compiler_element_type", ":database", ":driver", ":error", ":exec", ":lowering", ":model", ":parser", ":plan", ":planner", ":protocol", ":pure_v1", ":saved_queries", ":sql_dialect"],
+    deps = ["//base", "//json", ":cache", ":compiler", ":compiler_element_type", ":database", ":driver", ":error", ":exec", ":lowering", ":model", ":parser", ":plan", ":planner", ":protocol", ":pure_v1", ":saved_queries", ":setup", ":sql_dialect"],
 )
 
 _CORE_TARGETS = [

@@ -142,9 +142,23 @@ final class ConnectionResolver {
                             + d.connections().stream().map(ConnectionDefinition::qualifiedName).toList()
                             + ", different connections: the server opens one session per query");
                 }
-                yield connect(stores, d.connections().get(0));
+                yield connect(stores, d.connections().get(0), ctx);
             }
         };
+    }
+
+    /** {@code made} filled from the model's Data rows, by the statements its database's dialect writes for them. */
+    private static void filled(Connection made, com.legend.compiler.element.ModelContext ctx, ConnectionDefinition def)
+            throws SQLException {
+        try (java.sql.Statement st = made.createStatement()) {
+            for (String sql : com.legend.setup.ProjectData.fill(ctx,
+                    com.legend.database.Databases.dialect(def.databaseType()))) {
+                st.execute(sql);
+            }
+        } catch (SQLException e) {
+            made.close();
+            throw e;
+        }
     }
 
     /** A definition's content without its name: two names for one database are one session. */
@@ -184,7 +198,7 @@ final class ConnectionResolver {
                 Hash.ofUtf8(def.toString()));
     }
 
-    private static Lease connect(Hash storesKey, ConnectionDefinition def)
+    private static Lease connect(Hash storesKey, ConnectionDefinition def, com.legend.compiler.element.ModelContext ctx)
             throws SQLException {
         return switch (com.legend.exec.Sessions.openingFor(def)) {
             case com.legend.exec.Sessions.Opening.Url u -> Lease.owned(com.legend.exec.Sessions.open(u));
@@ -192,10 +206,21 @@ final class ConnectionResolver {
             // per model stores + definition (D5): each use opens a connection the lease closes
             case com.legend.exec.Sessions.Opening.Named n -> Lease.owned(com.legend.exec.Sessions.openNamed(
                     n.name() != null ? n.name() : "c_" + contentKey(storesKey, def).hex().substring(0, 16)));
-            // a held one (DuckDB, SQLite) lives as long as its connection: the HandleStore owns it
-            case com.legend.exec.Sessions.Opening.Held h -> Lease.borrowed(STORE.getOrOpen(
-                    contentKey(storesKey, def), ConnectionResolver::dead,
-                    () -> com.legend.exec.Sessions.openHeld(h)));
+            // a held one (DuckDB, SQLite) lives as long as its connection: the HandleStore owns it -- made holding the
+            // model's own Data rows, as a tab's or Python's project database does (docs/ONE_PLATFORM_PROGRAM_2026_10_12.md
+            // C5), so it is kept by them too: an edited row is a fresh database
+            case com.legend.exec.Sessions.Opening.Held h -> {
+                String rows = com.legend.setup.ProjectData.rowsKey(ctx);
+                Hash key = rows.isEmpty() ? contentKey(storesKey, def)
+                        : Hash.combine(contentKey(storesKey, def), Hash.ofUtf8(rows));
+                yield Lease.borrowed(STORE.getOrOpen(key, ConnectionResolver::dead, () -> {
+                    Connection made = com.legend.exec.Sessions.openHeld(h);
+                    if (!rows.isEmpty()) {
+                        filled(made, ctx, def);
+                    }
+                    return made;
+                }));
+            }
         };
     }
 }
