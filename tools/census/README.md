@@ -39,3 +39,21 @@ lane executes: EngineStyleH2 and Postgres.
 
 Give it a few cases of your own too (Base64 model TAB Base64 expression, one a line): a change that
 shows no difference on them proves nothing about them.
+
+## 3. The coverage map: what the corpus needs that PCT never ran, per database
+
+```
+bazel run //spec:corpus_one -- --jvm_flag=-Dlegend.diagnostics=primitives=per-test duckdb host > corpus.log
+bazel test --local_test_jobs=1 --jvmopt=-Dlegend.diagnostics=primitives //pct:pct_<lane>   # each lane; keep test.log
+bazel run //tools/census:primitive_map -- $PWD/corpus.log duckdb=<the lane's test.logs, comma-separated> ...
+bazel run //tools/census:primitive_cover -- $PWD/corpus.log [2]
+```
+
+The primitive census (`-Dlegend.diagnostics=primitives`, `exec/PrimitiveCensus`) reads every plan the executor sends,
+before any dialect rewrites it, for the MIR primitives a dialect must spell -- each function and its arity, aggregate,
+window frame's shape, cast, literal kind, source, join kind and clause -- and tallies each by whether its statement
+succeeded, printed at the JVM's exit. `primitive_map.py` joins the corpus's tally with each database's PCT tallies:
+a corpus primitive no statement carried to success on a database is that database's gap. Under
+`primitives=per-test` the corpus also prints each test's primitives, and `primitive_cover.py` picks corpus tests that
+together carry every one (a greedy set cover). First measured 2026-10-12:
+`docs/PRIMITIVE_COVERAGE_2026_10_12.md`.

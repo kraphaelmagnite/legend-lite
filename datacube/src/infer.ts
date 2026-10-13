@@ -121,4 +121,10 @@ export interface TableModels {
   tableModel(columns: readonly CatalogColumn[], options: InferOptions): Promise<InferredModel>;
   /** THE catalog question for one table of a DuckDB: its rows are `tableModel`'s columns (`catalogColumns`). */
   catalogColumnsSql(schema: string, table: string): Promise<string>;
+  /**
+   * What a session of the database runs before it is queried, so that it answers as the planner's SQL expects: the
+   * dialect's own setup (`Boundary.sessionSetup`: a DuckDB session in UTC). A host runs it on the database it opens
+   * (services/browser.ts `setUpSession`; Python's Frames, from the same function).
+   */
+  sessionSetup(databaseType: string): Promise<readonly string[]>;
 }

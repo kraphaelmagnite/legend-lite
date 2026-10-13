@@ -226,6 +226,12 @@ public final class SqlTypeCensus {
                 return;
             }
             if (md.getColumnCount() != outs.size()) {
+                if (md.getColumnCount() == 0 && "Trino".equals(dialect)) {
+                    // ADJUDICATED (2026-10-12): Trino's driver opens the ResultSet of a statement that fails before
+                    // its columns are known with none (measured: a date 12,345,678,912 days on); its error surfaces
+                    // on the first read, and a statement that succeeds always reports its columns -- no wire, no claim
+                    return;
+                }
                 if (Executor.hasPivot(plan)) {
                     // D2 ADJUDICATED (2026-08-26): a dynamic pivot's
                     // result columns are data-dependent (one per
@@ -247,7 +253,7 @@ public final class SqlTypeCensus {
             }
             for (int i = 0; i < outs.size(); i++) {
                 String label = wireSpelling(outs.get(i).type());
-                String meta = sized(normalizeMeta(md.getColumnTypeName(i + 1)), md, i + 1);
+                String meta = sized(normalizeMeta(dialectSpelling(dialect, md.getColumnTypeName(i + 1))), md, i + 1);
                 // E2E-audit CONVERSE tripwire (measure-first): a label
                 // promising always-present is a claim the wire can
                 // refute — watch every nullable=false column for NULL
@@ -283,7 +289,10 @@ public final class SqlTypeCensus {
                 }
                 if (label.equals(meta)) {
                     WIRE_AGREE.increment();
-                } else if (delivers(outs.get(i).type(), meta)) {
+                } else if (delivers(outs.get(i).type(), meta) || snowflakeOwn(dialect, outs.get(i).type(), meta)
+                        || bigQueryOwn(dialect, outs.get(i).type(), meta) || sqliteOwn(dialect, outs.get(i).type(), meta)
+                        || mariaDbOwn(dialect, outs.get(i).type(), meta) || trinoOwn(dialect, outs.get(i).type(), meta)
+                        || clickHouseOwn(dialect, outs.get(i).type(), meta)) {
                     // THE DELIVERY RELATION (adjudicated 2026-08-23):
                     // value-subset narrowing (every INTEGER fits the
                     // BIGINT contract; DECIMAL(p,s) fits DECIMAL(P>=p,s))
@@ -536,6 +545,145 @@ public final class SqlTypeCensus {
      * without value loss? Exact is handled by the caller; this covers
      * value-subset narrowing and the registered carrier conventions
      * (metaToType + admissible — ONE relation, read from both sides). */
+    /** Snowflake's own types, which are the platform's by design (2026-10-11): its integers are NUMBER(p,0), every
+     *  integer type a synonym of NUMBER(38,0) and an integer expression reported at its own precision (42 is
+     *  NUMBER(2,0), measured); and its one object type, OBJECT, carries a struct and a map alike. */
+    private static boolean snowflakeOwn(String dialect, SqlType label, String meta) {
+        if (!"Snowflake".equals(dialect)) {
+            return false;
+        }
+        boolean integral = label == SqlType.Scalar.BIGINT || label == SqlType.Scalar.INTEGER;
+        return integral && meta.startsWith("DECIMAL(") && meta.endsWith(",0)")
+                || (label instanceof SqlType.Struct || label instanceof SqlType.Map) && meta.equals("OBJECT");
+    }
+
+    /** SQLite's own types, which are the platform's by design (2026-10-11): a VALUE has a storage class, a column
+     *  none, and the driver names a column by its first value's (INTEGER, FLOAT, TEXT, and NUMERIC for a NULL,
+     *  measured). A boolean is an INTEGER (1 or 0); a date, a date-time, a list, a struct, a map and a Variant are their
+     *  text, and a root decimal its text at its scale; a NULL first value claims no type. */
+    private static boolean sqliteOwn(String dialect, SqlType label, String meta) {
+        if (!"SQLite".equals(dialect)) {
+            return false;
+        }
+        return switch (meta) {
+            case "NULL" -> true;
+            case "INTEGER" -> label == SqlType.Scalar.BOOLEAN || label == SqlType.Scalar.HUGEINT;
+            case "VARCHAR" -> label == SqlType.Scalar.DATE || label == SqlType.Scalar.TIMESTAMP
+                    || label == SqlType.Scalar.TIMESTAMPTZ || label == SqlType.Scalar.JSON
+                    || label instanceof SqlType.Array || label instanceof SqlType.Struct || label instanceof SqlType.Map
+                    || label instanceof SqlType.Decimal;
+            default -> false;
+        };
+    }
+
+    /** MariaDB's and MySQL's own types, which are the platform's by design (2026-10-11): a comparison and a boolean are integers;
+     *  a list, a struct, a map and a Variant are JSON text (a JSON function's type is JSON, a column's text); an
+     *  integer sum or a big integer is a DECIMAL of scale 0 (SUM of BIGINT, measured), or an unsigned BIGINT (a bit
+     *  operation's); a NULL literal's column claims no type. */
+    private static boolean mariaDbOwn(String dialect, SqlType label, String meta) {
+        if (!"MariaDb".equals(dialect) && !"MySql".equals(dialect)) {
+            return false;
+        }
+        boolean integral = label == SqlType.Scalar.BIGINT || label == SqlType.Scalar.INTEGER
+                || label == SqlType.Scalar.HUGEINT;
+        boolean composite = label instanceof SqlType.Array || label instanceof SqlType.Struct
+                || label instanceof SqlType.Map || label == SqlType.Scalar.JSON;
+        return meta.equals("NULL")
+                || label == SqlType.Scalar.BOOLEAN && (meta.equals("INTEGER") || meta.equals("BIGINT")
+                        || meta.equals("TINYINT"))
+                || integral && (meta.startsWith("DECIMAL(") && meta.endsWith(",0)") || meta.equals("BIGINT UNSIGNED"))
+                || label instanceof SqlType.Decimal d && meta.startsWith("DECIMAL(")
+                        && meta.endsWith("," + d.scale() + ")")
+                || composite && (meta.equals("JSON") || meta.equals("VARCHAR"));
+    }
+
+    /** A driver's own type names for the census's: BigQuery's (2026-10-11) INT64, FLOAT64 and DATETIME (the naive
+     *  date-time; its TIMESTAMP, an instant, folds with every TIMESTAMP spelling in normalizeMeta); SQLite's FLOAT (a
+     *  REAL value) and NUMERIC (its name for a NULL value, measured: no storage class). */
+    private static @com.legend.base.Nullable String dialectSpelling(String dialect,
+            @com.legend.base.Nullable String name) {
+        // MariaDB's and MySQL's (2026-10-11): their text types and a UUID are text, their DATETIME the naive date-time
+        if (("MariaDb".equals(dialect) || "MySql".equals(dialect)) && name != null) {
+            return switch (name) {
+                case "LONGTEXT", "MEDIUMTEXT", "TEXT", "TINYTEXT", "CHAR", "UUID" -> "VARCHAR";
+                case "DATETIME" -> "TIMESTAMP";
+                default -> name;
+            };
+        }
+        // ClickHouse's (2026-10-12): every scalar Nullable(T); its own names for the same types, a date-time's
+        // precision and zone in its name, a struct a (named) Tuple
+        if ("ClickHouse".equals(dialect) && name != null) {
+            String n = name.trim();
+            while (n.startsWith("Nullable(") && n.endsWith(")")) {
+                n = n.substring("Nullable(".length(), n.length() - 1).trim();
+            }
+            if (n.startsWith("Tuple(")) {
+                return "STRUCT";
+            }
+            if (n.startsWith("DateTime")) {
+                return "TIMESTAMP";
+            }
+            if (n.startsWith("Decimal")) {
+                return "DECIMAL";
+            }
+            return switch (n) {
+                case "Int64", "UInt32" -> "BIGINT";
+                case "Int32", "Int16", "Int8", "UInt16", "UInt8" -> "INTEGER";
+                case "Int128", "UInt64" -> "HUGEINT";
+                case "Float64" -> "DOUBLE";
+                case "Float32" -> "FLOAT";
+                case "Date32", "Date" -> "DATE";
+                case "Nothing" -> "NULL";
+                default -> n;
+            };
+        }
+        if ("SQLite".equals(dialect) && name != null) {
+            return switch (name) {
+                case "FLOAT" -> "DOUBLE";
+                case "NUMERIC" -> "NULL";
+                default -> name;
+            };
+        }
+        if (!"BigQuery".equals(dialect) || name == null) {
+            return name;
+        }
+        return switch (name) {
+            case "INT64" -> "BIGINT";
+            case "FLOAT64" -> "DOUBLE";
+            case "DATETIME" -> "TIMESTAMP";
+            default -> name;
+        };
+    }
+
+    /** Trino's carrier (2026-10-12): a statement's ROW column is delivered as its JSON text (the driver's own Row class
+     *  is read through no interface; Trino.rowsAsJson), decoded to the struct's map. */
+    private static boolean trinoOwn(String dialect, SqlType label, String meta) {
+        return "Trino".equals(dialect) && label instanceof SqlType.Struct && meta.equals("JSON");
+    }
+
+    /** ClickHouse's carrier (2026-10-12): a Variant is its JSON text, a String (TypeNames.CLICKHOUSE). */
+    private static boolean clickHouseOwn(String dialect, SqlType label, String meta) {
+        return "ClickHouse".equals(dialect) && label == SqlType.Scalar.JSON && meta.equals("VARCHAR");
+    }
+
+    /** BigQuery's exact decimal carrier (2026-10-11): every decimal is a BIGNUMERIC (a parameterized type cannot be
+     *  cast to; its 38 digits each side hold every DECIMAL(p,s) and HUGEINT value), and a Float-declared column may
+     *  arrive as it (the numeric charter's Rule 2, as a DECIMAL does). Its map carrier (2026-10-11): a map is its
+     *  entries, an ARRAY of (key, value) structs -- BigQuery has no MAP type (the dialect's mapTypeName). */
+    private static boolean bigQueryOwn(String dialect, SqlType label, String meta) {
+        if (!"BigQuery".equals(dialect)) {
+            return false;
+        }
+        if (meta.equals("ARRAY")) {
+            return label instanceof SqlType.Map;
+        }
+        if (!meta.equals("BIGNUMERIC")) {
+            return false;
+        }
+        return label == SqlType.Scalar.HUGEINT || label == SqlType.Scalar.DOUBLE
+                || label instanceof SqlType.Decimal d && d.scale() <= 38 && d.precision() - d.scale() <= 38;
+    }
+
     private static boolean delivers(SqlType label, String meta) {
         // the kind-faithful carriers: spelling TEXT is their physical
         // form on every backend (F10 proper + §4bZ-V B3 + the
@@ -641,7 +789,8 @@ public final class SqlTypeCensus {
             return "";
         }
         String n = name.toUpperCase(java.util.Locale.ROOT).trim();
-        if (n.startsWith("STRUCT")) {
+        // (Trino's driver names a struct ROW(a bigint, ...), 2026-10-12)
+        if (n.startsWith("STRUCT") || n.startsWith("ROW(")) {
             return "STRUCT";
         }
         if (n.startsWith("MAP")) {
@@ -673,6 +822,16 @@ public final class SqlTypeCensus {
                 return "VARCHAR";
             case "JSONB":
                 return "JSON";
+            // Databricks' driver reports Spark's type names (2026-10-11): the same types, other spellings
+            case "INT":
+                return "INTEGER";
+            case "STRING":
+                return "VARCHAR";
+            case "VARIANT":
+                return "JSON";
+            // Snowflake's driver names every fixed-point number NUMBER (precision and scale from the column)
+            case "NUMBER":
+                return "DECIMAL";
             default:
                 break;
         }

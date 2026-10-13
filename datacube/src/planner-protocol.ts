@@ -15,6 +15,7 @@ export const REQUEST_KINDS = [
   'planJson',
   'pureV1',
   'testData',
+  'sessionSetup',
 ] as const;
 
 export type RequestKind = (typeof REQUEST_KINDS)[number];
@@ -32,7 +33,9 @@ export type RequestBody =
   | { readonly kind: 'planJson'; readonly handle: number; readonly lambda: string; readonly runtime: string }
   // one pure/v1 call: its path (`/api/pure/v1/...`), its raw query string ('' for none) and its body
   | { readonly kind: 'pureV1'; readonly path: string; readonly query: string; readonly body: string }
-  | { readonly kind: 'testData'; readonly model: string; readonly database: string; readonly tables: string };
+  | { readonly kind: 'testData'; readonly model: string; readonly database: string; readonly tables: string }
+  // what a session of a database runs before it is queried, so that it answers as the planner's SQL expects
+  | { readonly kind: 'sessionSetup'; readonly databaseType: string };
 
 /** A request as a worker receives it: its id, and where the tab's module lives (a host with its own ignores it). */
 export type Request = RequestBody & { readonly id: number; readonly base?: string };

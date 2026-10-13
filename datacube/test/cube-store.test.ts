@@ -4,7 +4,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { CubeStoreError, MemoryRecords, RuleStore, type DataCubeQuery } from '../src/cube-store.ts';
+import { CubeStoreError, HostRecords, MemoryRecords, RuleStore, type DataCubeQuery, type HostRecordsCall } from '../src/cube-store.ts';
 import { ExactNumber, fromJson } from '../../pure-protocol/src/index.ts';
 
 function clock(start = 1_000): () => number {
@@ -68,6 +68,52 @@ describe('the store', () => {
     const store = new RuleStore(new MemoryRecords(), 'me', clock());
     const content = fromJson('{"kind":"datacube.cube","big":123456789012345678901234,"dec":12.30}') as Record<string, unknown>;
     await store.create({ id: 'x', name: 'Exact', content });
+    const back = (await store.get('x')).content;
+    assert.ok(back['big'] instanceof ExactNumber && back['big'].text === '123456789012345678901234');
+    assert.ok(back['dec'] instanceof ExactNumber && back['dec'].text === '12.30');
+  });
+});
+
+describe('records a host keeps (Python: this user\'s folder)', () => {
+  /** A host as Python answers the four calls: each record kept as the JSON text it was sent, nothing of it read. */
+  function host(): { carry: (call: HostRecordsCall) => Promise<unknown>; calls: string[]; kept: Map<string, string> } {
+    const kept = new Map<string, string>();
+    const calls: string[] = [];
+    const carry = async (call: HostRecordsCall): Promise<unknown> => {
+      // over the wire, as JSON both ways
+      const sent = JSON.parse(JSON.stringify(call)) as HostRecordsCall;
+      calls.push(sent.call);
+      if (sent.call === 'all') return [...kept.values()].map((t) => JSON.parse(t) as unknown);
+      if (sent.call === 'find') return kept.has(sent.id) ? JSON.parse(kept.get(sent.id)!) as unknown : undefined;
+      if (sent.call === 'put') kept.set(String(sent.record['id']), JSON.stringify(sent.record));
+      else kept.delete(sent.id);
+      return undefined;
+    };
+    return { carry, calls, kept };
+  }
+
+  it('runs the store\'s own rules over them, as over the browser\'s', async () => {
+    const h = host();
+    const store = new RuleStore(new HostRecords(h.carry), 'this user', clock());
+    const made = await store.create(cube('a', 'Alpha', { owner: 'someone else' }));
+    assert.equal(made.owner, 'this user');
+    await assert.rejects(store.create(cube('a', 'Again')), /already existed/);
+    assert.deepEqual((await store.search({})).map((q) => q.name), ['Alpha']);
+    await store.delete('a');
+    await assert.rejects(store.get('a'), (e: unknown) => e instanceof CubeStoreError && e.status === 404);
+    assert.ok(h.calls.includes('put') && h.calls.includes('remove') && h.calls.includes('all'));
+  });
+
+  it('keeps a content\'s exact numbers: the record crosses with its content as JSON text', async () => {
+    const h = host();
+    const store = new RuleStore(new HostRecords(h.carry), 'this user', clock());
+    const content = fromJson('{"kind":"datacube.page","big":123456789012345678901234,"dec":12.30}') as Record<string, unknown>;
+    await store.create({ id: 'x', name: 'Exact', content });
+    // kept as the host keeps it: the record's content is the exact JSON text, never a parsed number
+    const row = JSON.parse(h.kept.get('x')!) as { content: unknown };
+    assert.equal(typeof row.content, 'string');
+    assert.match(row.content as string, /"big":123456789012345678901234[,}]/);
+    assert.match(row.content as string, /"dec":12\.30[,}]/);
     const back = (await store.get('x')).content;
     assert.ok(back['big'] instanceof ExactNumber && back['big'].text === '123456789012345678901234');
     assert.ok(back['dec'] instanceof ExactNumber && back['dec'].text === '12.30');

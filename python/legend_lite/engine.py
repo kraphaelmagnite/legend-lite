@@ -26,7 +26,10 @@ frames' tables were written with are run, and only SQL the compiler wrote.
 
 from __future__ import annotations
 
+import base64
+import binascii
 import contextlib
+import functools
 import hmac
 import http.server
 import json
@@ -40,7 +43,7 @@ import queue
 from concurrent.futures import Future
 from collections.abc import Callable, Mapping
 from types import MappingProxyType
-from typing import Any, NamedTuple
+from typing import Any, NamedTuple, Protocol
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlsplit
 
@@ -48,13 +51,34 @@ import duckdb
 import pyarrow as pa
 import pyarrow.ipc
 
-from . import _json, compiler
-from .frames import Frames
+from . import _json, _planner, compiler
+from ._library import library
+from .frames import Frames, UntypedColumn
+from ._home import SavedPages
 
 _API = '/api/pure/v1/'
 _EXECUTE = _API + 'execution/execute'
-# a request body larger than this is refused: a query and its model are kilobytes
+# a request body larger than this is refused: a query and its model are kilobytes, and a page's file comes a part at a
+# time (file-part.json: 4 MiB each, as base64 in JSON, datacube/src/upload.ts PART_BYTES), so no file is too big
 _MAX_BODY = 16 * 1024 * 1024
+# the calls that bring a page's data in and let it go (each changes the engine's data), and what Python's host offers
+# the page (docs/DATACUBE_ONE_APP_DESIGN_2026_10_11.md §3.4, §4.3): each the engine's own page's, so each carries the token
+_FILE_IN, _FILE_OUT, _REMOTE, _SERVICES = '/file.json', '/forget.json', '/remote.json', '/services.json'
+# a page's file's bytes, a part at a time, before file.json reads them
+_FILE_PART = '/file-part.json'
+# the page's saved pages, as the browser keeps its records (step 2d): all, one, put, remove
+_SAVED = '/saved-pages.json'
+# PLANANDRUN (docs/DATACUBE_ONE_APP_DESIGN_2026_10_11.md §15): a page's grid planned against the model Python holds and
+# run on its DuckDB, in one call; and the planner protocol's other requests, answered as the tab's worker answers them
+_PLAN_AND_RUN, _PLANNER = '/plan-and-run.json', '/planner.json'
+# the planner's answer to the plan a page's rows are of, in their Arrow schema's metadata
+_PLAN_KEY = b'legend.plan'
+# the only places a page's remote file may be read from (remote.json), each as DuckDB's httpfs names it: never this
+# machine's own files, which Python's DuckDB can read and a page must not make it (R4's reason). Azure's schemes are not
+# here: the wheel carries no azure extension. Nor does it carry iceberg: an Iceberg table's metadata names its data
+# files by path, so carrying it must come with a rule that those paths are remote too, or a remote file could make
+# DuckDB read this machine's (R4)
+_REMOTE_SCHEMES = ('http', 'https', 's3', 's3a', 's3n', 'gs', 'gcs', 'r2', 'hf')
 # a connection that sends nothing, or stops sending, is closed after this long (seconds)
 _IDLE = 30
 # the threads that call the compiler: ONE fixed pool for every engine in the process, as the native library asks of
@@ -131,10 +155,57 @@ def _said(status: int, message: str) -> Answer:
     return Answer(status, 'text/plain; charset=utf-8', message.encode('utf-8'))
 
 
+def _planned(said: dict[str, str], status: int = 200) -> Answer:
+    """A plan-and-run that answered no rows: the planner's own answer, and why its SQL was refused when it was."""
+    return Answer(status, 'application/json', json.dumps(said).encode('utf-8'))
+
+
+def _answered(work: Callable[[str], Answer], body: str) -> Answer:
+    """A page's planner call answered, never a dropped call: what the call itself does not answer is a bug, logged whole
+    and said (500), as the API's are (``Engine._api``)."""
+    try:
+        return work(body)
+    except Exception as failure:
+        traceback.print_exc()
+        return _said(500, f'{type(failure).__name__}: {failure}')
+
+
+def duckdb_extensions() -> Path | None:
+    """DuckDB's extensions as legend-lite carries them, laid out as DuckDB's own extension folder
+    (``v1.5.5/<platform>/httpfs.duckdb_extension``): LEGEND_LITE_DUCKDB_EXTENSIONS, else the folder inside this package;
+    None when it holds no httpfs for this DuckDB (a build without it: no remote file is read)."""
+    folder = _extensions_folder()
+    return folder if (folder / f'v{duckdb.__version__}' / _duckdb_platform() / 'httpfs.duckdb_extension').is_file() else None
+
+
+def _extensions_folder() -> Path:
+    import os
+
+    explicit = os.environ.get('LEGEND_LITE_DUCKDB_EXTENSIONS')
+    return Path(explicit) if explicit else Path(__file__).with_name('_duckdb')
+
+
+def remote_url(url: str) -> bool:
+    """Whether a page's URL is a remote one this engine reads: exactly ``<scheme>://<host>...`` for one of the schemes,
+    as written -- DuckDB matches its remote file systems by that very prefix, case and all, and reads anything else
+    from this machine, so nothing is normalised first (no case folded; no space or control character anywhere)."""
+    if any(ord(c) <= 0x20 or ord(c) == 0x7F for c in url):
+        return False
+    scheme = next((s for s in _REMOTE_SCHEMES if url.startswith(f'{s}://')), None)
+    return scheme is not None and urlsplit(url).netloc != ''
+
+
+@functools.cache
+def _duckdb_platform() -> str:
+    """The platform DuckDB names its extensions by here (``osx_arm64``, ``linux_amd64``, ``windows_amd64``, ...)."""
+    return duckdb.connect().execute('PRAGMA platform').fetchone()[0]
+
+
 def private(path: str) -> bool:
     """Whether a call reads the engine's data -- the API, a frame's cube, its version -- and so, over HTTP, carries the
     token. The site's files are the page's own and carry no secret."""
-    return path.startswith(_API) or path in ('/cube.json', '/version.json', '/page.json')
+    return path.startswith(_API) or path in ('/cube.json', '/version.json', '/page.json', _FILE_IN, _FILE_PART, _FILE_OUT, _REMOTE,
+                                             _SAVED, _SERVICES, _PLAN_AND_RUN, _PLANNER)
 
 
 def _arrow_requested(query: str) -> bool:
@@ -155,14 +226,72 @@ def _arrow_ipc(rows: pa.Table, metadata: dict[str, str]) -> bytes:
     return sink.getvalue().to_pybytes()
 
 
+class Planner(Protocol):
+    """WHERE THE ENGINE PLANS (docs/DATACUBE_ONE_APP_DESIGN_2026_10_11.md §4.1, R3): every call the PAGE makes that the
+    compiler answers -- the engine's pure/v1 API: a query's types, a parse, a print, and an execute's plan, whose SQL
+    Python then runs on its own DuckDB (R4) -- is answered by the one planner the engine was made with, chosen once and
+    shown on the page. Its ``plane`` is the word the page's status bar says (``local``, ``remote``, ``engine``) and its
+    ``label`` the menu's. Today the one planner is Python's own (``NativePlanner``); one on a server (legend-lite's,
+    legend-engine's: step 2c) is another of these. Python's own calls in this process -- a headless grid's view
+    (legend_lite._headless), ``Frames.plan`` -- still plan with the native library: routing them through the same
+    planner is 2c's too."""
+
+    plane: str
+    label: str
+
+    def answer(self, path: str, query: str, body: str) -> compiler.Answer:
+        """A ``pure/v1`` call other than execute, answered as upstream answers it."""
+        ...
+
+    def execute_plan(self, body: str, models: list[str]) -> compiler.Answer:
+        """An ``ExecuteInput`` over one of ``models`` (the only models this host runs) planned: ``{"sql", "metadata"}``,
+        or a refusal to send as it is."""
+        ...
+
+    def refusal(self, message: str) -> compiler.Answer:
+        """A failure said in this planner's own answer shape (legend-engine's)."""
+        ...
+
+
+class NativePlanner:
+    """The ``local`` plane on a Python host: legend-lite's compiler in this process, the native library."""
+
+    plane = 'local'
+    label = 'Plan local (in Python: the native library)'
+
+    def answer(self, path: str, query: str, body: str) -> compiler.Answer:
+        return compiler.pure_v1(path, query, body)
+
+    def execute_plan(self, body: str, models: list[str]) -> compiler.Answer:
+        return compiler.execute_plan(body, models)
+
+    def refusal(self, message: str) -> compiler.Answer:
+        return compiler.refusal(message)
+
+
 class Engine:
     """legend-engine's ``pure/v1`` API over the frames' tables, with no transport: ``answer(method, path, query,
     body)`` is one call, answered as HTTP would carry it. ``site``: a directory whose files are answered too
     (DataCube's built pages). ``WebServer`` serves it to a browser tab; a notebook's cube sends it its widget's
     messages."""
 
-    def __init__(self, frames: Frames, site: str | Path | None = None) -> None:
+    def __init__(self, frames: Frames, site: str | Path | None = None,
+                 headless: Callable[[], Any] | None = None, planner: Planner | None = None,
+                 pages: SavedPages | None = None) -> None:
+        """``headless``: DataCube's own non-screen code over the frames' database (legend_lite._headless), made when
+        first asked for -- what reads a page's file into it (file.json). Absent, the engine takes no file, and says so
+        (services.json). ``planner``: where every query is planned, chosen once (R3): Python's own when not given.
+        ``pages``: where the page's Save and Open… keep pages (step 2d): this user's folder (``home()``) when not given."""
         self.frames = frames
+        self._headless = headless
+        # where the frames' DuckDB was pointed for its extensions (a remote file's httpfs), once it was
+        self._extensions: Path | None = None
+        # the page files coming in a part at a time (file-part.json), each by the name Python gave it: where its bytes
+        # are written so far; one part is written at a time
+        self._uploads: dict[str, Path] = {}
+        self._uploads_lock = threading.Lock()
+        self.planner = planner if planner is not None else NativePlanner()
+        self._saved_pages = pages
         self.site = Path(site).resolve() if site is not None else None
         if self.site is not None and not self.site.is_dir():
             raise ValueError(f'the site {site} is not a directory')
@@ -189,6 +318,20 @@ class Engine:
         if method == 'POST':
             if path == '/page.json':
                 return self._page_said(query, body or '')
+            if path == _FILE_PART:
+                return self._file_part(body or '')
+            if path == _FILE_IN:
+                return self._file_in(body or '')
+            if path == _FILE_OUT:
+                return self._file_out(body or '')
+            if path == _REMOTE:
+                return self._remote(body or '')
+            if path == _SAVED:
+                return self._saved(body or '')
+            if path == _PLAN_AND_RUN:
+                return _workers().submit(_answered, self._plan_and_run, body or '').result()
+            if path == _PLANNER:
+                return _workers().submit(_answered, self._planner, body or '').result()
             if not path.startswith(_API):
                 return _said(404, f'no such path: {path}')
             return _workers().submit(self._api, path, query, body or '').result()
@@ -201,14 +344,256 @@ class Engine:
             return self._version(query)
         if path == '/page.json':
             return self._page(query)
+        if path == _SERVICES:
+            return Answer(200, 'application/json', json.dumps(self.services()).encode('utf-8'))
         return self._file(path)
+
+    def services(self) -> dict[str, Any]:
+        """What this engine offers the page beside its frames (services.json, asked once as the page starts): whether
+        it reads a page's file, and where it plans -- the plane it plans on, and every plane it offers (today only its
+        own: choosing another is step 2c's)."""
+        plane = {'word': self.planner.plane, 'label': self.planner.label}
+        # where the page's saved pages are, and whose: the folder's one owner, this user (as the browser's store is
+        # 'this browser''s)
+        pages = {'where': str(self.saved_pages().folder), 'user': 'this user'}
+        return {'files': self.takes_files(), 'remote': self.takes_remote(), 'pages': pages, 'plane': plane,
+                'planes': [plane]}
+
+    def saved_pages(self) -> SavedPages:
+        """Where the page's saved pages are kept: the folder given, else this user's (``home()``), as it is now."""
+        return self._saved_pages if self._saved_pages is not None else SavedPages()
+
+    def _saved(self, body: str) -> Answer:
+        """The page's saved pages, as the browser keeps its records (``{"call": "all" | "find" | "put" | "remove", "id"?,
+        "record"?}``; step 2d): the records, kept whole, one file each in this user's folder. The store's rules are the
+        page's own (cube-store.ts's RuleStore), as they are over the browser's IndexedDB."""
+        try:
+            asked = json.loads(body)
+        except ValueError:
+            return _said(400, 'a call on the saved pages is {"call", "id"?, "record"?}, as JSON')
+        if not isinstance(asked, dict):
+            return _said(400, 'a call on the saved pages is {"call", "id"?, "record"?}')
+        store, call = self.saved_pages(), asked.get('call')
+        try:
+            if call == 'all':
+                return Answer(200, 'application/json', json.dumps(store.all(), ensure_ascii=False).encode('utf-8'))
+            if call == 'find':
+                # none found is an answer, not a refusal: the store asks before it saves a new page that its id is free
+                return Answer(200, 'application/json', json.dumps(store.find(asked.get('id')), ensure_ascii=False).encode('utf-8'))
+            if call == 'put':
+                record = asked.get('record')
+                if not isinstance(record, dict):
+                    return _said(400, 'a saved page is put as its record')
+                store.put(record)
+                return Answer(204, 'text/plain; charset=utf-8', b'')
+            if call == 'remove':
+                store.remove(asked.get('id'))
+                return Answer(204, 'text/plain; charset=utf-8', b'')
+        except ValueError as refused:
+            return _said(400, str(refused))
+        except OSError as failure:
+            return _said(500, f'the saved pages could not be read or written in {store.folder}: {failure}')
+        return _said(400, f'a call on the saved pages is all, find, put or remove, not {call!r}')
+
+    def takes_files(self) -> bool:
+        """Whether a page's file can be read into the frames' database here: DataCube's own code runs headless (its
+        ``datacube`` extra installed), so the page offers its files and examples."""
+        if self._headless is None:
+            return False
+        try:
+            from ._headless import available
+        except ImportError:
+            # legend-lite without its datacube extra's module (a build of the compiler alone)
+            return False
+        return available()
+
+    def takes_remote(self) -> bool:
+        """Whether a page's remote file can be read here (``remote_refusal`` says why not)."""
+        return self.remote_refusal() is None
+
+    def remote_refusal(self) -> str | None:
+        """Why a page's remote file cannot be read here, or None: it needs DataCube's own code (headless), DuckDB's
+        httpfs extension for this very DuckDB where the package carries it (nothing is downloaded), and a database
+        legend-lite made -- its extension settings are changed for good, which a database of the person's own is not."""
+        if not self.takes_files():
+            return ('legend-lite reads one with DataCube\'s own code, which its datacube extra installs '
+                    '(pip install "legend-lite[datacube]")')
+        if not self.frames.owns_connection:
+            return 'it is read on a DuckDB legend-lite made, and these frames are on a database of your own'
+        if duckdb_extensions() is None:
+            folder = _extensions_folder()
+            carried = sorted(p.name[1:] for p in folder.glob('v*')) if folder.is_dir() else []
+            return (f'legend-lite carries DuckDB\'s httpfs for duckdb {", ".join(carried)}, and this Python has duckdb '
+                    f'{duckdb.__version__}' if carried else 'this legend-lite carries no httpfs extension for DuckDB')
+        return None
+
+    def _remote(self, body: str) -> Answer:
+        """A page's remote file read through a view of its own in the frames' database (``{"url", "name", "s3"?}``;
+        docs/DATACUBE_ONE_APP_DESIGN_2026_10_11.md, step 2b): its URL one of the remote schemes, never this machine's
+        files, checked before anything runs; read by DataCube's own code (upload.ts's mountRemoteView, the tab's, run
+        headless) with the httpfs extension the package carries. The view's model is served beside the frames' from
+        then on, and the answer is its model, as the tab's mount says it. The page sends no SQL."""
+        try:
+            asked = json.loads(body)
+        except ValueError:
+            return _said(400, 'a remote file is {"url", "name", "s3"?}, as JSON')
+        if not (isinstance(asked, dict) and isinstance(asked.get('url'), str) and isinstance(asked.get('name'), str)
+                and (asked.get('s3') is None or isinstance(asked['s3'], dict))):
+            return _said(400, 'a remote file is {"url", "name", "s3"?}: a URL, a name, and its keys when it needs them')
+        url = asked['url']
+        if not remote_url(url):
+            return _said(400, f'a remote file is read from {", ".join(s + "://" for s in _REMOTE_SCHEMES)}, never from '
+                              f'this machine: {url!r} is not such a URL (a file of yours: choose it under Files)')
+        refused = self.remote_refusal()
+        if refused is not None:
+            return _said(404, f'this engine reads no remote file: {refused}')
+        extensions = duckdb_extensions()
+        assert extensions is not None
+        assert self._headless is not None
+        try:
+            # asked for before the frames are held (the session's lock first, then the frames')
+            headless = self._headless()
+            with self.frames.reading_file(asked['name'], view=True) as name:
+                self._extensions_here(extensions)
+                mount = {'url': url, 'name': name, **({'s3': asked['s3']} if asked.get('s3') else {})}
+                said = headless.call('mount', json.dumps(mount))
+                self.frames.keep_file(name, json.loads(said)['model'], view=True)
+        except ValueError as refused:
+            return _said(400, str(refused))
+        except Exception as failure:
+            # the file not read (not there, its keys refused, a format DuckDB cannot read): said, as the tab says it
+            return _said(422, f'{type(failure).__name__}: {failure}')
+        return Answer(200, 'application/json', said.encode('utf-8'))
+
+    def _extensions_here(self, folder: Path) -> None:
+        """The frames' DuckDB pointed at the extensions the package carries, once (the frames held): DataCube's INSTALL
+        finds httpfs installed there and LOAD loads it, and an extension not there is never downloaded -- the
+        repository it would be fetched from is the same folder, and installing on its own is off."""
+        if self._extensions is not None:
+            return
+        folder_text = str(folder).replace("'", "''")
+        for statement in (f"SET extension_directory = '{folder_text}'",
+                          f"SET custom_extension_repository = '{folder_text}'",
+                          'SET autoinstall_known_extensions = false'):
+            self.frames.connection.execute(statement)
+        self._extensions = folder
+
+    def _file_part(self, body: str) -> Answer:
+        """A part of a page's file, in order (``{"upload"?, "at", "bytes"}``, its bytes base64): the bytes the tab's DuckDB
+        would be given (upload.ts ``fileParts``), sent as the page reads them, so no file is too big to send. The first
+        part, with no ``upload``, begins one, named by Python (``{"upload"}`` answers it); each next names it and starts
+        where the bytes so far end (``at``), so a part sent twice or out of order is refused, never written twice. The
+        bytes are written where Python's DuckDB reads them (the headless engine's folder, under a name of Python's, gone
+        with that folder if no file.json ever reads them); file.json reads them as one file."""
+        try:
+            asked = json.loads(body)
+        except ValueError:
+            return _said(400, 'a part of a file is {"upload"?, "at", "bytes"}, as JSON')
+        upload, at = (asked.get('upload'), asked.get('at')) if isinstance(asked, dict) else (None, None)
+        if not (isinstance(asked, dict) and isinstance(asked.get('bytes'), str) and (upload is None or isinstance(upload, str))
+                and isinstance(at, int) and not isinstance(at, bool) and at >= 0):
+            return _said(400, 'a part of a file is {"upload"?, "at", "bytes"}: its upload a string, at a count of bytes, '
+                              'its bytes base64')
+        if not self.takes_files():
+            return _said(404, 'this engine reads no file: legend-lite reads one with DataCube\'s own code, which its '
+                              'datacube extra installs (pip install "legend-lite[datacube]")')
+        assert self._headless is not None
+        try:
+            data = base64.b64decode(asked['bytes'], validate=True)
+        except binascii.Error:
+            return _said(400, "a file's bytes are base64")
+        folder = self._headless().folder
+        with self._uploads_lock:
+            if upload is None:
+                if at != 0:
+                    return _said(400, 'an upload begins at its first byte (at 0)')
+                upload = secrets.token_hex(16)
+                path = folder / f'page_upload_{upload}'
+                path.write_bytes(b'')
+                self._uploads[upload] = path
+            else:
+                path = self._uploads.get(upload)
+                if path is None:
+                    return _said(404, f'no file is coming in as {upload!r}: begin it with its first part')
+            size = path.stat().st_size
+            if at != size:
+                return _said(409, f'the part starts at byte {at}, and the file so far ends at byte {size}')
+            with path.open('ab') as file:
+                file.write(data)
+        return Answer(200, 'application/json', json.dumps({'upload': upload, 'size': size + len(data)}).encode('utf-8'))
+
+    def _file_in(self, body: str) -> Answer:
+        """A page's file read into a table of its own in the frames' database (docs/DATACUBE_ONE_APP_DESIGN_2026_10_11.md
+        §4.3): ``{"upload", "name", "table"}``, its bytes the parts that upload brought (file-part.json), written where
+        Python's DuckDB reads them. DataCube's own code reads that file into the table (upload.ts's readFileInto, run
+        headless): only the path crosses into the engine, and Python and the tab read a file the same way. The table is
+        a copy, so the file goes at once, read or not. Its model is served beside the frames' from then on (the only
+        models a query may be over), and the answer is what arrived, as upload.ts says it. The page sends no SQL."""
+        try:
+            asked = json.loads(body)
+        except ValueError:
+            return _said(400, 'a file is {"upload", "name", "table"}, as JSON')
+        if not (isinstance(asked, dict) and all(isinstance(asked.get(k), str) for k in ('upload', 'name', 'table'))):
+            return _said(400, 'a file is {"upload", "name", "table"}, each a string')
+        if not self.takes_files():
+            return _said(404, 'this engine reads no file: legend-lite reads one with DataCube\'s own code, which its '
+                              'datacube extra installs (pip install "legend-lite[datacube]")')
+        assert self._headless is not None
+        with self._uploads_lock:
+            path = self._uploads.pop(asked['upload'], None)
+        if path is None:
+            return _said(404, f'no file came in as {asked["upload"]!r}: send its parts first (file-part.json)')
+        try:
+            # asked for before the frames are held: the session takes its own lock first, then the frames' (register)
+            headless = self._headless()
+            # the table the page asked for when it is free, else the next free name: the answer says which
+            with self.frames.reading_file(asked['table']) as table:
+                said = headless.call('ingest', json.dumps({'path': str(path), 'name': asked['name'], 'table': table}))
+                read = json.loads(said)
+                self.frames.keep_file(table, read['model'])
+        except ValueError as refused:
+            return _said(400, str(refused))
+        except Exception as failure:
+            # the file not read (DuckDB could not, a column no model holds): said, as the tab says it
+            return _said(422, f'{type(failure).__name__}: {failure}')
+        finally:
+            # the table is a copy: the file is not needed. One Windows still holds open is left for the headless
+            # engine's folder, which goes with it -- never a read that worked turned into a refusal
+            with contextlib.suppress(OSError):
+                path.unlink(missing_ok=True)
+        return Answer(200, 'application/json', said.encode('utf-8'))
+
+    def _file_out(self, body: str) -> Answer:
+        """A page's file let go of (``{"name", "table"}``): its table dropped by DataCube's own code, its model served no
+        more. A table that is no file's is refused: a page drops nothing else."""
+        try:
+            asked = json.loads(body)
+        except ValueError:
+            return _said(400, 'a file let go of is {"name", "table"}, as JSON')
+        if not (isinstance(asked, dict) and all(isinstance(asked.get(k), str) for k in ('name', 'table'))):
+            return _said(400, 'a file let go of is {"name", "table"}, each a string')
+        table = self.frames.file_table(asked['table'])
+        if table is None or not self.takes_files():
+            return _said(404, f'{asked["table"]!r} is no table a page\'s file was read into')
+        assert self._headless is not None
+        try:
+            # asked for before the frames are held (the session's lock first, then the frames')
+            headless = self._headless()
+            with self.frames.holding():
+                # dropped first, by the name Frames gave it, and only then served no more: a drop that fails leaves the
+                # table served, and the page may let go of it again
+                headless.call('forget', json.dumps({'table': table}))
+                self.frames.forget_file(table)
+        except Exception as failure:
+            return _said(422, f'{type(failure).__name__}: {failure}')
+        return Answer(204, 'text/plain; charset=utf-8', b'')
 
     def _api(self, path: str, query: str, body: str) -> Answer:
         """An API call's answer, computed on the compiler's pool."""
         try:
             if path == _EXECUTE and _arrow_requested(query):
                 return self._execute(body)
-            answer = compiler.pure_v1(path, query, body)
+            answer = self.planner.answer(path, query, body)
         except Exception as failure:
             # never a dropped call: the database refusing is an answer; anything else is a bug, logged whole, and
             # answered the same way (as legend-lite's server answers both)
@@ -216,12 +601,72 @@ class Engine:
                 traceback.print_exc()
             message = f'{type(failure).__name__}: {failure}'
             try:
-                answer = compiler.refusal(message)
+                answer = self.planner.refusal(message)
             except Exception:
                 # the compiler itself failing: still an answer, its own words
                 traceback.print_exc()
                 return _said(500, message)
         return Answer(answer.status, answer.content_type, answer.body.encode('utf-8'))
+
+    def _plan_and_run(self, body: str) -> Answer:
+        """PLANANDRUN on Python (§15.2): ``{"lambda", "model", "runtime"}`` -- the plan request the page's planner makes
+        (lite-planner.ts ``planRequest``), its model as text -- planned against the model Python holds of that text
+        (``Frames.held_for``: only the models this engine serves, R4) by the planner function the tab's worker calls
+        (``planJson``), its SQL run on the frames' DuckDB, all in this one call: the page sends Pure, never SQL. The
+        answer is the database's rows as Arrow, the planner's answer in their schema's metadata (``legend.plan``),
+        which the page reads as its planner reads its own; or, no rows, JSON: the planner's refusal (``plan``), or its
+        plan and why its SQL was refused (``error``)."""
+        try:
+            asked = json.loads(body)
+        except ValueError:
+            return _said(400, 'a plan-and-run is {"lambda", "model", "runtime"}, as JSON')
+        if not (isinstance(asked, dict) and all(isinstance(asked.get(k), str) for k in ('lambda', 'model', 'runtime'))):
+            return _said(400, 'a plan-and-run is {"lambda", "model", "runtime"}, each a string')
+        with self.frames.serving() as models:
+            self._noted(models)
+            held = self.frames.held_for(asked['model'])
+            if held is None:
+                return _planned({'plan': 'ERR\nMODEL\nthis engine serves no source of that model: a page plans only over '
+                                           'the frames and files Python holds'})
+            planned = library().call('lite_plan_json_held', held.handle, asked['lambda'], asked['runtime'])
+            if not planned.startswith('OK\n'):
+                return _planned({'plan': planned})
+            try:
+                # Python's executor, as Python's own queries are run: the rows typed by the plan (frames.typed_by_plan)
+                rows = self.frames.run(compiler.read_plan(planned[3:]))
+            except (duckdb.Error, UntypedColumn) as refused:
+                return _planned({'plan': planned, 'error': f'{type(refused).__name__}: {refused}'}, 422)
+        rows = rows.replace_schema_metadata({**(rows.schema.metadata or {}), _PLAN_KEY: planned.encode('utf-8')})
+        sink = pa.BufferOutputStream()
+        with pyarrow.ipc.new_stream(sink, rows.schema) as writer:
+            writer.write_table(rows)
+        return Answer(200, 'application/vnd.apache.arrow.stream', sink.getvalue().to_pybytes())
+
+    def _planner(self, body: str) -> Answer:
+        """The planner protocol's requests (datacube/src/planner-protocol.ts), answered by the native library as the
+        tab's worker answers them (legend_lite._planner): a held kind names its model by its text, never a handle (no
+        handle crosses hosts, §15.3), and is answered against the model Python holds of that text. ``hold`` and
+        ``release`` are the page's own; none of these runs SQL."""
+        try:
+            asked = json.loads(body)
+        except ValueError:
+            return _said(400, 'a planner request is its JSON')
+        kind = asked.get('kind') if isinstance(asked, dict) else None
+        if not isinstance(kind, str) or kind not in _planner.KINDS or kind in ('hold', 'release'):
+            return _said(400, f'this engine answers the planner requests {sorted(set(_planner.KINDS) - {"hold", "release"})}')
+        if kind in _planner.HELD:
+            model = asked.pop('model', None)
+            with self.frames.serving() as models:
+                self._noted(models)
+                held = self.frames.held_for(model) if isinstance(model, str) else None
+                if held is None:
+                    said = {'ok': True, 'answer': 'ERR\nMODEL\nthis engine serves no source of that model'}
+                else:
+                    said = _planner.answer(library(), {**asked, 'handle': held.handle})
+        else:
+            said = _planner.answer(library(), asked)
+        said.pop('id', None)
+        return Answer(200, 'application/json', json.dumps(said).encode('utf-8'))
 
     def _execute(self, body: str) -> Answer:
         """execute in upstream's Arrow format: the compiler plans over the frames' models, DuckDB runs its SQL,
@@ -229,7 +674,7 @@ class Engine:
         runs); the answer is compressed outside."""
         with self.frames.serving() as models:
             self._noted(models)
-            answer = compiler.execute_plan(body, list(models.values()))
+            answer = self.planner.execute_plan(body, list(models.values()))
             if answer.status != 200:
                 return Answer(answer.status, answer.content_type, answer.body.encode('utf-8'))
             planned = json.loads(answer.body)
@@ -528,8 +973,10 @@ class _Handler(http.server.BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802 -- the stdlib's name
         url = urlsplit(self.path)
-        # the API, and an open page saying what it is now (page.json: Python's page.read())
-        if not (url.path.startswith(_API) or url.path == '/page.json'):
+        # the API, an open page saying what it is now (page.json: Python's page.read()), a page's file in or out, the
+        # saved pages, and PlanAndRun's calls
+        if not (url.path.startswith(_API) or url.path in ('/page.json', _FILE_IN, _FILE_PART, _FILE_OUT, _REMOTE, _SAVED,
+                                                          _PLAN_AND_RUN, _PLANNER)):
             self._refuse_unread(404, f'no such path: {url.path}')
             return
         if not self._admitted(url.path):

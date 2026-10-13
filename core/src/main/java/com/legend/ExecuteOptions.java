@@ -13,12 +13,20 @@ package com.legend;
  *                  {@link com.legend.exec.ExecutionResult.TdsText}
  * @param recorder  the raw-SQL ledger the executor appends to (null = none)
  * @param resources the test-input resource resolver (path → text; null = none)
+ * @param systemConnections the host's system connections, by engine: a query reading the system metamodel store on a
+ *                  server engine runs on that engine's (exec.SystemDatabase); an in-process engine needs none
  */
 public record ExecuteOptions(boolean pctRender,
         com.legend.sql.dialect.RawSqlBoundary.@com.legend.base.Nullable Recorder recorder,
         java.util.function.@com.legend.base.Nullable Function<String, String> resources,
         java.util.Set<com.legend.platform.Feature> features,
-        JudgeMode judgeMode) {
+        JudgeMode judgeMode,
+        java.util.Map<com.legend.model.ConnectionDefinition.DatabaseType, com.legend.exec.Sessions.Opener>
+                systemConnections) {
+
+    public ExecuteOptions {
+        systemConnections = java.util.Collections.unmodifiableMap(new java.util.LinkedHashMap<>(systemConnections));
+    }
 
     /** The assert judge of a RUN (docs/JUDGING_TWO_MODES): HOST — the
      * verdict of record, judged in Java over fetched values; DATABASE —
@@ -32,21 +40,28 @@ public record ExecuteOptions(boolean pctRender,
             com.legend.sql.dialect.RawSqlBoundary.@com.legend.base.Nullable Recorder recorder,
             java.util.function.@com.legend.base.Nullable Function<String, String> resources,
             java.util.Set<com.legend.platform.Feature> features) {
-        this(pctRender, recorder, resources, features, JudgeMode.HOST);
+        this(pctRender, recorder, resources, features, JudgeMode.HOST, java.util.Map.of());
     }
 
     public static final ExecuteOptions NONE = new ExecuteOptions(false, null, null, java.util.Set.of());
     public static final ExecuteOptions PCT_RENDER = new ExecuteOptions(true, null, null, java.util.Set.of());
 
     public ExecuteOptions withJudgeMode(JudgeMode mode) {
-        return new ExecuteOptions(pctRender, recorder, resources, features, mode);
+        return new ExecuteOptions(pctRender, recorder, resources, features, mode, systemConnections);
     }
 
     /** The runner's DEFAULT feature flags — merged into every execute
      *  call's own ({@code ExecutionContext.features}); the one ambient
      *  source (the engine's testable runner has the same knob). */
     public ExecuteOptions withFeatures(java.util.Set<com.legend.platform.Feature> f) {
-        return new ExecuteOptions(pctRender, recorder, resources, java.util.Collections.unmodifiableSet(new java.util.LinkedHashSet<>(f)), judgeMode);
+        return new ExecuteOptions(pctRender, recorder, resources, java.util.Collections.unmodifiableSet(new java.util.LinkedHashSet<>(f)), judgeMode, systemConnections);
+    }
+
+    /** The host's system connections, by engine: where a server engine's system database lives, configured apart from
+     *  every runtime's connection (the platform holds no server credential; exec.SystemDatabase). */
+    public ExecuteOptions withSystemConnections(java.util.Map<com.legend.model.ConnectionDefinition.DatabaseType,
+            com.legend.exec.Sessions.Opener> connections) {
+        return new ExecuteOptions(pctRender, recorder, resources, features, judgeMode, connections);
     }
 
     /** The raw-SQL ledger this execution appends to (Phase 2b) and the

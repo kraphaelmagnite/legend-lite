@@ -11,7 +11,8 @@ load("@rules_python//python:py_binary.bzl", "py_binary")
 load("@rules_python//python:py_library.bzl", "py_library")
 load("@rules_python//python:py_test.bzl", "py_test")
 load("//tools/guards:defs.bzl", "guards_package")
-load("//tools/platforms:defs.bzl", "COMPILER_LIBRARY_PLATFORMS", "compatible_with")
+load("//tools/java_run:defs.bzl", "java_run")
+load("//tools/platforms:defs.bzl", "COMPILER_LIBRARY_PLATFORMS", "compatible_with", "platform_select")
 
 # the compiler's bindings: no package beyond Python's own
 py_library(
@@ -20,6 +21,7 @@ py_library(
         ["legend_lite/**/*.py"],
         exclude = [
             "legend_lite/_headless.py",
+            "legend_lite/_home.py",
             "legend_lite/datacube.py",
             "legend_lite/engine.py",
             "legend_lite/frames.py",
@@ -38,6 +40,9 @@ py_library(
     # //datacube:engine_fixture serves a frame to DataCube's browser test
     visibility = ["//datacube:__pkg__"],
     srcs = [
+        # this user's legend-lite folder, and the pages DataCube saves in it (docs/DATACUBE_ONE_APP_DESIGN_2026_10_11.md,
+        # step 2d): the engine keeps them
+        "legend_lite/_home.py",
         "legend_lite/datacube.py",
         "legend_lite/engine.py",
         "legend_lite/frames.py",
@@ -203,6 +208,12 @@ py_test(
     ],
 )
 
+# what the headless test is given: DataCube's bundle, and DuckDB's extensions as the wheel carries them
+_HEADLESS_ENV = {
+    "LEGEND_LITE_DATACUBE": "$(rlocationpath //datacube:headless_bundle)",
+    "LEGEND_LITE_DUCKDB_EXTENSIONS": "$(rlocationpath :wheel_duckdb)",
+}
+
 # Grids headless (docs/DATACUBE_HEADLESS_PYTHON_DESIGN_2026_10_11.md §4): a page's grid run by DataCube's own code in V8
 # -- grid.view(), grid.relation, grid.to_pandas() -- each checked against pandas computing the same. The bundle is
 # DataCube's (//datacube:headless_bundle), as the wheel's `datacube` extra will carry it (step 4).
@@ -215,15 +226,14 @@ py_test(
     ],
     args = ["test_headless"],
     data = [
+        ":wheel_duckdb",
         "//datacube:headless_bundle",
         "//native:compiler",
     ],
+    # and DuckDB's extensions as the wheel carries them: a page's remote file is read through httpfs (step 2b)
     env = select({
-        "//tools/platforms:windows_x86_64": _ENV | {
-            "LEGEND_LITE_DATACUBE": "$(rlocationpath //datacube:headless_bundle)",
-            "PROCESSOR_ARCHITECTURE": "AMD64",
-        },
-        "//conditions:default": _ENV | {"LEGEND_LITE_DATACUBE": "$(rlocationpath //datacube:headless_bundle)"},
+        "//tools/platforms:windows_x86_64": _ENV | _HEADLESS_ENV | {"PROCESSOR_ARCHITECTURE": "AMD64"},
+        "//conditions:default": _ENV | _HEADLESS_ENV,
     }),
     main = "tests/main.py",
     target_compatible_with = _PLATFORMS,
@@ -363,6 +373,50 @@ copy_to_directory(
     root_paths = ["datacube/dist"],
 )
 
+# DUCKDB'S HTTPFS EXTENSION for Python's DuckDB (docs/DATACUBE_ONE_APP_DESIGN_2026_10_11.md, step 2b): a page on Python
+# reads a remote file through it, and nothing downloads it where the wheel runs -- MODULE.bazel pins it per platform.
+# The only extension carried: iceberg would need a rule first that an Iceberg table's data files are remote too (its
+# metadata names them by path; R4, engine.py _REMOTE_SCHEMES).
+# Gunzipped by the Java action the warehouse's postgres extension uses (//warehouse:postgres_extension: Bazel 9.2's own
+# .gz unpacking fails on Windows), each into DuckDB's own extension folder layout (v1.5.5/<DuckDB's platform>/), which
+# Python points its DuckDB at (engine.py): DataCube's INSTALL httpfs then finds it installed, and LOAD loads it.
+_DUCKDB_PLATFORMS = {
+    "linux_aarch64": "linux_arm64",
+    "linux_x86_64": "linux_amd64",
+    "macos_arm64": "osx_arm64",
+    "macos_x86_64": "osx_amd64",
+    "windows_x86_64": "windows_amd64",
+}
+
+[java_run(
+    name = "duckdb_httpfs_" + duckdb,
+    srcs = ["@duckdb_httpfs_extension_" + duckdb + "//file"],
+    outs = ["duckdb_extensions/v1.5.5/" + duckdb + "/httpfs.duckdb_extension"],
+    arguments = [
+        "$(execpath @duckdb_httpfs_extension_" + duckdb + "//file)",
+        "{OUT}",
+    ],
+    main_class = "com.legend.tools.gunzip.Gunzip",
+    mnemonic = "GunzipDuckdbExtension",
+    target_compatible_with = compatible_with([bazel]),
+    deps = ["//tools/gunzip"],
+) for bazel, duckdb in _DUCKDB_PLATFORMS.items()]
+
+_DUCKDB_HTTPFS, _DUCKDB_HTTPFS_COMPATIBLE = platform_select(
+    {bazel: [":duckdb_httpfs_" + duckdb] for bazel, duckdb in _DUCKDB_PLATFORMS.items()},
+    "DuckDB httpfs extension (MODULE.bazel, duckdb_httpfs_extension_*)",
+)
+
+# the folder, as the package carries it (legend_lite/_duckdb) and as the tests are given it (LEGEND_LITE_DUCKDB_EXTENSIONS)
+copy_to_directory(
+    name = "wheel_duckdb",
+    srcs = _DUCKDB_HTTPFS,
+    out = "legend_lite/_duckdb",
+    root_paths = ["python/duckdb_extensions"],
+    target_compatible_with = _DUCKDB_HTTPFS_COMPATIBLE,
+    visibility = ["//datacube:__pkg__"],
+)
+
 # DataCube's headless bundle (docs/DATACUBE_HEADLESS_PYTHON_DESIGN_2026_10_11.md, step 4), beside the package where
 # legend_lite/_headless.py looks for it: about 1.3 MB of DataCube's own non-screen code, run in V8 by the `datacube`
 # extra's mini-racer
@@ -432,6 +486,7 @@ py_wheel(
     version = "0.1.0",
     deps = [
         ":wheel_datacube",
+        ":wheel_duckdb",
         ":wheel_package",
         ":wheel_site",
     ] + select({

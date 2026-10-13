@@ -1742,7 +1742,8 @@ public final class NameResolver {
             case PathLiteral pl -> pl.withChildren(java.util.List.of(
                     java.util.Objects.requireNonNull(resolveVs(pl.desugared(), scope))));
             case com.legend.protocol.spec.CByteArray b -> b;   // literal
-            // an inline SQL island has no names to resolve; the typer refuses it
+            // an inline SQL island has no Pure names yet: the typer translates it and resolves the result
+            // (compiler/spec/SqlIslands)
             case com.legend.protocol.spec.SqlIsland si -> si;
             case com.legend.protocol.spec.GqlIsland gi -> gi;
             // a TDS literal dissolves into its desugared tds(...) call

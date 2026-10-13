@@ -289,7 +289,9 @@ commits; what they settled beyond §3 and §6:
 ## 12. Steps 2 and 4, as built (2026-10-11, on branch datacube-headless)
 
 - **Step 2, the headless grid** (15099302d).
-  - `datacube/src/headless/grid.ts` holds the bundle's `gridView`, `gridRelation` and `gridSql`. A page's cube is opened
+  - `datacube/src/headless/grid.ts` holds the bundle's `gridView`, `gridRelation` and `gridSql` (`gridSql` gone
+    2026-10-12: `Grid.to_pandas()` plans `gridRelation`'s Pure in Python and types its rows by the plan,
+    docs/DATACUBE_ONE_APP_DESIGN_2026_10_11.md §15.3a). A page's cube is opened
     over its source as the compiler types it now (`openCube`, as a page opens a saved cube). It is run by
     `CubeController.run` on the tab's own pair: `LitePlanner` over the host's worker, `DuckDbEngine` over the host's
     connection.

@@ -56,6 +56,7 @@ function fakeExports(
     catalogColumnsSqlOrError: () => 'ERR\nfake\nnot in this fake',
     pureV1OrError: () => 'ERR\nfake\nnot in this fake',
     testDataSqlOrError: () => 'ERR\nfake\nnot in this fake',
+    sessionSetupOrError: () => 'ERR\nfake\nnot in this fake',
   };
 }
 

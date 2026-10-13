@@ -64,6 +64,26 @@ public final class CarrierStrategies extends SqlRewriter {
          * WITHOUT H2's FULL OUTER emulation: Postgres joins FULL OUTER
          * natively. */
         public static final Caps POSTGRES = new Caps(false, true, true, true);
+        /** Databricks (2026-10-11): typed native arrays with lambdas, as DuckDB's (docs/CLOUD_BACKENDS_PCT_2026_10_11.md). */
+        public static final Caps DATABRICKS = new Caps(true, true, true, true);
+        /** Snowflake (2026-10-11): semi-structured arrays with higher-order functions -- the strategies stand aside,
+         *  as on DuckDB and Databricks; FULL OUTER is native. */
+        public static final Caps SNOWFLAKE = new Caps(true, true, true, true);
+        /** BigQuery (2026-10-11): the portable strategies (static pivot and as-of emulation, explode placements, list
+         *  reductions fused), as on Postgres: arrays are native but lambda-less; FULL OUTER is native. */
+        public static final Caps BIGQUERY = new Caps(false, true, true, true);
+        /** SQLite (2026-10-11): the portable strategies over its JSON lists (json_each correlates, measured); FULL
+         *  OUTER is native (3.39). */
+        public static final Caps SQLITE = new Caps(false, true, true, true);
+        /** MariaDB (2026-10-11): the portable strategies over its JSON lists (a JSON_TABLE argument correlates,
+         *  measured); no FULL OUTER JOIN (measured: a syntax error), so it is emulated, as on H2. */
+        public static final Caps MARIADB = new Caps(false, true, true, false);
+        /** Trino (2026-10-12): typed native arrays with lambdas -- the strategies stand aside, as on Databricks; its
+         *  dialect writes the static pivot and the as-of join itself (Trino has neither); FULL OUTER is native. */
+        public static final Caps TRINO = new Caps(true, true, true, true);
+        /** ClickHouse (2026-10-12): typed native arrays with lambdas -- the strategies stand aside; FULL OUTER, the
+         *  as-of join and QUALIFY are native. */
+        public static final Caps CLICKHOUSE = new Caps(true, true, true, true);
     }
 
     private final Caps caps;
@@ -406,33 +426,12 @@ public final class CarrierStrategies extends SqlRewriter {
         String rightAlias = j.right().alias();
         List<SqlExpr> conjuncts = new ArrayList<>();
         flattenAnd(java.util.Objects.requireNonNull(j.on()), conjuncts);
-        SqlExpr rightKey = null;
-        boolean pickMax = false;
-        for (SqlExpr c : conjuncts) {
-            if (c instanceof SqlExpr.Call cc && cc.args().size() == 2) {
-                boolean r0 = mentionsAlias(cc.args().get(0), rightAlias);
-                boolean r1 = mentionsAlias(cc.args().get(1), rightAlias);
-                if (r0 == r1) {
-                    continue;
-                }
-                switch (cc.fn()) {
-                    case GREATER_EQUAL, GREATER -> {
-                        rightKey = r1 ? cc.args().get(1) : cc.args().get(0);
-                        pickMax = r1;      // l >= r: bounded above -> MAX
-                    }
-                    case LESS_EQUAL, LESS -> {
-                        rightKey = r0 ? cc.args().get(0) : cc.args().get(1);
-                        pickMax = r0;      // r <= l: bounded above -> MAX
-                    }
-                    default -> {
-                        continue;
-                    }
-                }
-            }
-        }
-        if (rightKey == null) {
+        AsOfKey key = asOfKey(j);
+        if (key == null) {
             return null;
         }
+        SqlExpr rightKey = key.rightKey();
+        boolean pickMax = key.pickMax();
         com.legend.sql.SqlSource copy = copyWithAlias(j.right(), "_asof");
         if (copy == null) {
             return null;
@@ -482,6 +481,38 @@ public final class CarrierStrategies extends SqlRewriter {
                             v.columns(), alias, v.outputs());
             default -> null;
         };
+    }
+
+    /** An as-of join's right key, and whether the join takes its greatest value ({@code l >= r}: bounded above) or
+     *  its least ({@code l <= r}: bounded below). */
+    record AsOfKey(SqlExpr rightKey, boolean pickMax) {
+    }
+
+    /** {@code j}'s as-of key: its ON's one inequality between the two sides (null when it has none). */
+    static @com.legend.base.Nullable AsOfKey asOfKey(com.legend.sql.SqlSource.Join j) {
+        String rightAlias = j.right().alias();
+        List<SqlExpr> conjuncts = new ArrayList<>();
+        flattenAnd(java.util.Objects.requireNonNull(j.on()), conjuncts);
+        AsOfKey key = null;
+        for (SqlExpr c : conjuncts) {
+            if (c instanceof SqlExpr.Call cc && cc.args().size() == 2) {
+                boolean r0 = mentionsAlias(cc.args().get(0), rightAlias);
+                boolean r1 = mentionsAlias(cc.args().get(1), rightAlias);
+                if (r0 == r1) {
+                    continue;
+                }
+                switch (cc.fn()) {
+                    // l >= r: bounded above -> MAX
+                    case GREATER_EQUAL, GREATER -> key = new AsOfKey(r1 ? cc.args().get(1) : cc.args().get(0), r1);
+                    // r <= l: bounded above -> MAX
+                    case LESS_EQUAL, LESS -> key = new AsOfKey(r0 ? cc.args().get(0) : cc.args().get(1), r0);
+                    default -> {
+                        continue;
+                    }
+                }
+            }
+        }
+        return key;
     }
 
     private static void flattenAnd(SqlExpr e, List<SqlExpr> out) {
@@ -1569,12 +1600,21 @@ public final class CarrierStrategies extends SqlRewriter {
         return null;
     }
 
-    /** Replace bare reads of the lambda parameter with {@code value}. */
+    /** Replace reads of the lambda parameter with {@code value}: a bare read
+     * is the value; a read qualified by the parameter ({@code p.first}, a
+     * property of a struct element, as the lowering resolves it in the
+     * lambda's scope) is that field of the value -- folded when the value
+     * is a literal struct. Left as it was, the qualified read named a table
+     * no FROM declares ("Unrecognized name: p" on BigQuery, "missing
+     * FROM-clause entry" on Postgres, measured 2026-10-11). */
     private static SqlExpr substParam(SqlExpr body, String param,
             SqlExpr value) {
         if (body instanceof SqlExpr.Column c && c.table() == null
                 && param.equals(c.name())) {
             return value;
+        }
+        if (body instanceof SqlExpr.Column c && param.equals(c.table())) {
+            return SqlExpr.StructGet.of(value, c.name());
         }
         List<SqlExpr> kids = body.children();
         if (kids.isEmpty()) {

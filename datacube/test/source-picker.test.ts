@@ -36,7 +36,7 @@ describe('the source picker', () => {
     const chosen = pickSource<string>(doc, {
       purpose: 'add',
       sections: {
-        remote: { detect: () => 'Parquet', open: async () => 'r' },
+        remote: { detect: () => 'Parquet', open: async () => 'r', reader: 'page' },
         files: files(async () => 'f'),
       },
     });
@@ -192,6 +192,7 @@ describe('the source picker', () => {
         detect: () => 'Parquet',
         url: 's3://bucket/trades.parquet',
         keys: true,
+        reader: 'page',
         open: async (url, c) => { asked.push(`${url}|${c?.keyId ?? ''}`); return 'reopened'; },
       } },
     });

@@ -15,11 +15,13 @@ import java.util.List;
  * pass: an ASCENDING key drops ({@code quantile_cont(v, p)}); a
  * DESCENDING continuous percentile interpolates over the NEGATED values
  * and negates back (the same interpolation direction as the standard's
- * DESC form — engine golden 1.4 over [1,1.5,2]); a DESCENDING discrete
- * percentile is the ceil(p*N)-th element of the DESC-sorted collected
- * list (PERCENTILE_DISC DESC picks the first value whose cume_dist
- * >= p). A window-positioned percentile windows every reducer of its
- * encoding with the same window spec.
+ * DESC form — engine golden 1.4 over [1,1.5,2]); a DISCRETE percentile,
+ * either way, is the ceil(p*N)-th element of the collected list sorted
+ * in its order, the first at p = 0, p a DOUBLE (PERCENTILE_DISC picks the
+ * first value whose cume_dist >= p, and Postgres multiplies in float8:
+ * ceil(0.28 * 25) is 8 there, 7 in DuckDB's exact quantile_disc). A
+ * window-positioned percentile windows every reducer of its encoding with
+ * the same window spec.
  */
 final class QuantileOrder extends SqlRewriter {
     @Override
@@ -48,28 +50,40 @@ final class QuantileOrder extends SqlRewriter {
         SqlExpr p = r.args().get(1);
         boolean ascending = r.orderBy().isEmpty()
                 || r.orderBy().get(0).ascending();
+        if (r.fn() == SqlAgg.Fn.QUANTILE_DISC) {
+            return discrete(value, p, r.distinct(), ascending);
+        }
         if (ascending) {
-            return r.fn() == SqlAgg.Fn.QUANTILE_CONT
-                    ? interpolate(value, p, r.distinct())
-                    : new SqlAgg.Reducer(r.fn(), r.args(), r.distinct(),
-                            List.of());
+            return interpolate(value, p, r.distinct());
         }
-        if (r.fn() == SqlAgg.Fn.QUANTILE_CONT) {
-            return SqlExpr.Call.of(SqlFn.NEGATE,
-                    interpolate(SqlExpr.Call.of(SqlFn.NEGATE, value), p,
-                            r.distinct()));
-        }
+        return SqlExpr.Call.of(SqlFn.NEGATE,
+                interpolate(SqlExpr.Call.of(SqlFn.NEGATE, value), p,
+                        r.distinct()));
+    }
+
+    /**
+     * The DISCRETE percentile as Postgres's percentile_disc computes it:
+     * element max(ceil(p * N), 1) of the non-NULL values sorted in the
+     * order (NULLs sort last, and N counts the others), p a DOUBLE. At
+     * p = 0, ceil(p*N) is 0, before the 1-based list's first element: the
+     * first value is the answer there (pure's percentile too).
+     */
+    private static SqlExpr discrete(SqlExpr value, SqlExpr p, boolean distinct,
+            boolean ascending) {
         return SqlExpr.Call.of(SqlFn.LIST_GET,
-                SqlExpr.Call.of(SqlFn.LIST_SORT_DESC,
+                SqlExpr.Call.of(ascending ? SqlFn.LIST_SORT : SqlFn.LIST_SORT_DESC,
                         new SqlAgg.Reducer(SqlAgg.Fn.LIST, List.of(value),
-                                r.distinct(), List.of())),
-                new SqlExpr.Cast(
-                        SqlExpr.Call.of(SqlFn.CEILING,
-                                SqlExpr.Call.of(SqlFn.TIMES, p,
-                                        new SqlAgg.Reducer(SqlAgg.Fn.COUNT,
-                                                List.of(value), r.distinct(),
-                                                List.of()))),
-                        SqlType.Scalar.BIGINT));
+                                distinct, List.of())),
+                SqlExpr.Call.of(SqlFn.GREATEST,
+                        new SqlExpr.Cast(
+                                SqlExpr.Call.of(SqlFn.CEILING,
+                                        SqlExpr.Call.of(SqlFn.TIMES,
+                                                new SqlExpr.Cast(p, SqlType.Scalar.DOUBLE),
+                                                new SqlAgg.Reducer(SqlAgg.Fn.COUNT,
+                                                        List.of(value), distinct,
+                                                        List.of()))),
+                                SqlType.Scalar.BIGINT),
+                        new SqlExpr.IntLit(1)));
     }
 
     /**

@@ -411,11 +411,13 @@ class Grid(Tile):
             return engine.call('gridRelation', self._spec(frames))
 
     def to_pandas(self) -> Any:
-        """Every row of ``relation``, as a pandas DataFrame: DataCube says the query, the frames' own database answers
-        it, and the rows come to Python from there (never through DataCube's engine)."""
+        """Every row of ``relation``, as a pandas DataFrame: DataCube says the query, Python plans it over its frame's
+        model and its own database answers it, typed by the plan (``Table.execute``), the rows coming to Python from
+        there (never through DataCube's engine)."""
+        from .frames import to_pandas
         engine, frames = self._headless()
         with frames.serving():
-            return frames.connection.execute(engine.call('gridSql', self._spec(frames))).to_arrow_table().to_pandas()
+            return to_pandas(frames[self.frame].execute(engine.call('gridRelation', self._spec(frames))))
 
     def group(self, *rows: str) -> Grid:
         """Grouped by ``rows``, outermost first (the Rows zone); none, not grouped."""
@@ -583,9 +585,20 @@ class GridView:
         self.sql: str = view['sql']
 
     def to_pandas(self) -> Any:
-        """The rows as the grid shows them, a DataFrame with one column per column shown."""
+        """The rows as the grid shows them, a DataFrame with one column per column shown: an Integer or a Boolean
+        column with nulls an integer or a boolean still (pandas' nullable types, as ``frames.to_pandas``)."""
         import pandas as pd
-        return pd.DataFrame(self.rows, columns=[c['name'] for c in self.columns])
+        nullable = {'Integer': pd.Int64Dtype(), 'Boolean': pd.BooleanDtype()}
+
+        def column(i: int, type: str) -> Any:
+            values = [row[i] for row in self.rows]
+            # an Integer past 64 bits kept exact, as Python's own rows keep it (frames.to_pandas): pandas' objects
+            wide = type == 'Integer' and any(isinstance(v, int) and not -2 ** 63 <= v < 2 ** 63 for v in values)
+            return pd.Series(values, dtype=object if wide else nullable.get(type))
+        # by position: a pivot's columns may share a name
+        frame = pd.DataFrame({i: column(i, c['type']) for i, c in enumerate(self.columns)})
+        frame.columns = [c['name'] for c in self.columns]
+        return frame
 
     def __repr__(self) -> str:
         return f'<GridView: {len(self.rows)} rows, {len(self.columns)} columns{", truncated" if self.truncated else ""}>'

@@ -161,7 +161,9 @@ public class PctExecuteNative extends NativeFunction {
             // adapter gives it one (StorelessRuntime)
             ExecutionResult result = new QueryService().execute(PctBackend.withStorelessRuntime(model), pureExpression, com.legend.test.StorelessRuntime.RUNTIME, connection, com.legend.ExecuteOptions.PCT_RENDER.withFeatures(
                             java.util.Set.of(com.legend.platform.Feature
-                                    .CORRECT_SQL_SUBSTRING_INDEXING)));
+                                    .CORRECT_SQL_SUBSTRING_INDEXING))
+                    // a server lane's system connection: where a metamodel-reading query runs (PctBackend)
+                    .withSystemConnections(PctBackend.systemConnections()));
             return switch (result) {
                 case ExecutionResult.TdsText t -> {
                     System.out.println("[LegendLite PCT] TDS: "

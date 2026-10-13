@@ -148,6 +148,14 @@ describe('a saved page', () => {
     assert.deepEqual(readPage(pageToJson(written)).model, { ...model, tables: { cube: 'trades_2' } });
   });
 
+  it('writes a class kept only for a cube it holds: the class of every grid removed goes with its table', () => {
+    const model = { project: 'datacube:trades', workspace: 'datacube', package: 'trades', tables: { gone: 'customers' },
+      classes: { gone: 'trades::domain::Customer' } };
+    const written = writePage({ name: 'Q3 page', cube: CUBE, views: VIEWS, model });
+    assert.deepEqual(written.model, { project: 'datacube:trades', workspace: 'datacube', package: 'trades', tables: {} });
+    assert.deepEqual(readPage(pageToJson(written)).model, written.model);
+  });
+
   it('says what is wrong with a page it cannot read', () => {
     const raw = JSON.parse(pageToJson(page()));
     const bad = (patch: Record<string, unknown>) => () => readPage(JSON.stringify({ ...raw, ...patch }));

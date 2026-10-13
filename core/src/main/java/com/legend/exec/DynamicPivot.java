@@ -90,6 +90,8 @@ public final class DynamicPivot {
                     case Long l -> new SqlExpr.IntLit(l);
                     case Boolean b -> new SqlExpr.BoolLit(b);
                     case java.math.BigDecimal d when integral -> new SqlExpr.IntLit(d.longValueExact());
+                    // ClickHouse delivers an Int128 (a sum of integers) as a BigInteger
+                    case java.math.BigInteger b when integral -> new SqlExpr.IntLit(b.longValueExact());
                     case java.math.BigDecimal d -> new SqlExpr.DecimalLit(d);
                     case Double d -> new SqlExpr.FloatLit(d);
                     // audit 2026-08-18 finding D: a bare (double) widen

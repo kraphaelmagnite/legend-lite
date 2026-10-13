@@ -5,7 +5,9 @@ source, the rows (the page loads the same rows into the tab's DuckDB), and each 
 the test's commands until its standard input closes: `update`, `columns`, `widget-update`, `page <json>` (a page of
 its frames served, as `q3`), `page-again` (that page served again, its second sheet renamed), `desks-update` (the second
 frame a row more), `py-page` (a page built with ll.Page and shown; answered `done py-page <its link as JSON>`),
-`py-page-sheet` (a sheet added to it in Python), `widget-page-sheet` (a sheet added to the notebook's page), `py-page-read` (answered `done py-page-read <its sheets' names, as
+`py-page-sheet` (a sheet added to it in Python), `widget-page-sheet` (a sheet added to the notebook's page),
+`show-closing` (a frame of two rows shown, `closing`; answered `done show-closing <its link as JSON>`), `close-closing`
+(that frame's cube closed in Python), `py-page-read` (answered `done py-page-read <its sheets' names, as
 page.read() says them, as JSON>`), `py-documents` (answered `done py-documents <pages Python writes, each its JSON
 text, as JSON>`: for DataCube's reader to read) -- each answered `done <command>` -- and `widget <name> <message>`, a message from a widget's page, as
 a notebook's channel brings it. What a widget sends its page is printed as it goes: `sent <json>` (its buffers in
@@ -17,6 +19,9 @@ base64) and `trait <json>` (a property set). A second frame, `desks`, is served 
 import argparse
 import base64
 import contextlib
+import functools
+import http.server
+import tempfile
 import io
 import json
 import os
@@ -108,6 +113,17 @@ def main() -> None:
     desks = {'now': pa.table({'desk': ['Rates', 'FX', 'Credit'], 'head': ['Ana', 'Ben', 'Cy']})}
     datacube._session.register(lambda: desks['now'], 'desks', LIVE)
     served_page: dict = {}
+    # a remote file a page reads from Python (step 2b): a Parquet file served by a server on this machine, read by
+    # Python's DuckDB through the httpfs extension the wheel carries -- nothing leaves the machine
+    remote = tempfile.TemporaryDirectory()
+    import pyarrow.parquet as pq
+    pq.write_table(pa.table({'book': ['Dune', 'Emma', 'Ulysses'], 'pages': [412, 474, 730]}), f'{remote.name}/books.parquet')
+
+    class Quiet(http.server.SimpleHTTPRequestHandler):
+        def log_message(self, *_):
+            pass
+    files = http.server.ThreadingHTTPServer(('127.0.0.1', 0), functools.partial(Quiet, directory=remote.name))
+    threading.Thread(target=files.serve_forever, daemon=True).start()
     # two notebook cubes, as ll.DataCube(df) makes them: the page shows both and fetches DataCube's module once
     widgets = {'nb': DataCube(frame, name='nb'), 'nb2': DataCube(frame.slice(0, 3), name='nb2')}
     # and a notebook's PAGE (ll.Page, shown under a cell): a grid grouped by region
@@ -120,6 +136,7 @@ def main() -> None:
         'url': web.url,
         'authorization': web.authorization,
         'link': cube.url,
+        'remote': f'http://127.0.0.1:{files.server_address[1]}/books.parquet',
         'model': table.model,
         'runtime': table.runtime,
         'source': table.source,
@@ -166,6 +183,12 @@ def main() -> None:
                 command = f'py-page {json.dumps(shown_page.url)}'
             elif command == 'py-page-sheet':
                 pypage.sheet('Added in Python')
+            elif command == 'show-closing':
+                with contextlib.redirect_stdout(io.StringIO()):
+                    closing = ll.show(frame.slice(0, 2), name='closing', browser=False)
+                command = f'show-closing {json.dumps(closing.url)}'
+            elif command == 'close-closing':
+                closing.close()
             elif command == 'py-documents':
                 command = f'py-documents {json.dumps(python_documents(frame, served_page, desks))}'
             elif command == 'py-page-read':
@@ -178,6 +201,8 @@ def main() -> None:
         for widget in widgets.values():
             widget.close()
         cube.close()
+        files.shutdown()
+        remote.cleanup()
 
 
 if __name__ == '__main__':

@@ -49,6 +49,51 @@ JARS = {
         sha256 = "6e0e4cc2d8cae902084f8a2b18728b073a6fd9d1f87c9d8bff8f298c18185b93",
         users = ["core"],
     ),
+    # THE CLOUD PCT LANES' drivers (docs/CLOUD_BACKENDS_PCT_2026_10_11.md): the PCT suites on Databricks, Snowflake
+    # and BigQuery, on real accounts. Test-only until the server opens those databases; each is one self-contained
+    # jar (Snowflake's and Databricks' POMs declare no dependency; BigQuery's is its shaded "all" jar). Apache-2.0,
+    # each checked against Maven Central's sha1 on 2026-10-11.
+    "databricks_jdbc": struct(
+        coordinate = "com.databricks:databricks-jdbc:3.4.3",
+        sha256 = "191917c5a45629d33f4734ff599f9a4d4f4bdfc82f159ed7dc9f2b285a1d35d2",
+        users = ["pct"],
+    ),
+    "snowflake_jdbc": struct(
+        coordinate = "net.snowflake:snowflake-jdbc:4.4.0",
+        sha256 = "eeabc114d2fd429365f8bdde0cb5dd00f0cf529b22aab754751bab1b09fc65c0",
+        users = ["pct"],
+    ),
+    # group:artifact:version:classifier -- the shaded jar; the plain one declares 109 runtime dependencies
+    "bigquery_jdbc": struct(
+        coordinate = "com.google.cloud:google-cloud-bigquery-jdbc:1.6.0:all",
+        sha256 = "b9d3368ae2d48721a053734745b2ef4d1cdf62f7e704e4d8a41b2a7126ca80a6",
+        users = ["pct"],
+    ),
+    # THE MARIADB PCT LANES' driver (docs/CLOUD_BACKENDS_PCT_2026_10_11.md §13): MariaDB Connector/J, which also
+    # speaks to MySQL servers. Test-only; one jar, every POM dependency optional or provided. LGPL-2.1-or-later (a
+    # test's runtime dependency, never shipped). Checked against Maven Central's sha1 on 2026-10-11.
+    "mariadb_jdbc": struct(
+        coordinate = "org.mariadb.jdbc:mariadb-java-client:3.5.10",
+        sha256 = "919b8c1c771d9ee3465811462f242c9543ab401e140c64988ddbf1d8abcb18b2",
+        users = ["pct"],
+    ),
+    # Trino's JDBC driver (2026-10-12, docs/CLOUD_BACKENDS_PCT_2026_10_11.md §18): the PCT Trino lanes' sessions on the
+    # embedded server (@embedded_trino). Test-only; one shaded jar with no dependencies. Apache-2.0. Checked against
+    # Maven Central's sha1 on 2026-10-12.
+    "trino_jdbc": struct(
+        coordinate = "io.trino:trino-jdbc:483",
+        sha256 = "518062369fdfa937b35f11aa45276daa31cccaaad3c8c05eb51e674e23a419e3",
+        users = ["pct"],
+    ),
+    # ClickHouse's JDBC driver (2026-10-12, docs/CLOUD_BACKENDS_PCT_2026_10_11.md §19): the PCT ClickHouse lanes'
+    # sessions on the embedded server (@embedded_clickhouse), over its HTTP port. Test-only;
+    # group:artifact:version:classifier -- the shaded jar with every dependency inside. Apache-2.0. Checked against
+    # Maven Central's sha1 on 2026-10-12.
+    "clickhouse_jdbc": struct(
+        coordinate = "com.clickhouse:clickhouse-jdbc:0.10.0:all-dependencies",
+        sha256 = "ba4325c59a8ff5ec6cb7cf85b206e4317e6be5d056512aadc7a6e6a4abbd3e81",
+        users = ["pct"],
+    ),
     "sqlite_jdbc": struct(
         coordinate = "org.xerial:sqlite-jdbc:3.47.1.0",
         sha256 = "4164d95347aeab42b754cabb7945b93e54f29ddb2eded967dbe979b4045cb685",

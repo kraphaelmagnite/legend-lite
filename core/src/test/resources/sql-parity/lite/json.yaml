@@ -1,0 +1,130 @@
+# legend-lite's own Postgres-judged cases over upstream's parity schema: jsonb navigation (->, ->>, #>, #>>, subscripts)
+# and the jsonb functions a Variant reads by, at the edges where Postgres's answer is easy to miss: jsonb's null against
+# SQL's NULL, an index past either end, a key or an index that meets the wrong container, quoting in ->>'s text.
+# A Variant is Postgres's jsonb (register S49). Each answer is snapped from Postgres 16 with upstream's
+# (postgres-answers.jsonl, key lite/json/<id>).
+tests:
+  # ->: a member or an element, as jsonb
+  - id: member_of_each_row
+    sql: "SELECT id, jsonb_val -> 'a' AS a FROM json_data ORDER BY id"
+  - id: member_that_is_null_is_jsonb_null
+    sql: "SELECT id, jsonb_val -> 'c' AS c, jsonb_val -> 'c' IS NULL AS is_sql_null FROM json_data WHERE id = 1"
+  - id: element_from_the_end
+    sql: "SELECT id, jsonb_arr -> -1 AS last, jsonb_arr -> -3 AS third_last FROM json_data ORDER BY id"
+  - id: element_past_either_end_is_null
+    sql: "SELECT id, jsonb_arr -> 3 AS past, jsonb_arr -> -4 AS before FROM json_data ORDER BY id"
+  - id: key_on_an_array_and_index_on_an_object_are_null
+    sql: "SELECT id, jsonb_arr -> 'x' AS k, jsonb_val -> 0 AS i FROM json_data ORDER BY id"
+  - id: chained_members
+    sql: "SELECT id, jsonb_val -> 'a' -> 'b' -> 'c' AS deep FROM json_data ORDER BY id"
+  - id: member_of_an_element
+    sql: "SELECT id, jsonb_arr -> 1 -> 'x' AS x FROM json_data ORDER BY id"
+  - id: index_from_a_column
+    sql: "SELECT id, jsonb_arr -> (id - 1) AS e FROM json_data WHERE id <= 4 ORDER BY id"
+  # ->>: the text
+  - id: text_of_strings_numbers_booleans_and_null
+    sql: "SELECT id, jsonb_arr ->> 0 AS first, jsonb_arr ->> 2 AS third FROM json_data ORDER BY id"
+  - id: text_of_a_member
+    sql: "SELECT id, jsonb_val ->> 'b' AS b, jsonb_val ->> 'num' AS num, jsonb_val ->> 'name' AS name FROM json_data ORDER BY id"
+  - id: text_keeps_quotes_and_escapes
+    sql: "SELECT '{\"a\":\"say \\\"hi\\\"\",\"b\":\"tab\\tend\"}'::jsonb ->> 'a' AS a, '{\"b\":\"tab\\tend\"}'::jsonb ->> 'b' AS b FROM departments WHERE id = 1"
+  - id: text_of_an_object
+    sql: "SELECT id, jsonb_val ->> 'a' AS a FROM json_data WHERE id = 2"
+  - id: text_in_where_and_case
+    sql: "SELECT id, CASE WHEN jsonb_val ->> 'b' = 'hello' THEN 'greeting' ELSE coalesce(jsonb_val ->> 'name', 'none') END AS what FROM json_data ORDER BY id"
+  - id: text_cast_to_integer_is_refused
+    sql: "SELECT id, (jsonb_val ->> 'num')::bigint + 1 AS next FROM json_data WHERE jsonb_val ->> 'num' IS NOT NULL ORDER BY id"
+  # #> and #>>: a path
+  - id: path_to_a_member
+    sql: "SELECT id, jsonb_val #> '{a,b}' AS ab, jsonb_val #>> '{a,b,c}' AS abc FROM json_data ORDER BY id"
+  - id: path_with_quoted_keys
+    sql: "SELECT '{\"a b\":{\"c,d\":1}}'::jsonb #>> '{\"a b\",\"c,d\"}' AS v FROM departments WHERE id = 1"
+  - id: empty_path_is_the_value
+    sql: "SELECT id, jsonb_arr #> '{}' AS whole FROM json_data WHERE id = 1"
+  - id: path_with_an_index_reads_the_element
+    sql: "SELECT id, jsonb_arr #> '{0}' AS v FROM json_data WHERE id = 1"
+  # subscripts
+  - id: subscripts
+    sql: "SELECT id, jsonb_val['a'] AS a, jsonb_arr[0] AS first, jsonb_arr[-1] AS last FROM json_data ORDER BY id"
+  - id: subscript_that_meets_the_wrong_container
+    sql: "SELECT id, jsonb_val[0] AS i, jsonb_arr['a'] AS k FROM json_data ORDER BY id"
+  # functions
+  - id: array_length_is_refused
+    sql: "SELECT id, jsonb_array_length(jsonb_arr) AS n FROM json_data ORDER BY id"
+  - id: extract_path_and_its_text
+    sql: "SELECT id, jsonb_extract_path(jsonb_val, 'a', 'b') AS ab, jsonb_extract_path_text(jsonb_val, 'a', 'b', 'c') AS abc FROM json_data ORDER BY id"
+  - id: to_jsonb_of_each_kind
+    sql: "SELECT id, to_jsonb(name) AS n, to_jsonb(age) AS a, to_jsonb(active) AS b, to_jsonb(salary) AS s FROM persons ORDER BY id"
+  - id: to_jsonb_of_text_with_quotes
+    sql: "SELECT to_jsonb('say \"hi\"'::text) AS v FROM departments WHERE id = 1"
+  - id: text_parsed_as_jsonb
+    sql: "SELECT ('{\"k\":\"' || name || '\"}')::jsonb ->> 'k' AS k FROM departments ORDER BY id"
+  - id: text_that_is_not_json_is_an_error
+    sql: "SELECT ('{' || name)::jsonb AS v FROM departments ORDER BY id"
+  # refused: jsonb's own order and equality, its other operators
+  - id: order_by_jsonb_is_refused
+    sql: "SELECT id FROM json_data ORDER BY jsonb_val -> 'a'"
+  - id: jsonb_equality_is_refused
+    sql: "SELECT id FROM json_data WHERE jsonb_val -> 'a' = '1'::jsonb"
+  - id: containment_is_refused
+    sql: "SELECT id FROM json_data WHERE jsonb_val @> '{\"a\":1}'"
+  - id: a_text_column_has_no_arrow
+    sql: "SELECT name -> 'a' AS v FROM persons WHERE id = 1"
+  # set-returning: an array's elements, an object's keys
+  - id: elements_in_from_keep_jsonb_null
+    sql: "SELECT d.id, e.value FROM json_data d, jsonb_array_elements(d.jsonb_arr) e ORDER BY 1"
+  - id: elements_text_in_from
+    sql: "SELECT d.id, t.value FROM json_data d CROSS JOIN LATERAL jsonb_array_elements_text(d.jsonb_arr) AS t ORDER BY 1"
+  - id: member_of_each_element
+    sql: "SELECT d.id, e ->> 'x' AS x FROM json_data d, json_array_elements(d.json_arr) e WHERE d.id = 2 ORDER BY 2"
+  - id: elements_in_the_select_list
+    sql: "SELECT id, jsonb_array_elements(jsonb_arr) AS e FROM json_data WHERE id <= 4 ORDER BY id"
+  - id: elements_text_in_the_select_list
+    sql: "SELECT jsonb_array_elements_text(jsonb_arr) AS t FROM json_data WHERE id = 4 ORDER BY 1"
+  - id: elements_of_a_constant
+    sql: "SELECT value FROM jsonb_array_elements('[1,\"two\",null,{\"x\":3}]'::jsonb)"
+  - id: elements_of_sql_null_are_no_rows
+    sql: "SELECT count(*) AS n FROM json_data d, jsonb_array_elements(d.jsonb_arr) e WHERE d.id = 5"
+  - id: elements_of_an_object_is_an_error
+    sql: "SELECT e.value FROM json_data d, jsonb_array_elements(d.jsonb_val) e WHERE d.id = 1"
+  - id: object_keys
+    sql: "SELECT d.id, k FROM json_data d, jsonb_object_keys(d.jsonb_val) AS k ORDER BY 1, 2"
+  - id: object_keys_of_an_array_is_an_error
+    sql: "SELECT k FROM json_data d, jsonb_object_keys(d.jsonb_arr) AS k WHERE d.id = 1"
+  - id: elements_inside_an_expression_is_refused
+    sql: "SELECT jsonb_array_elements(jsonb_arr) ->> 'x' AS x FROM json_data"
+  # a subscript and a #> path read by jsonb's PATH rule (jsonb_get_element), not ->'s: a text that spells an integer
+  # reads an array's element, an integer an object's member named by its digits (the independent review, 2026-10-12)
+  - id: subscript_text_that_spells_an_integer_reads_an_element
+    sql: "SELECT id, jsonb_arr['1'] AS a, jsonb_arr[' 1'] AS b, jsonb_arr['+1'] AS c, jsonb_arr['1 '] AS d, jsonb_arr['x'] AS e FROM json_data ORDER BY id"
+  - id: subscript_integer_on_an_object_reads_the_member_of_its_digits
+    sql: "SELECT id, jsonb_val[0] AS a, jsonb_arr[-1] AS b FROM json_data ORDER BY id"
+  - id: path_elements_that_spell_integers_read_elements
+    sql: "SELECT id, jsonb_arr #> '{\"1\"}' AS a, jsonb_arr #>> '{-1}' AS b, jsonb_extract_path(jsonb_arr, ' 1') AS c, jsonb_val #> '{a,b}' AS d FROM json_data ORDER BY id"
+  - id: path_integer_element_out_of_a_constant_is_refused
+    sql: "SELECT '{\"0\":\"zero\",\"1\":[5,6]}'::jsonb #>> '{1,0}' AS a FROM departments WHERE id = 1"
+  - id: duplicate_key_constant_is_refused
+    sql: "SELECT '{\"a\":1,\"a\":2}'::jsonb ->> 'a' AS a FROM departments WHERE id = 1"
+  # jsonb's null is a scalar to the set-returning functions: Postgres's error; SQL's NULL is no rows
+  - id: elements_of_jsonb_null_is_an_error
+    sql: "SELECT e FROM json_data d, jsonb_array_elements(d.jsonb_val -> 'c') e WHERE d.id = 1"
+  - id: elements_text_of_jsonb_null_is_an_error
+    sql: "SELECT e FROM json_data d, jsonb_array_elements_text(d.jsonb_val -> 'c') e WHERE d.id = 1"
+  - id: object_keys_of_jsonb_null_is_an_error
+    sql: "SELECT k FROM json_data d, jsonb_object_keys(d.jsonb_val -> 'c') k WHERE d.id = 1"
+  - id: elements_of_sql_null_is_no_rows
+    sql: "SELECT d.id, e FROM json_data d, jsonb_array_elements(d.jsonb_arr) e WHERE d.id = 5"
+  # a function's alias is its value inside a subquery too
+  - id: function_alias_inside_exists
+    sql: "SELECT id FROM json_data d WHERE EXISTS (SELECT 1 FROM jsonb_array_elements(d.jsonb_arr) e WHERE e ->> 'x' = '2') ORDER BY id"
+  # COALESCE and CASE resolve jsonb with an untyped constant (read as jsonb) and refuse it with text
+  - id: coalesce_of_jsonb_and_an_untyped_constant
+    sql: "SELECT id, coalesce(jsonb_val -> 'a', '[]') AS a FROM json_data ORDER BY id"
+  - id: coalesce_of_jsonb_and_text_is_an_error
+    sql: "SELECT coalesce(jsonb_val, 'x'::text) AS a FROM json_data"
+  - id: union_ordered_by_jsonb_is_refused
+    sql: "SELECT jsonb_val -> 'a' AS a FROM json_data UNION ALL SELECT jsonb_val -> 'a' FROM json_data ORDER BY 1"
+  - id: join_using_jsonb_is_refused
+    sql: "SELECT a.id FROM json_data a JOIN json_data b USING (jsonb_val) ORDER BY 1"
+  - id: to_jsonb_of_an_untyped_constant_is_an_error
+    sql: "SELECT to_jsonb('x') AS a FROM departments WHERE id = 1"

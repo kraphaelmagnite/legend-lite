@@ -73,6 +73,10 @@ public record ConnectionDefinition(
         Oracle,
         ClickHouse,
         Aurora,
-        SQLite
+        SQLite,
+        // not in legend-engine's DatabaseType (2026-10-11, docs/CLOUD_BACKENDS_PCT_2026_10_11.md §13; as SQLite before
+        // them): the open databases the user asked for, each a dialect of its own
+        MariaDB,
+        MySQL
     }
 }

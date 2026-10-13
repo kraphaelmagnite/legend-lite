@@ -3348,6 +3348,16 @@ public class TypeInferenceIntegrationTest extends AbstractDatabaseTest {
                 assertEquals(1.5, map.get(3), 0.001);
         }
 
+        @Test
+        void testPercentile_GroupBy_Discrete_Descending_AtZero() throws SQLException {
+                // percentile(0.0, false, false): the first value of the descending order, each group's largest
+                // (pure's percentile, Postgres's percentile_disc); the sorted list's position 0 was NULL
+                var map = executePercentileGroupBy("0.0, false, false");
+                assertEquals(3.0, map.get(1), 0.001);
+                assertEquals(3.5, map.get(2), 0.001);
+                assertEquals(2.0, map.get(3), 0.001);
+        }
+
         // === PCT: testPercentile window assertions ===
 
         private java.util.Map<String, Double> executePercentileWindow(String percentileArgs) throws SQLException {

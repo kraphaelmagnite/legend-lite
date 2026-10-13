@@ -1,0 +1,117 @@
+# legend-lite's own Postgres-judged cases over upstream's parity schema: window functions (ranking, value, aggregate),
+# partitions with NULL keys, Postgres's default frame (RANGE to the current row's last peer), ROWS and RANGE frames,
+# named windows, windows over a grouping, and where Postgres refuses a window. Ties are broken in each window's ORDER
+# BY wherever row_number would otherwise be the database's choice.
+# Each answer is snapped from Postgres 16 with upstream's (postgres-answers.jsonl, key lite/windows/<id>).
+tests:
+  # ranking
+  - id: row_number_over_order
+    sql: "SELECT id, row_number() OVER (ORDER BY id) AS rn FROM persons ORDER BY id"
+  - id: row_number_per_partition_nulls_first_descending
+    sql: "SELECT id, dept_id, row_number() OVER (PARTITION BY dept_id ORDER BY salary DESC, id) AS rn FROM persons ORDER BY id"
+  - id: row_number_nulls_last_written
+    sql: "SELECT id, row_number() OVER (PARTITION BY dept_id ORDER BY salary DESC NULLS LAST, id) AS rn FROM persons ORDER BY id"
+  - id: rank_with_ties_and_a_null_key
+    sql: "SELECT id, rank() OVER (ORDER BY dept_id) AS rk FROM persons ORDER BY id"
+  - id: dense_rank_with_ties
+    sql: "SELECT id, dense_rank() OVER (ORDER BY dept_id DESC) AS rk FROM persons ORDER BY id"
+  - id: percent_rank_and_cume_dist
+    sql: "SELECT id, percent_rank() OVER (ORDER BY dept_id) AS pr, cume_dist() OVER (ORDER BY dept_id) AS cd FROM persons ORDER BY id"
+  - id: ntile
+    sql: "SELECT id, ntile(3) OVER (ORDER BY id) AS t FROM persons ORDER BY id"
+  - id: ntile_per_partition
+    sql: "SELECT id, ntile(2) OVER (PARTITION BY dept_id ORDER BY id) AS t FROM persons ORDER BY id"
+  # aggregates over windows
+  - id: running_sum_default_frame_includes_peers
+    sql: "SELECT id, dept_id, sum(age) OVER (ORDER BY dept_id) AS s FROM persons ORDER BY id"
+  - id: running_sum_rows_frame
+    sql: "SELECT id, sum(age) OVER (ORDER BY id ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS s FROM persons ORDER BY id"
+  - id: running_sum_of_decimals
+    sql: "SELECT id, sum(salary) OVER (ORDER BY id) AS s FROM persons ORDER BY id"
+  - id: moving_average_rows
+    sql: "SELECT id, avg(age) OVER (ORDER BY id ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING) AS a FROM persons ORDER BY id"
+  - id: rows_following_only
+    sql: "SELECT id, sum(age) OVER (ORDER BY id ROWS BETWEEN 1 FOLLOWING AND 2 FOLLOWING) AS s FROM persons ORDER BY id"
+  - id: rows_short_form
+    sql: "SELECT id, count(*) OVER (ORDER BY id ROWS 2 PRECEDING) AS n FROM persons ORDER BY id"
+  - id: whole_partition_aggregates
+    sql: "SELECT id, dept_id, count(*) OVER (PARTITION BY dept_id) AS n, max(salary) OVER (PARTITION BY dept_id) AS top FROM persons ORDER BY id"
+  - id: over_nothing_is_the_whole_result
+    sql: "SELECT id, count(*) OVER () AS n, sum(salary) OVER () AS total FROM persons ORDER BY id"
+  - id: count_of_a_column_skips_nulls
+    sql: "SELECT id, count(age) OVER (PARTITION BY dept_id) AS n, min(age) OVER (PARTITION BY dept_id) AS youngest FROM persons ORDER BY id"
+  - id: range_unbounded_to_current_written
+    sql: "SELECT id, sum(age) OVER (ORDER BY dept_id RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS s FROM persons ORDER BY id"
+  - id: range_current_to_unbounded
+    sql: "SELECT id, sum(age) OVER (ORDER BY dept_id RANGE BETWEEN CURRENT ROW AND UNBOUNDED FOLLOWING) AS s FROM persons ORDER BY id"
+  - id: range_whole_partition
+    sql: "SELECT id, sum(age) OVER (PARTITION BY dept_id ORDER BY id RANGE BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS s FROM persons ORDER BY id"
+  - id: window_over_expressions
+    sql: "SELECT id, sum(salary * 2) OVER (PARTITION BY dept_id % 2 ORDER BY id) AS s FROM persons ORDER BY id"
+  # value functions
+  - id: lag_and_lead
+    sql: "SELECT id, lag(age) OVER (ORDER BY id) AS prev, lead(age, 2) OVER (ORDER BY id) AS next2 FROM persons ORDER BY id"
+  - id: lag_per_partition
+    sql: "SELECT id, lag(name) OVER (PARTITION BY dept_id ORDER BY id) AS prev FROM persons ORDER BY id"
+  - id: lag_with_a_default
+    sql: "SELECT id, lag(age, 1, 0) OVER (ORDER BY id) AS prev FROM persons ORDER BY id"
+  - id: last_value_default_frame_is_the_current_row
+    sql: "SELECT id, first_value(name) OVER (PARTITION BY dept_id ORDER BY id) AS f, last_value(name) OVER (PARTITION BY dept_id ORDER BY id) AS l FROM persons ORDER BY id"
+  - id: last_value_whole_frame
+    sql: "SELECT id, last_value(name) OVER (PARTITION BY dept_id ORDER BY id ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS l FROM persons ORDER BY id"
+  - id: nth_value
+    sql: "SELECT id, nth_value(name, 2) OVER (PARTITION BY dept_id ORDER BY id ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS second FROM persons ORDER BY id"
+  # where windows sit
+  - id: window_after_where
+    sql: "SELECT id, row_number() OVER (ORDER BY id) AS rn FROM persons WHERE dept_id = 2 ORDER BY id"
+  - id: window_in_order_by
+    sql: "SELECT name FROM persons ORDER BY row_number() OVER (ORDER BY age DESC NULLS LAST, id)"
+  - id: window_over_a_grouping
+    sql: "SELECT dept_id, sum(salary) AS total, rank() OVER (ORDER BY sum(salary) DESC) AS rk FROM persons GROUP BY dept_id ORDER BY dept_id"
+  - id: top_one_per_partition
+    sql: "SELECT id, dept_id FROM (SELECT id, dept_id, row_number() OVER (PARTITION BY dept_id ORDER BY salary DESC NULLS LAST, id) AS rn FROM persons) t WHERE rn = 1 ORDER BY id"
+  - id: distinct_after_window
+    sql: "SELECT DISTINCT dept_id, count(*) OVER (PARTITION BY dept_id) AS n FROM persons ORDER BY dept_id"
+  - id: named_window
+    sql: "SELECT id, rank() OVER w AS rk, sum(age) OVER w AS s FROM persons WINDOW w AS (PARTITION BY dept_id ORDER BY id) ORDER BY id"
+  - id: named_window_with_a_frame_added
+    sql: "SELECT id, sum(age) OVER (w ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS s FROM persons WINDOW w AS (ORDER BY id) ORDER BY id"
+  - id: window_with_a_correlated_subquery
+    sql: "SELECT p.id, rank() OVER (ORDER BY (SELECT count(*) FROM orders o WHERE o.person_id = p.id) DESC) AS rk FROM persons p ORDER BY p.id"
+  # Postgres refuses these
+  - id: window_in_where
+    sql: "SELECT id FROM persons WHERE row_number() OVER (ORDER BY id) > 2"
+  - id: nested_window
+    sql: "SELECT sum(row_number() OVER (ORDER BY id)) OVER () FROM persons"
+  - id: window_function_without_over
+    sql: "SELECT row_number() FROM persons"
+  - id: frame_from_current_row_back
+    sql: "SELECT sum(age) OVER (ORDER BY id ROWS BETWEEN CURRENT ROW AND 1 PRECEDING) FROM persons"
+  - id: undefined_named_window
+    sql: "SELECT rank() OVER nope FROM persons"
+  # not supported yet: each refused by name
+  - id: rows_frame_ending_before_it_starts
+    sql: "SELECT id, sum(age) OVER (ORDER BY id ROWS BETWEEN 1 PRECEDING AND 2 PRECEDING) AS s FROM persons ORDER BY id"
+  - id: groups_frame
+    sql: "SELECT id, sum(age) OVER (ORDER BY dept_id GROUPS BETWEEN 1 PRECEDING AND CURRENT ROW) AS s FROM persons ORDER BY id"
+  - id: exclude_current_row
+    sql: "SELECT id, sum(age) OVER (ORDER BY id ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING EXCLUDE CURRENT ROW) AS s FROM persons ORDER BY id"
+  - id: range_with_offsets
+    sql: "SELECT id, sum(age) OVER (ORDER BY age RANGE BETWEEN 5 PRECEDING AND 5 FOLLOWING) AS s FROM persons ORDER BY id"
+  # lag and lead with a default: the default where the other row is outside the partition; a NULL there stays NULL
+  - id: lag_and_lead_with_a_default
+    sql: "SELECT id, lag(age, 1, -1) OVER (ORDER BY id) AS a, lead(name, 2, 'none') OVER (ORDER BY id) AS b, lag(age, 1, 0) OVER (PARTITION BY dept_id ORDER BY id) AS c FROM persons ORDER BY id"
+  - id: lag_default_from_the_current_row
+    sql: "SELECT id, lead(age, 1, id) OVER (ORDER BY id) AS a, lag(salary, 3, salary) OVER (ORDER BY id) AS b FROM persons ORDER BY id"
+  - id: lag_default_of_another_number_type
+    sql: "SELECT id, lag(float_val, 1, 0) OVER (ORDER BY id) AS a, lag(int_val, 1, 0.5) OVER (ORDER BY id) AS b, lead(int_val, 1, '7') OVER (ORDER BY id) AS c FROM numbers ORDER BY id"
+  - id: lag_default_null_is_plain_lag
+    sql: "SELECT id, lag(name, 1, NULL) OVER (ORDER BY id) AS a FROM persons ORDER BY id"
+  # bool_and, bool_or, every and covariances over a window; corr there is refused (DuckDB's is NaN where Postgres's is
+  # NULL: a value's variance in the frame is 0)
+  - id: window_bool_aggregates_and_correlation
+    sql: "SELECT id, bool_and(active) OVER (PARTITION BY dept_id) AS a, bool_or(age > 40) OVER (ORDER BY id ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS b, every(salary > 50000) OVER (ORDER BY id) AS e, covar_pop(salary, age) OVER (PARTITION BY dept_id) AS c, covar_samp(age, id) OVER (ORDER BY id ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) AS s FROM persons ORDER BY id"
+  - id: window_bool_and_of_an_integer_does_not_exist
+    sql: "SELECT id, bool_and(age) OVER () AS a FROM persons ORDER BY id"
+  - id: window_corr_is_refused
+    sql: "SELECT id, corr(salary, age) OVER (PARTITION BY dept_id) AS c FROM persons ORDER BY id"

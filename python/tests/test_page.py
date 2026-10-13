@@ -412,7 +412,8 @@ class Live(Paged):
             return e.code, e.read().decode('utf-8')
 
     def said(self, page, document, version=None):
-        """The open page saying what it is now, as demo/engine-page.ts posts it: the version it opened, its document."""
+        """The open page saying what it is now, as DataCube's app posts it (src/app/datacube-app.ts): the version it
+        opened, its document."""
         version = datacube._session.engine().page_versions(page._key)['version'] if version is None else version
         return datacube._session.engine().answer('POST', '/page.json', f'page={page._key}&version={version}',
                                                  json.dumps(document)).status

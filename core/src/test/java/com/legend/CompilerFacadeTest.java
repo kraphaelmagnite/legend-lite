@@ -96,7 +96,8 @@ class CompilerFacadeTest {
 
     @Test
     void undeclaredDialectIsHonestlyUnbuilt() {
-        // 2026-10-01 W5.5/P1: Postgres is built now; Snowflake stands in as the unbuilt dialect
+        // 2026-10-01 W5.5/P1: Postgres is built now; 2026-10-11 (cloud backends): so are Databricks and Snowflake --
+        // Sybase stands in as the unbuilt dialect (on no plan)
         String sfModel = MODEL + """
 
                 ###Mapping
@@ -106,7 +107,7 @@ class CompilerFacadeTest {
                 )
                 ###Connection
                 RelationalDatabaseConnection test::Conn {
-                  store: test::DB; type: Snowflake;
+                  store: test::DB; type: Sybase;
                   specification: DuckDB { }; auth: Test; }
                 ###Runtime
                 Runtime test::RT { mappings: [test::M];
@@ -115,7 +116,7 @@ class CompilerFacadeTest {
         com.legend.error.NotImplementedException ex =
                 assertThrows(com.legend.error.NotImplementedException.class,
                         () -> Compiler.query(Compiler.compileModel(sfModel), "test::Person.all()->project(~[name: p|$p.name])").plan("test::RT").sql());
-        assertTrue(String.valueOf(ex.getMessage()).contains("Snowflake"),
+        assertTrue(String.valueOf(ex.getMessage()).contains("Sybase"),
                 "the error must name the undeclared dialect: " + ex.getMessage());
     }
 }

@@ -19,3 +19,11 @@ filegroup(
     srcs = glob(["**/*.g4"]),
     visibility = ["//visibility:public"],
 )
+
+# upstream's Postgres parity corpus (the SQL front end's e2e tests: its cases and schema.yaml), for core's
+# //core:sql_parity_test and :sql_parity_postgres_test (docs/LEGEND_SQL_STUDY_2026_10_11.md §1.5)
+filegroup(
+    name = "sql_parity_tests",
+    srcs = glob(["legend-engine-xts-sql/legend-engine-xt-sql-e2e-tests/src/test/resources/parity-tests/**/*.yaml"]),
+    visibility = ["//visibility:public"],
+)

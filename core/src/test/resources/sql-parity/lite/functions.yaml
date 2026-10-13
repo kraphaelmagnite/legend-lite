@@ -1,0 +1,315 @@
+# legend-lite's own Postgres-judged cases over upstream's parity schema: the function table (math, text, dates,
+# statistical aggregates) and casts, each at the edges where Postgres's answer is easy to miss: NULLs, rounding at
+# .5, negative and empty values, truncation and padding.
+# Each answer is snapped from Postgres 16 with upstream's (postgres-answers.jsonl, key lite/functions/<id>).
+tests:
+  # math
+  - id: sqrt_exp_ln_log
+    sql: "SELECT id, sqrt(int_val) AS r, exp(small_val) AS e, ln(float_val) AS l, log(big_val) AS g FROM numbers WHERE int_val > 0 AND float_val > 0 AND big_val > 0 ORDER BY id"
+  - id: trigonometry
+    sql: "SELECT id, sin(float_val) AS s, cos(float_val) AS c, atan(float_val) AS a, atan2(float_val, 2) AS a2, degrees(float_val) AS d, radians(float_val) AS r FROM numbers ORDER BY id"
+  - id: pi_and_cbrt
+    sql: "SELECT id, cbrt(int_val) AS c, pi() * small_val AS p FROM numbers ORDER BY id"
+  - id: sign_of_each_kind
+    sql: "SELECT id, sign(int_val) AS i, sign(numeric_val) AS n, sign(float_val) AS f FROM numbers ORDER BY id"
+  - id: mod_follows_the_dividend_sign
+    sql: "SELECT id, mod(int_val, 7) AS m, mod(-int_val, 7) AS n FROM numbers ORDER BY id"
+  - id: round_numeric_half_away_from_zero
+    sql: "SELECT id, round(numeric_val) AS r0, round(numeric_val, 0) AS z FROM numbers ORDER BY id"
+  - id: round_ties_away_from_zero
+    sql: "SELECT id, round(salary) AS r, round(-salary) AS n FROM persons ORDER BY id"
+  - id: round_to_places_is_refused
+    sql: "SELECT id, round(salary, 1) AS r FROM persons ORDER BY id"
+  - id: round_of_integers
+    sql: "SELECT id, round(int_val) AS r, round(int_val, 1) AS r1 FROM numbers ORDER BY id"
+  - id: round_of_a_double_column
+    sql: "SELECT id, round(float_val) AS r FROM numbers ORDER BY id"
+  - id: greatest_and_least_ignore_nulls
+    sql: "SELECT id, greatest(age, dept_id * 10) AS g, least(age, dept_id * 10) AS l FROM persons ORDER BY id"
+  - id: greatest_of_three_mixed_numbers
+    sql: "SELECT id, greatest(int_val, numeric_val, small_val) AS g FROM numbers ORDER BY id"
+  - id: greatest_of_text
+    sql: "SELECT id, greatest(name, 'D') AS g FROM persons ORDER BY id"
+  - id: nullif
+    sql: "SELECT id, nullif(dept_id, 1) AS d, nullif(name, 'Bob') AS n FROM persons ORDER BY id"
+  - id: num_nulls
+    sql: "SELECT id, num_nulls(age, salary, dept_id) AS n, num_nonnulls(age, salary, dept_id) AS nn FROM persons ORDER BY id"
+  # text
+  - id: concat_skips_nulls
+    sql: "SELECT id, concat(val, '-', nullable_val) AS c FROM strings ORDER BY id"
+  - id: concat_of_numbers
+    sql: "SELECT id, concat(name, age) AS c FROM persons ORDER BY id"
+  - id: left_right
+    sql: "SELECT id, left(val, 3) AS l, right(val, 3) AS r FROM strings ORDER BY id"
+  - id: left_negative_is_refused
+    sql: "SELECT id, left(val, -2) AS l FROM strings ORDER BY id"
+  - id: lpad_rpad_pad_and_truncate
+    sql: "SELECT id, lpad(val, 8, '*') AS l, rpad(val, 8) AS r, lpad(val, 3, 'xy') AS t FROM strings ORDER BY id"
+  - id: replace_reverse_repeat
+    sql: "SELECT id, replace(val, 'l', 'L') AS rp, reverse(val) AS rv, repeat(empty_val, 2) AS rt FROM strings ORDER BY id"
+  - id: split_part
+    sql: "SELECT id, split_part(val, ' ', 1) AS a, split_part(val, ' ', 2) AS b FROM strings ORDER BY id"
+  - id: strpos_and_position
+    sql: "SELECT id, strpos(val, 'e') AS s, position('o' IN val) AS p FROM strings ORDER BY id"
+  - id: starts_with
+    sql: "SELECT id FROM strings WHERE starts_with(val, 'a') OR starts_with(nullable_val, 't') ORDER BY id"
+  - id: ltrim_rtrim
+    sql: "SELECT id, '[' || ltrim(val) || ']' AS l, '[' || rtrim(val) || ']' AS r FROM strings ORDER BY id"
+  - id: ascii_chr
+    sql: "SELECT id, ascii(name) AS a, chr(ascii(name) + 1) AS c FROM persons ORDER BY id"
+  - id: md5
+    sql: "SELECT id, md5(val) AS h FROM strings ORDER BY id"
+  # dates
+  - id: extract_date_fields
+    sql: "SELECT id, extract(year FROM hire_date) AS y, extract(month FROM hire_date) AS m, extract(day FROM hire_date) AS d, extract(quarter FROM hire_date) AS q, extract(doy FROM hire_date) AS doy, extract(isodow FROM hire_date) AS dow FROM persons ORDER BY id"
+  - id: extract_time_fields
+    sql: "SELECT id, extract(hour FROM order_date) AS h, extract(minute FROM order_date) AS m FROM orders ORDER BY id"
+  - id: date_part
+    sql: "SELECT id, date_part('year', created_at) AS y, date_part('month', created_at) AS m FROM departments ORDER BY id"
+  - id: extract_second_is_refused
+    sql: "SELECT id, extract(second FROM order_date) AS s FROM orders ORDER BY id"
+  # statistical aggregates
+  - id: stddev_and_variance
+    sql: "SELECT dept_id, stddev(salary) AS sd, stddev_pop(salary) AS sp, variance(age) AS v, var_pop(age) AS vp, var_samp(age) AS vs FROM persons GROUP BY dept_id ORDER BY dept_id"
+  - id: stddev_of_one_row_is_null
+    sql: "SELECT id, stddev_samp(age) AS sd FROM persons GROUP BY id ORDER BY id"
+  - id: stddev_over_a_window
+    sql: "SELECT id, stddev_samp(age) OVER (PARTITION BY dept_id) AS sd FROM persons ORDER BY id"
+  # casts
+  - id: cast_literals
+    sql: "SELECT '2024-02-29'::date AS d, CAST('2024-01-01 10:30:00' AS timestamp) AS t, '42'::integer AS i, '3.25'::numeric AS n, 'yes'::boolean AS b, 'x'::text AS s FROM departments WHERE id = 1"
+  - id: cast_numbers_to_text
+    sql: "SELECT id, int_val::text AS i, numeric_val::text AS n FROM numbers ORDER BY id"
+  - id: cast_dates_and_booleans_to_text
+    sql: "SELECT id, hire_date::text AS d, active::text AS a FROM persons ORDER BY id"
+  - id: cast_numeric_to_bigint_rounds_half_away
+    sql: "SELECT id, salary::bigint AS b, CAST(-salary AS int8) AS n FROM persons ORDER BY id"
+  - id: cast_numeric_to_integer_rounds_half_away
+    sql: "SELECT id, salary::integer AS i, CAST(int_val + 0.5 AS bigint) AS h FROM persons JOIN numbers USING (id) ORDER BY id"
+  - id: cast_text_out_of_integer_range
+    sql: "SELECT '3000000000'::integer AS i FROM departments WHERE id = 1"
+  - id: cast_integer_to_numeric_and_double
+    sql: "SELECT id, int_val::numeric AS n, int_val::double precision AS f FROM numbers ORDER BY id"
+  - id: cast_numeric_to_double
+    sql: "SELECT id, numeric_val::float8 AS f FROM numbers ORDER BY id"
+  - id: cast_text_to_numbers_is_refused
+    sql: "SELECT id, nullable_val::bigint AS i, nullable_val::float8 AS f FROM strings WHERE id = 5"
+  - id: cast_text_to_numeric_is_refused
+    sql: "SELECT id, nullable_val::numeric AS n FROM strings WHERE id = 5"
+  - id: cast_timestamp_to_date
+    sql: "SELECT id, order_date::date AS d FROM orders ORDER BY id"
+  - id: cast_integer_to_boolean
+    sql: "SELECT id, int_val::boolean AS b FROM numbers ORDER BY id"
+  - id: cast_double_to_integer_rounds_half_to_even
+    sql: "SELECT id, float_val::integer AS i, CAST(int_val + 0.5::float8 AS bigint) AS h, (float_val * 10)::int4 AS t FROM numbers WHERE id <> 4 ORDER BY id"
+  - id: cast_double_out_of_the_integer_range_is_an_error
+    sql: "SELECT id, (int_val + 0.5::float8)::integer AS i FROM numbers ORDER BY id"
+  - id: cast_to_integer_and_smallint_in_range
+    sql: "SELECT id, big_val::integer AS a, int_val::smallint AS b, small_val::int2 AS c, numeric_val::int AS d FROM numbers WHERE id NOT IN (1, 2, 4) ORDER BY id"
+  - id: cast_bigint_out_of_the_integer_range_is_an_error
+    sql: "SELECT id, big_val::integer AS i FROM numbers ORDER BY id"
+  - id: cast_integer_out_of_the_smallint_range_is_an_error
+    sql: "SELECT id, int_val::smallint AS i FROM numbers ORDER BY id"
+  - id: cast_numeric_out_of_the_integer_range_is_an_error
+    sql: "SELECT id, numeric_val::integer AS i FROM numbers WHERE id = 4"
+  - id: cast_constant_out_of_the_integer_range_is_an_error
+    sql: "SELECT 3000000000::integer AS i, 1 AS j FROM departments WHERE id = 1"
+  - id: cast_text_out_of_the_smallint_range
+    sql: "SELECT '40000'::smallint AS i FROM departments WHERE id = 1"
+  - id: cast_to_varchar_with_a_length_cuts_the_text
+    sql: "SELECT id, name::varchar(3) AS a, CAST(id AS VARCHAR(1)) AS b, CAST(active AS varchar(2)) AS c, CAST(name AS character varying(4)) AS d, CAST(salary AS varchar(5)) AS e FROM persons ORDER BY id"
+  - id: cast_null_to_varchar_with_a_length
+    sql: "SELECT id, CAST(NULL AS varchar(2)) AS a FROM departments ORDER BY id"
+  - id: cast_with_a_modifier_is_refused
+    sql: "SELECT id, numeric_val::numeric(10,2) AS n FROM numbers ORDER BY id"
+  - id: cast_of_bad_text_is_an_error
+    sql: "SELECT id, val::bigint AS i FROM strings ORDER BY id"
+  # CASE, COALESCE, GREATEST and LEAST resolve their values to one type as Postgres does: an untyped constant takes
+  # the others' type; numbers widen; text with a number is Postgres's error
+  - id: coalesce_untyped_constant_is_read_as_the_other_type
+    sql: "SELECT id, coalesce(age, '0') AS a, coalesce(salary, '1.5') AS s FROM persons ORDER BY id"
+  - id: case_of_integer_and_numeric_is_numeric
+    sql: "SELECT id, CASE WHEN id > 2 THEN 1 ELSE 2.5 END AS c, CASE WHEN id > 2 THEN age ELSE salary END AS d FROM persons ORDER BY id"
+  - id: coalesce_of_integer_and_text_is_an_error
+    sql: "SELECT coalesce(age, name) AS a FROM persons"
+  - id: case_of_integer_and_text_is_an_error
+    sql: "SELECT CASE WHEN id > 2 THEN age ELSE name END AS a FROM persons"
+  - id: greatest_with_an_untyped_constant
+    sql: "SELECT id, greatest(age, '30') AS g, least(salary, '60000') AS l FROM persons ORDER BY id"
+  - id: case_of_untyped_constants_is_text
+    sql: "SELECT id, CASE WHEN id > 2 THEN 'big' ELSE 'small' END AS c FROM persons ORDER BY id"
+  # integer division truncates toward zero, exact for every bigint
+  - id: integer_division_truncates_toward_zero
+    sql: "SELECT id, int_val / 7 AS q, int_val / -7 AS r, small_val / 3 AS s, abs(int_val / 7) + 1 AS t FROM numbers ORDER BY id"
+  - id: integer_division_of_a_bigint_beyond_two_to_the_53_is_exact
+    sql: "SELECT id, big_val / 2 AS q, big_val / -3 AS r, big_val / big_val AS s, big_val / 7 AS t FROM numbers WHERE big_val <> 0 ORDER BY id"
+  - id: integer_division_by_zero_is_an_error
+    sql: "SELECT int_val / 0 AS q FROM numbers WHERE id = 1"
+  # an aggregate's FILTER (WHERE ...) and DISTINCT
+  - id: aggregate_filter
+    sql: "SELECT dept_id, count(*) FILTER (WHERE age > 30) AS n, sum(salary) FILTER (WHERE active) AS s, avg(age) FILTER (WHERE name LIKE '%a%') AS a FROM persons GROUP BY dept_id ORDER BY 1"
+  - id: aggregate_filter_without_group_by
+    sql: "SELECT count(*) FILTER (WHERE salary IS NULL) AS n, max(name) FILTER (WHERE age < 30) AS m FROM persons"
+  - id: aggregate_distinct
+    sql: "SELECT sum(DISTINCT dept_id) AS s, avg(DISTINCT dept_id) AS a, count(DISTINCT dept_id) AS c, min(DISTINCT age) AS m FROM persons"
+  - id: filter_on_a_scalar_function_is_an_error
+    sql: "SELECT upper(name) FILTER (WHERE age > 1) AS u FROM persons"
+  # found by the randomized check (2026-10-12): GREATEST of a nullable value inside another function; a DISTINCT
+  # select ordered by a computed decimal (Postgres casts the column; the ORDER BY must name the same expression)
+  - id: greatest_of_a_nullable_value_inside_abs
+    sql: "SELECT o.id, abs(greatest(5, p.age)) AS g, least(p.age, 40) AS l FROM orders o LEFT JOIN persons p ON o.person_id = p.id ORDER BY 1"
+  - id: distinct_ordered_by_a_computed_decimal
+    sql: "SELECT DISTINCT (budget - id) AS c1, id AS c3 FROM departments ORDER BY 1, 2"
+  - id: coalesce_with_a_value_before_the_last_is_never_null
+    sql: "SELECT id, coalesce(100, int_val) % 7 AS a, coalesce(int_val, 3, small_val) - 1 AS b, coalesce(NULL, small_val, 0) * 2 AS c FROM numbers ORDER BY id"
+  # ceil, floor, sign and round(x) are numeric for a numeric and double precision otherwise (an integer too);
+  # extract is numeric, date_part double precision: a division of them is exact, never an integer division
+  - id: whole_number_functions_keep_postgres_types
+    sql: "SELECT id, ceil(salary) / 4 AS a, floor(salary) / 3 AS b, ceil(age) / 2 AS c, sign(age) / 2 AS d, round(salary) / 7 AS e, round(age) / 2 AS f FROM persons ORDER BY id"
+  - id: extract_and_date_part_divide_exactly
+    sql: "SELECT id, extract(year FROM hire_date) / 4 AS a, date_part('month', hire_date) / 5 AS b FROM persons ORDER BY id"
+  - id: case_of_a_decimal_and_a_whole_number_keeps_the_decimals
+    sql: "SELECT o.id, CASE WHEN o.id > 3 THEN o.amount ELSE ceil(o.amount) END AS a, CASE WHEN o.id > 3 THEN o.amount ELSE extract(month FROM o.order_date) END AS b FROM orders o ORDER BY 1"
+  # string_agg: Pure's joinStrings over the group; ordered by a column (the group-lambda form), NULLs skipped
+  - id: string_agg_ordered
+    sql: "SELECT dept_id, string_agg(name, ', ' ORDER BY name) AS a, string_agg(name, '|' ORDER BY age DESC, id) AS b FROM persons GROUP BY dept_id ORDER BY 1"
+  - id: string_agg_ordered_with_filter_and_nulls
+    sql: "SELECT string_agg(name, ',' ORDER BY id) FILTER (WHERE active) AS a, string_agg(CASE WHEN age > 30 THEN name END, ',' ORDER BY id) AS b FROM persons"
+  - id: string_agg_of_an_integer_is_an_error
+    sql: "SELECT string_agg(age, ',') AS a FROM persons"
+  # NULL constants as Postgres types them: an operand takes the other's type, a function's argument its preferred
+  # type (double precision, text); comparisons with NULL are NULL; an IN list with NULL is TRUE or NULL, never FALSE
+  - id: null_in_arithmetic
+    sql: "SELECT id, int_val + NULL AS a, NULL * numeric_val AS b, float_val - NULL AS c, int_val / NULL AS d FROM numbers ORDER BY id"
+  - id: null_constant_function_arguments
+    sql: "SELECT upper(NULL) AS a, length(NULL) AS b, abs(NULL) AS c, round(NULL) AS d, ceil(NULL) AS e, coalesce(NULL, NULL) AS f, greatest(NULL, NULL) AS g FROM departments WHERE id = 1"
+  - id: null_comparisons_are_null
+    sql: "SELECT id, NULL = NULL AS a, age <> NULL AS b, CASE age WHEN NULL THEN 'n' ELSE 'v' END AS c FROM persons ORDER BY id"
+  - id: null_in_an_in_list
+    sql: "SELECT id, age IN (30, NULL) AS a, age NOT IN (30, NULL) AS b, age IN (NULL) AS c FROM persons ORDER BY id"
+  - id: where_with_a_null_comparison_keeps_nothing
+    sql: "SELECT id FROM persons WHERE age = NULL OR age IN (NULL) OR NOT (age NOT IN (25, NULL)) ORDER BY id"
+  - id: cast_of_null
+    sql: "SELECT id, CAST(NULL AS integer) AS a, CAST(NULL AS numeric) + salary AS b, NULL::text || name AS c FROM persons ORDER BY id"
+  - id: null_plus_null_is_an_error
+    sql: "SELECT NULL + NULL AS a FROM departments WHERE id = 1"
+  # concat and || read a value of another type as its text (Postgres's output function)
+  - id: concat_of_values_other_than_text
+    sql: "SELECT id, concat(name, '-', age, '-', active, '-', hire_date, '-', salary) AS a, name || '/' || age || '/' || active AS b, 'x' || salary AS c FROM persons ORDER BY id"
+  - id: concat_of_two_values_other_than_text_is_an_error
+    sql: "SELECT 1 || 2 AS a FROM departments WHERE id = 1"
+  - id: concat_with_null
+    sql: "SELECT id, name || NULL AS a, NULL || name AS b, concat(NULL, name, NULL) AS c FROM persons ORDER BY id"
+  # substring and substr: from a 1-based start, a start before 1 counting its places; strpos and position (the
+  # relational indexOf); left and right with a negative count
+  - id: substring_and_substr
+    sql: "SELECT id, substring(val, 2) AS a, substring(val FROM 2 FOR 3) AS b, substr(val, 1, 3) AS c, substring(val, 0, 3) AS d, substring(val, -1, 3) AS e, substring(val, 4, 0) AS f, substr(val, 9) AS g FROM strings ORDER BY id"
+  - id: substring_with_a_negative_length_is_an_error
+    sql: "SELECT substring(val, 2, -1) AS a FROM strings WHERE id = 1"
+  - id: substring_from_a_pattern_is_refused
+    sql: "SELECT substring(val FROM '[a-z]+') AS a FROM strings WHERE id = 1"
+  - id: strpos_position_left_right
+    sql: "SELECT id, strpos(val, 'l') AS a, position('o' IN val) AS b, strpos(val, '') AS c, left(val, -2) AS d, right(val, -2) AS e, left(val, 2) AS f FROM strings ORDER BY id"
+  # round(x, n) half away from zero and trunc(x, n) toward zero, exactly (ties a double misrounds: 1.005, 0.285)
+  - id: round_and_trunc_to_places
+    sql: "SELECT round(2.665, 2) AS a, round(1.005, 2) AS b, round(0.285, 2) AS c, round(-2.665, 2) AS d, round(1234.5, -2) AS e, round(1250, -2) AS f, trunc(2.679, 2) AS g, trunc(-2.679, 1) AS h, trunc(-2.7) AS i, trunc(7) AS j FROM departments WHERE id = 1"
+  - id: round_and_trunc_of_columns
+    sql: "SELECT id, round(salary, -3) AS b, trunc(salary * 1.07, 1) AS c, round(numeric_val, 2) AS d, round(numeric_val * 3, 4) AS e FROM persons p JOIN numbers n USING (id) ORDER BY id"
+  - id: round_of_a_double_to_places_does_not_exist
+    sql: "SELECT round(float_val, 2) AS a FROM numbers WHERE id = 1"
+  # a double rounds half to even (Postgres's rint, Pure's round of a Float)
+  - id: round_of_a_double_rounds_half_to_even
+    sql: "SELECT id, round(float_val) AS a, round(int_val + 0.5::float8) AS b, round(float_val * 10) / 4 AS c FROM numbers ORDER BY id"
+  - id: round_of_an_average_of_doubles
+    sql: "SELECT round(avg(float_val)) AS a, round(sum(float_val)) AS b FROM numbers"
+  # a quotient, average or root of numerics is numeric in Postgres, exact there and a double here: what rounds or
+  # spells it is refused (floor(0.3 / 0.1) is 3 in Postgres, 2 from a double)
+  - id: floor_of_a_quotient_of_numerics_is_refused
+    sql: "SELECT floor(0.3 / 0.1) AS a FROM departments WHERE id = 1"
+  - id: ceil_of_an_average_of_integers_is_refused
+    sql: "SELECT ceil(avg(age)) AS a FROM persons"
+  - id: cast_of_a_quotient_of_numerics_to_integer_is_refused
+    sql: "SELECT id, CAST(salary / 10000 AS INTEGER) AS a FROM persons ORDER BY id"
+  - id: round_of_a_quotient_of_numerics_is_refused
+    sql: "SELECT id, round(salary / 7) AS a FROM persons ORDER BY id"
+  - id: trunc_of_a_square_root_of_a_numeric_is_refused
+    sql: "SELECT id, trunc(sqrt(salary)) AS a FROM persons ORDER BY id"
+  - id: text_of_a_quotient_of_numerics_is_refused
+    sql: "SELECT id, (salary / 3)::text AS a FROM persons ORDER BY id"
+  # a quotient with a double in it is a double in Postgres too: it rounds
+  - id: floor_and_round_of_a_quotient_of_doubles
+    sql: "SELECT id, floor(float_val / 0.1) AS a, round(int_val / 4.0::float8) AS b, CAST(float_val / 2 AS INTEGER) AS c FROM numbers ORDER BY id"
+  - id: floor_of_a_square_root_of_an_integer
+    sql: "SELECT id, floor(sqrt(age)) AS a, ceil(ln(age)) AS b FROM persons ORDER BY id"
+  - id: a_quotient_of_numerics_cast_to_numeric_or_double
+    sql: "SELECT id, (salary / 4)::numeric AS a, (salary / 4)::float8 AS b FROM persons ORDER BY id"
+  - id: power_of_integers_and_doubles
+    sql: "SELECT id, power(small_val, 2) AS a, power(float_val, 2) AS b, pow(2, small_val) AS c FROM numbers WHERE small_val BETWEEN -10 AND 10 ORDER BY id"
+  # bool_and, bool_or, every: NULLs skipped, no values NULL; a FILTER keeps a boolean's three values
+  - id: bool_and_bool_or_and_every
+    sql: "SELECT dept_id, bool_and(active) AS a, bool_or(active) AS o, every(age > 25) AS e FROM persons GROUP BY dept_id ORDER BY dept_id"
+  - id: bool_aggregates_with_a_filter
+    sql: "SELECT bool_and(active) FILTER (WHERE id = 8) AS a, bool_or(active) FILTER (WHERE id > 100) AS b, count(active) FILTER (WHERE age > 30) AS c, bool_or(DISTINCT active) AS d FROM persons"
+  - id: bool_and_of_an_integer_does_not_exist
+    sql: "SELECT bool_and(age) AS a FROM persons"
+  # percentile_cont interpolates between doubles; percentile_disc picks a value of its own type
+  - id: percentiles_by_group
+    sql: "SELECT dept_id, percentile_cont(0.5) WITHIN GROUP (ORDER BY salary) AS m, percentile_disc(0.5) WITHIN GROUP (ORDER BY age) AS d, percentile_cont(0.25) WITHIN GROUP (ORDER BY age DESC) AS q FROM persons GROUP BY dept_id ORDER BY dept_id"
+  - id: percentile_disc_at_its_boundaries
+    sql: "SELECT percentile_disc(0) WITHIN GROUP (ORDER BY int_val) AS a, percentile_disc(0.25) WITHIN GROUP (ORDER BY int_val) AS b, percentile_disc(0.3) WITHIN GROUP (ORDER BY int_val) AS c, percentile_disc(1) WITHIN GROUP (ORDER BY int_val) AS d, percentile_disc(0.25) WITHIN GROUP (ORDER BY int_val DESC) AS e, percentile_disc(0.3) WITHIN GROUP (ORDER BY int_val DESC) AS f FROM numbers"
+  - id: percentile_cont_at_its_boundaries
+    sql: "SELECT percentile_cont(0) WITHIN GROUP (ORDER BY float_val) AS a, percentile_cont(1) WITHIN GROUP (ORDER BY float_val) AS b, percentile_cont(0.3) WITHIN GROUP (ORDER BY int_val DESC) AS c, percentile_cont(0.1) WITHIN GROUP (ORDER BY numeric_val) AS d FROM numbers"
+  - id: percentile_disc_of_integers_divides_as_integers
+    sql: "SELECT percentile_disc(0.5) WITHIN GROUP (ORDER BY int_val) / 2 AS a, percentile_cont(0.5) WITHIN GROUP (ORDER BY int_val) / 2 AS b, percentile_disc(0.5) WITHIN GROUP (ORDER BY numeric_val) AS c FROM numbers"
+  - id: percentile_with_a_filter
+    sql: "SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY int_val) FILTER (WHERE int_val > 0) AS a, percentile_disc(0.5) WITHIN GROUP (ORDER BY big_val) FILTER (WHERE id < 5) AS b FROM numbers"
+  - id: percentile_outside_zero_to_one_is_an_error
+    sql: "SELECT percentile_cont(1.5) WITHIN GROUP (ORDER BY age) AS a FROM persons"
+  - id: percentile_without_within_group_is_an_error
+    sql: "SELECT percentile_cont(0.5) AS a FROM persons"
+  - id: mode_is_refused
+    sql: "SELECT mode() WITHIN GROUP (ORDER BY age) AS a FROM persons"
+  # corr, covar_pop, covar_samp: double precision over the pairs with no NULL
+  - id: correlation_and_covariance_by_group
+    sql: "SELECT dept_id, corr(salary, age) AS c, covar_pop(age, salary) AS p, covar_samp(age, id) AS s FROM persons GROUP BY dept_id ORDER BY dept_id"
+  - id: correlation_and_covariance_with_a_filter
+    sql: "SELECT corr(float_val, int_val) AS c, covar_samp(int_val, small_val) FILTER (WHERE id < 9) AS s, covar_pop(numeric_val, float_val) AS p FROM numbers"
+  # corr is NULL where a value's variance over the pairs is 0 (one pair among them): DuckDB's is NaN there
+  - id: correlation_of_a_constant_or_one_pair_is_null
+    sql: "SELECT dept_id, corr(id, dept_id) AS a, corr(salary, age) FILTER (WHERE id < 3) AS b, corr(age, id) FILTER (WHERE id = 1) AS c FROM persons GROUP BY dept_id ORDER BY dept_id"
+  - id: percentile_disc_descending_at_zero_is_the_largest
+    sql: "SELECT dept_id, percentile_disc(0) WITHIN GROUP (ORDER BY age DESC) AS a, percentile_disc(0) WITHIN GROUP (ORDER BY salary) AS b FROM persons GROUP BY dept_id ORDER BY dept_id"
+  # BETWEEN is x >= low AND x <= high in three-valued logic: a NULL bound leaves the other to decide FALSE; an IN list
+  # with an element that may be NULL is TRUE where one element matches (found by the randomized check)
+  - id: between_with_a_null_bound
+    sql: "SELECT id, int_val BETWEEN 5 AND NULL AS a, int_val NOT BETWEEN NULL AND 10 AS b, id BETWEEN int_val AND small_val AS c FROM numbers ORDER BY id"
+  - id: not_between_a_null_bound_in_a_filter
+    sql: "SELECT id FROM numbers WHERE int_val NOT BETWEEN 0 AND NULL ORDER BY id"
+  - id: in_a_list_with_a_nullable_column
+    sql: "SELECT id, 7 IN (small_val, int_val) AS a, int_val IN (small_val, 42) AS b, int_val NOT IN (small_val, 1) AS c FROM numbers ORDER BY id"
+  - id: in_a_list_with_a_nullable_column_in_a_filter
+    sql: "SELECT p.id FROM persons p WHERE 30 IN (p.age, p.dept_id * 30) ORDER BY 1"
+  # a CASE whose every result is NULL is text in Postgres: ceil of it is Postgres's error, its || is text
+  - id: case_of_only_nulls_is_text
+    sql: "SELECT id, CASE WHEN id > 5 THEN NULL ELSE NULL END || 'x' AS a, coalesce(CASE WHEN id = 1 THEN NULL END, 'none') AS b FROM persons ORDER BY id"
+  - id: ceil_of_a_case_of_only_nulls_does_not_exist
+    sql: "SELECT ceil(CASE WHEN id > 5 THEN NULL ELSE NULL END) AS a FROM persons ORDER BY id"
+  # the independent review's findings (2026-10-12), each a wrong answer before
+  - id: an_inexact_numeric_with_a_double_stays_inexact
+    sql: "SELECT floor(0.3 / 0.1 * 1::float8) AS a FROM departments WHERE id = 1"
+  - id: a_double_constant_rounds_as_a_double
+    sql: "SELECT round('2.5'::float8) AS a, '2.5'::float8::integer AS b, ceil('0.28'::float8 * 25) AS c, ceil(coalesce(0.28, 0::float8) * 25) AS d FROM departments WHERE id = 1"
+  - id: a_sum_of_integers_divided_by_an_integer_is_refused
+    sql: "SELECT sum(big_val) / 2 AS a FROM numbers"
+  - id: a_sum_of_integers_cast_then_divided
+    sql: "SELECT sum(int_val)::bigint / 2 AS a, sum(big_val)::numeric / 2 AS b, sum(int_val) * 2 AS c, sum(int_val) || '' AS d FROM numbers WHERE id <> 4"
+  - id: round_of_an_integer_to_places_keeps_them
+    sql: "SELECT id, round(int_val, 1) AS a, round(int_val, 2)::text AS b, round(5, 2)::integer / 2 AS c, trunc(int_val, 1) || '' AS e FROM numbers ORDER BY id"
+  - id: sign_of_a_quotient_of_numerics_is_refused
+    sql: "SELECT sign(0.3 / 0.1 - 3) AS a FROM departments WHERE id = 1"
+  - id: percentile_disc_multiplies_in_double_precision
+    sql: "SELECT percentile_disc(0.28) WITHIN GROUP (ORDER BY x) AS a, percentile_disc(0.28) WITHIN GROUP (ORDER BY x DESC) AS b FROM (SELECT id + 10 * (id % 3) AS x FROM persons UNION ALL SELECT id + 20 FROM orders UNION ALL SELECT id + 40 FROM numbers WHERE id < 6) s"
+  - id: text_of_merged_decimals_is_refused
+    sql: "SELECT id, (CASE WHEN id > 5 THEN salary ELSE 1.5 END) || '' AS a FROM persons ORDER BY id"
+  - id: coalesce_of_decimals_keeps_its_numbers
+    sql: "SELECT id, coalesce(salary, 0) AS a, coalesce(salary, 0) + 1 AS b FROM persons ORDER BY id"

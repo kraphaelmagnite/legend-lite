@@ -108,9 +108,31 @@ public class AnsiSqlRenderer implements SqlDialect {
      *  scope, and every reference they built reads what the store holds. One owner, so no
      *  dialect's pass list can leave the reads out. */
     protected final java.util.List<com.legend.sql.SqlRewriter> renderPasses() {
-        java.util.List<com.legend.sql.SqlRewriter> ps = new java.util.ArrayList<>(passes());
+        java.util.List<com.legend.sql.SqlRewriter> ps = new java.util.ArrayList<>();
+        // a Float's literal spelling, expanded before every other pass unless this dialect spells it itself
+        if (!spellsFloatCanon()) {
+            ps.add(new FloatCanonText.Expansion(bindsFloatText()));
+        }
+        ps.addAll(passes());
         ps.add(new StoredReads(this::readsStored));
         return java.util.List.copyOf(ps);
+    }
+
+    /** A HUGEINT-fact integer literal (past a signed BIGINT): bare, the database types it by its magnitude. */
+    protected String hugeIntLiteral(java.math.BigDecimal v) {
+        return v.toPlainString();
+    }
+
+    /** Whether this dialect writes {@link com.legend.sql.SqlFn#FLOAT_CANON} itself; else it is expanded before every
+     *  other pass ({@link FloatCanonText.Expansion}) to the portable spelling over the double's text. */
+    protected boolean spellsFloatCanon() {
+        return false;
+    }
+
+    /** Whether that expansion reads the double's text from a one-row derived table, written once (a dialect whose
+     *  double text is a long expression and whose derived tables read the row around them). */
+    protected boolean bindsFloatText() {
+        return false;
     }
 
     /** Whether this dialect reads a column STORED as {@code t} other than as the database holds
@@ -153,7 +175,7 @@ public class AnsiSqlRenderer implements SqlDialect {
     protected SqlWriter query(SqlWriter writer, SqlQuery q, int depth) {
         return switch (q) {
             case com.legend.sql.SqlWith w -> {
-                writer.append("WITH ");
+                writer.append(w.recursive() ? "WITH RECURSIVE " : "WITH ");
                 for (int i = 0; i < w.ctes().size(); i++) {
                     if (i > 0) {
                         writer.append(", ");
@@ -542,6 +564,9 @@ public class AnsiSqlRenderer implements SqlDialect {
                                     .Decimal dd && dd.scale() == 0
                     ? "CAST(" + d.value().toPlainString() + " AS DECIMAL("
                             + dd.precision() + ",0))"
+                    : d.type() instanceof com.legend.sql.TypeFact.Typed h
+                            && h.type() == com.legend.sql.SqlType.Scalar.HUGEINT
+                    ? hugeIntLiteral(d.value())
                     : d.value().toPlainString());
             case SqlExpr.BoolLit b -> writer.append(boolLit(b.value()));
             case SqlExpr.NullLit n -> writer.append("NULL");
@@ -876,6 +901,9 @@ public class AnsiSqlRenderer implements SqlDialect {
             // boolean text: the reference cast spelling (semantic node —
             // dialects with a diverging bool print override)
             case BOOL_TO_TEXT -> writer.append("CAST(").expr(a.get(0), 0).append(" AS VARCHAR)");
+            // a Float's literal spelling: the portable decomposition over the double's text (a dialect whose double
+            // text is long spells it once, its own way)
+            case FLOAT_CANON -> writer.expr(FloatCanonText.of(a.get(0)), parentPrec);
             // Idiom points — no ANSI spelling; the dialect decides or dies.
             case UNNEST -> unnestProjection(writer, a);
             case LIST_FILTER, LIST_TRANSFORM, LIST_CONCAT, LIST_GET,
@@ -1182,19 +1210,34 @@ public class AnsiSqlRenderer implements SqlDialect {
             }
             case com.legend.sql.SqlType.Decimal d ->
                     "DECIMAL(" + d.precision() + ", " + d.scale() + ")";
-            case com.legend.sql.SqlType.Array a -> castTypeName(a.element()) + "[]";
-            case com.legend.sql.SqlType.Map m ->
-                    "MAP(" + castTypeName(m.key()) + ", " + castTypeName(m.value()) + ")";
+            case com.legend.sql.SqlType.Array a -> arrayTypeName(castTypeName(a.element()));
+            case com.legend.sql.SqlType.Map m -> mapTypeName(castTypeName(m.key()), castTypeName(m.value()));
             case com.legend.sql.SqlType.Struct st -> {
                 if (!typeNames.structSupport()) {
                     throw new DialectCapability(
                             "a STRUCT type reached a dialect without struct support");
                 }
-                yield "STRUCT(" + st.fields().stream()
-                        .map(fl -> ident(fl.name()) + " " + castTypeName(fl.type()))
-                        .collect(Collectors.joining(", ")) + ")";
+                yield structTypeName(st.fields().stream()
+                        .map(fl -> java.util.Map.entry(ident(fl.name()), castTypeName(fl.type()))).toList());
             }
         };
+    }
+
+    /** A list type's spelling, its element spelled: {@code T[]} (DuckDB, Postgres); a dialect with the
+     *  {@code ARRAY<T>} form overrides (Databricks, 2026-10-11). */
+    protected String arrayTypeName(String element) {
+        return element + "[]";
+    }
+
+    /** A map type's spelling: {@code MAP(K, V)}; the {@code MAP<K, V>} form is an override. */
+    protected String mapTypeName(String key, String value) {
+        return "MAP(" + key + ", " + value + ")";
+    }
+
+    /** A struct type's spelling, each field its name (spelled) and type: {@code STRUCT(a T, ...)}. */
+    protected String structTypeName(List<java.util.Map.Entry<String, String>> fields) {
+        return "STRUCT(" + fields.stream().map(f -> f.getKey() + " " + f.getValue())
+                .collect(Collectors.joining(", ")) + ")";
     }
 
     /** The DATE-FORMAT spelling — this renderer family's voice is DuckDB
@@ -1489,7 +1532,7 @@ public class AnsiSqlRenderer implements SqlDialect {
                     first = false;
                     sb.append(ddlIdentifier(col.name(), col.declaredQuoted()))
                             .append(' ').append(ddlType(col.type()))
-                            .append(col.primaryKey() || col.notNull() ? " NOT NULL" : " NULL");
+                            .append(ddlNullability(col.primaryKey() || col.notNull()));
                 }
                 java.util.List<String> pks = ct.columns().stream()
                         .filter(com.legend.sql.SqlDdl.Column::primaryKey)
@@ -1568,6 +1611,11 @@ public class AnsiSqlRenderer implements SqlDialect {
 
     protected String ddlColumnSeparator() {
         return ", ";
+    }
+
+    /** A DDL column's nullability: {@code NOT NULL}, or the engine's explicit {@code NULL}. */
+    protected String ddlNullability(boolean notNull) {
+        return notNull ? " NOT NULL" : " NULL";
     }
 
     @Override

@@ -3,8 +3,9 @@
 // a saved cube), its configuration folded into its query as the tab's state owner folds it (cube-state.ts `fold`: its
 // row cap, each column's aggregate and kind, pivot totals and sorts), CubeController.run for its view (its levels,
 // totals, pivot and truncation) laid out as the screen lays it out (shownColumns: hidden columns out, its order), and
-// classLambda for its rows at their finest level (Create a Class's relation). Its planner is legend-lite's over the
-// host's worker, its engine DuckDB over the host's connection: the tab's own pair, in Python.
+// classLambda for its rows at their finest level (Create a Class's relation), which Python plans and runs itself for
+// all of them (Grid.to_pandas, typed by its plan: docs/DATACUBE_ONE_APP_DESIGN_2026_10_11.md §15.3a). Its planner is
+// legend-lite's over the host's worker, its engine DuckDB over the host's connection: the tab's own pair, in Python.
 //
 // Each call opens the grid afresh from the cube document it is given: the document is the grid's state, Python's
 // page keeps it, and nothing here holds a grid between calls.
@@ -106,9 +107,4 @@ export async function gridView(spec: GridSpec): Promise<string> {
 /** The grid's rows at their finest level as Pure, as Create a Class makes its class of them (classLambda). */
 export async function gridRelation(spec: GridSpec): Promise<string> {
   return using(spec, async ({ planner, state }) => planner.compose(classLambda(state.snapshot), 'STANDARD'));
-}
-
-/** That relation's SQL, as the planner makes it: what Python runs on its own database for the whole result. */
-export async function gridSql(spec: GridSpec): Promise<string> {
-  return using(spec, async ({ planner, state }) => (await planner.plan(classLambda(state.snapshot))).sql);
 }

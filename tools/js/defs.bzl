@@ -26,7 +26,7 @@ _REPORTER = "tools/js/strict-reporter.mjs"
 
 _ZONE = "tools/js/zone.mjs"
 
-def node_test(name, entry_point, data = [], wasm = False, env = {}, node_options = [], **kwargs):
+def node_test(name, entry_point, data = [], wasm = False, env = {}, platform_env = {}, node_options = [], **kwargs):
     """A js_test running one node:test entry point with the repository's settings.
 
     Args:
@@ -35,6 +35,8 @@ def node_test(name, entry_point, data = [], wasm = False, env = {}, node_options
         data: what the test reads.
         wasm: True to load the WebAssembly planner (//wasm:planner_dir, named in WASM_PLANNER).
         env: added over the pinned LANG/LC_ALL/TZ (a TZ lane overrides TZ here).
+        platform_env: environment that differs by platform, a select over //tools/platforms, merged last; env stays a
+            plain dict because the macro reads its TZ.
         node_options: added after the shared options.
         **kwargs: everything else js_test takes (size, chdir, tags, ...).
     """
@@ -57,7 +59,7 @@ def node_test(name, entry_point, data = [], wasm = False, env = {}, node_options
         name = name,
         entry_point = entry_point,
         data = data + [Label("//tools/js:runfiles"), Label("//tools/js:strict_reporter"), Label("//tools/js:zone")] + ([Label("//wasm:planner_dir")] if wasm else []),
-        env = pinned | env | {"LEGEND_TZ": zone},
+        env = pinned | env | {"LEGEND_TZ": zone} | platform_env,
         node_options = options,
         **kwargs
     )

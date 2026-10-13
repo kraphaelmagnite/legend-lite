@@ -151,10 +151,20 @@ public final class RawSqlBoundary {
             Pattern.compile("(?i)\\bH2VERSION\\s*\\(\\s*\\)");
 
     public static String h2ToDuckDb(String sql) {
-        return h2ToDuckDb0(sql);
+        return h2ToDuckDb0(sql, Target.DUCKDB);
     }
 
-    private static String h2ToDuckDb0(String sql) {
+    /** Who the corpus's H2 text is translated for: DuckDB's grammar, its column TYPES spelled for the target
+     *  (2026-10-12, the corpus on other databases, docs/CLOUD_BACKENDS_PCT_2026_10_11.md §20: Postgres reads the
+     *  DuckDB flavor but for its type names). A dialect names its own ({@link SqlDialect#rawTarget}). */
+    public enum Target { DUCKDB, POSTGRES }
+
+    /** {@link #h2ToDuckDb(String)}, the column types spelled for {@code target}. */
+    public static String h2ToDuckDb(String sql, Target target) {
+        return h2ToDuckDb0(sql, target);
+    }
+
+    private static String h2ToDuckDb0(String sql, Target target) {
         String out = CURRENT_TS.matcher(sql).replaceAll("CURRENT_TIMESTAMP");
         out = H2_VERSION_FN.matcher(out).replaceAll("'" + H2_DIALECT_VERSION + "'");
         out = COUNT_STAR_ITEM.matcher(out)
@@ -170,7 +180,7 @@ public final class RawSqlBoundary {
         out = CREATE_SCHEMA.matcher(out).replaceAll("Create schema if not exists $1");
         Matcher cm = CREATE_HEAD.matcher(out);
         if (cm.find()) {
-            return quoteCreateColumns(out, cm.end());
+            return quoteCreateColumns(out, cm.end(), target);
         }
         Matcher m = INSERT_COLS.matcher(out);
         if (!m.find()) {
@@ -195,7 +205,7 @@ public final class RawSqlBoundary {
      * whole-statement replace once renamed a column literally named
      * "float" (relationalSetUp testTable).
      */
-    private static String quoteCreateColumns(String sql, int bodyStart) {
+    private static String quoteCreateColumns(String sql, int bodyStart, Target target) {
         int depth = 1;
         int end = bodyStart;
         while (end < sql.length() && depth > 0) {
@@ -240,14 +250,14 @@ public final class RawSqlBoundary {
                 // TYPE PART still needs the H2->DuckDB kind mapping
                 int endq = col.indexOf('"', 1);
                 out.append(col, 0, endq + 1)
-                        .append(mapColumnTypes(col.substring(endq + 1)));
+                        .append(mapColumnTypes(col.substring(endq + 1), target));
             } else if (NON_COLUMN_HEAD.matcher(head).matches()) {
                 out.append(col);
             } else {
                 // H2 semantics on the TYPE PART only: FLOAT is an 8-byte
                 // double; BIT is a boolean (DuckDB's BIT is a bitstring)
                 out.append('\"').append(head).append('\"')
-                        .append(mapColumnTypes(col.substring(sp)));
+                        .append(mapColumnTypes(col.substring(sp), target));
             }
         }
         return sql.substring(0, bodyStart) + out + sql.substring(end - 1);
@@ -259,9 +269,19 @@ public final class RawSqlBoundary {
      * are compiled once rather than per column per statement per test — this
      * ran on the corpus seed path 2,019 times over.
      */
-    private static String mapColumnTypes(String typePart) {
+    private static String mapColumnTypes(String typePart, Target target) {
         String t = FLOAT_KIND.matcher(typePart).replaceAll("DOUBLE");
         t = BIT_KIND.matcher(t).replaceAll("BOOLEAN");
-        return CLOB_KIND.matcher(t).replaceAll("TEXT");
+        t = CLOB_KIND.matcher(t).replaceAll("TEXT");
+        return switch (target) {
+            case DUCKDB -> t;
+            // Postgres names the 8-byte double DOUBLE PRECISION, and has no TINYINT (SMALLINT is its smallest)
+            case POSTGRES -> TINYINT_KIND.matcher(DOUBLE_KIND.matcher(t).replaceAll("DOUBLE PRECISION"))
+                    .replaceAll("SMALLINT");
+        };
     }
+
+    private static final Pattern DOUBLE_KIND = Pattern.compile("(?i)\\bDOUBLE\\b(?!\\s+PRECISION)");
+
+    private static final Pattern TINYINT_KIND = Pattern.compile("(?i)\\bTINYINT\\b");
 }

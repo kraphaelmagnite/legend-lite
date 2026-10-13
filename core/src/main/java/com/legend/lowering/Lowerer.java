@@ -793,7 +793,11 @@ public final class Lowerer {
             collectBranches(c.left(), out);
             collectBranches(c.right(), out);
         } else {
-            out.add(relation(spec));
+            // a union's branch has no ORDER BY, LIMIT or OFFSET of its own
+            // in SQL: a branch that sorts or slices is a subselect
+            SqlSelect branch = relation(spec);
+            out.add(branch.orderBy().isEmpty() && branch.limit() == null
+                    && branch.offset() == null ? branch : isolate(branch));
         }
     }
 
@@ -1715,6 +1719,15 @@ public final class Lowerer {
                     instanceof Resolution.Resolved o) {
                 return o.expr();
             }
+            if (var != null && var.equals(ownVar)) {
+                // the lambda's OWN row is never an enclosing one: a miss
+                // (a window column, folded nowhere in place) is unfoldable
+                // here, never an enclosing row's same-named column nor a
+                // root scope's refusal (2026-10-12, PR #28's review: a
+                // map->toOne's pushed scope answered $r.rn with the outer
+                // row's rn, and at the root threw "no row scope")
+                throw new UnfoldableRef(name == null ? "<whole variable>" : name);
+            }
             for (var outer : outers) {
                 if (attempt(() -> outer.resolve(var, name))
                         instanceof Resolution.Resolved found) {
@@ -2161,7 +2174,21 @@ public final class Lowerer {
     private SqlExpr sideCondition(TypedLambda lambda, SqlSource left, SqlSource right,
                                   @com.legend.base.Nullable List<SqlSelect.Projection> leftCarry) {
         String leftVar = lambda.parameters().get(0);
+        String rightVar = lambda.parameters().size() > 1 ? lambda.parameters().get(1) : null;
+        var outers = List.copyOf(enclosing);
         return scalar(LambdaBinding.last(lambda), (var, prop) -> {
+            if (var != null && !var.equals(leftVar) && !var.equals(rightVar)) {
+                // neither side's row: an ENCLOSING row (a correlated
+                // subquery's join) — never a same-named column of a side
+                for (var outer : outers) {
+                    if (attempt(() -> outer.resolve(var, prop))
+                            instanceof Resolution.Resolved found) {
+                        return found.expr();
+                    }
+                }
+                throw new IllegalStateException("join condition reads '$" + var
+                        + "', neither of its sides nor an enclosing row");
+            }
             boolean isLeft = leftVar.equals(var);
             if (prop == null) {
                 // a WHOLE-VARIABLE read in a join condition has no column;
@@ -3086,8 +3113,16 @@ public final class Lowerer {
                     && m2.mapper() instanceof TypedLambda ml2
                     && !Type.isRelation(ml2.functionType().result().type()) -> {
                 Multiplicity colMult2 = ml2.functionType().result().multiplicity();
-                SqlSelect proj = relation(ValueCollections.valueColumnProject(
-                        m2.source(), ml2, m2.info().type(), colMult2));
+                // the source correlates with the row in hand, as the
+                // relation-valued arm below and the EXISTS family do
+                enclosing.push(enclosingOf(columns));
+                SqlSelect proj;
+                try {
+                    proj = relation(ValueCollections.valueColumnProject(
+                            m2.source(), ml2, m2.info().type(), colMult2));
+                } finally {
+                    enclosing.pop();
+                }
                 // pure map FLATTENS collection-valued mappers ($r.values):
                 // the list-of-cell-arrays flattens one level
                 boolean collMapper = ValueCollections.isCollectionMapper(ml2);
@@ -3157,14 +3192,7 @@ public final class Lowerer {
             case TypedSpec rel when Type.schemaView(rel.info().type())
                             instanceof Type.RelationType rt
                     && !rt.columns().isEmpty() -> {
-                enclosing.push((v, name) -> {
-                    SqlExpr r = columns.resolve(v, name);
-                    if (r == null) {
-                        throw new UnfoldableRef(
-                                name == null ? "<whole variable>" : name);
-                    }
-                    return r;
-                });
+                enclosing.push(enclosingOf(columns));
                 try {
                     if (rt.columns().size() > 1) {
                         yield new SqlExpr.ScalarSubquery(
@@ -3453,6 +3481,12 @@ public final class Lowerer {
             throw new IllegalStateException("relation exists/forAll expects a predicate lambda");
         }
         SqlSelect sub = relation(rel);
+        // a sliced or window-filtered relation is filtered from OUTSIDE:
+        // in its WHERE the predicate would run before the LIMIT/OFFSET or
+        // QUALIFY that fixes its rows (exists over limit(3) saw them all)
+        if (sub.limit() != null || sub.offset() != null || sub.qualify() != null) {
+            sub = isolate(sub);
+        }
         SqlExpr pred;
         if (tryPredicate(sub, lambda) instanceof Resolution.Resolved r) {
             pred = r.expr();
@@ -3473,6 +3507,18 @@ public final class Lowerer {
     // ==================================================================
     // Plumbing
     // ==================================================================
+
+    /** A scalar context's columns as an enclosing scope: a subquery's
+     *  correlated read resolves here, or is unfoldable. */
+    private static ColumnResolver enclosingOf(ColumnResolver columns) {
+        return (v, name) -> {
+            SqlExpr r = columns.resolve(v, name);
+            if (r == null) {
+                throw new UnfoldableRef(name == null ? "<whole variable>" : name);
+            }
+            return r;
+        };
+    }
 
     SqlSelect isolate(SqlSelect s) {
         return SqlSelect.starOf(new SqlSource.Subselect(s, nextAlias(), null));

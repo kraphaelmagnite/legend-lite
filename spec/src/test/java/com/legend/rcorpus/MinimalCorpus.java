@@ -301,10 +301,7 @@ public final class MinimalCorpus {
                 .withExecutionOverlay(
                         new com.legend.model.RuntimeDefinition(RUNTIME, List.of(),
                                 dbBindings, List.of()),
-                        new com.legend.model.ConnectionDefinition(CONNECTION, null,
-                                H2_BACKEND
-                                        ? com.legend.model.ConnectionDefinition.DatabaseType.H2
-                                        : com.legend.model.ConnectionDefinition.DatabaseType.DuckDB,
+                        new com.legend.model.ConnectionDefinition(CONNECTION, null, databaseType(),
                                 new com.legend.model.ConnectionSpecification.InMemory(),
                                 new com.legend.model.AuthenticationSpec.NoAuth()));
         discovery = PureTests.discover(parsed.model(), libraryElements);
@@ -480,6 +477,32 @@ public final class MinimalCorpus {
     static final boolean H2_BACKEND =
             "h2".equalsIgnoreCase(System.getProperty("rcorpus.backend", ""));
 
+    /** {@code -Drcorpus.backend}: duckdb (the default, and the reference lane), h2, or a lane on another database
+     *  (2026-10-12, docs/CLOUD_BACKENDS_PCT_2026_10_11.md §20) -- postgres. */
+    static final String BACKEND = backend();
+
+    /** A lane on another database: its sessions are its own, and MinimalCorpusTest holds it to its own fail roster
+     *  alone (the reference lanes' censuses are DuckDB's and H2's). */
+    static final boolean OTHER_LANE = !BACKEND.equals("duckdb") && !BACKEND.equals("h2");
+
+    private static String backend() {
+        String b = System.getProperty("rcorpus.backend", "").trim().toLowerCase(java.util.Locale.ROOT);
+        String lane = b.isEmpty() ? "duckdb" : b;
+        if (!java.util.Set.of("duckdb", "h2", "postgres").contains(lane)) {
+            throw new IllegalArgumentException("-Drcorpus.backend=" + b + ": no such corpus lane (duckdb, h2,"
+                    + " postgres)");
+        }
+        return lane;
+    }
+
+    private static com.legend.model.ConnectionDefinition.DatabaseType databaseType() {
+        return switch (BACKEND) {
+            case "h2" -> com.legend.model.ConnectionDefinition.DatabaseType.H2;
+            case "postgres" -> com.legend.model.ConnectionDefinition.DatabaseType.Postgres;
+            default -> com.legend.model.ConnectionDefinition.DatabaseType.DuckDB;
+        };
+    }
+
     private static Connection openSession() throws SQLException {
         if (H2_BACKEND) {
             Connection h2 = DriverManager.getConnection("jdbc:h2:mem:c2s"
@@ -496,6 +519,9 @@ public final class MinimalCorpus {
                 }
             }
             return h2;
+        }
+        if (BACKEND.equals("postgres")) {
+            return ServerWorkspaces.postgres();
         }
         return DuckWorkspaces.open();
     }
@@ -550,6 +576,8 @@ public final class MinimalCorpus {
             // the byte-channel census attributes its disagreement samples
             // (leg 3.0: database mode's bug list) to the running test
             com.legend.exec.CanonicalDivergence.attributeTo(t::fqn);
+            // the primitive census's per-test tally (measurement only, under -Dlegend.diagnostics=primitives=per-test)
+            com.legend.exec.PrimitiveCensus.attributeTo(t::fqn);
             if (com.legend.diagnostics.Diagnostics.on("progress")) {
                 System.err.println("[corpus2] > " + t.fqn());
             }

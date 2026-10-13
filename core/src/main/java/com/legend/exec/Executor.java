@@ -52,7 +52,7 @@ public final class Executor {
             // the executor boundary — platform vocabulary above
             // cause = the UNWRAPPED exception (Positioned when the raise
             // was ours) — assertError's position adjudication reads it
-            java.sql.SQLException un = RaisedErrors.unwrapped(e);
+            java.sql.SQLException un = RaisedErrors.unwrapped(e, connection);
             throw new DataError(String.valueOf(un.getMessage()), un);
         }
     }
@@ -88,7 +88,7 @@ public final class Executor {
                 return;
             }
         } catch (SQLException e) {
-            java.sql.SQLException un = RaisedErrors.unwrapped(e);
+            java.sql.SQLException un = RaisedErrors.unwrapped(e, connection);
             throw new DataError(String.valueOf(un.getMessage()), un);
         }
         executeRaw(connection, dialect.render(load.values()));
@@ -108,7 +108,7 @@ public final class Executor {
             }
             st.execute(script);
         } catch (SQLException e) {
-            java.sql.SQLException un = RaisedErrors.unwrapped(e);
+            java.sql.SQLException un = RaisedErrors.unwrapped(e, connection);
             throw new DataError(String.valueOf(un.getMessage()), un);
         }
     }
@@ -161,9 +161,12 @@ public final class Executor {
         // declared labels vs the bottom-up judgment (measurement only)
         SqlTypeCensus.probe(plan);
         try {
-            return execute0(sql, plan, rootType, shape, connection, dialect,
+            ExecutionResult result = execute0(sql, plan, rootType, shape, connection, dialect,
                     rider, trace);
+            PrimitiveCensus.record(plan, true);
+            return result;
         } catch (SQLException e) {
+            PrimitiveCensus.record(plan, false);
             // B7 (RaisedErrors) + THE SEAM: a message WE raised in SQL
             // surfaces clean of the driver's transport envelope — HERE,
             // once, for every consumer — and java.sql STOPS HERE
@@ -171,7 +174,7 @@ public final class Executor {
             // SQLException rides as cause)
             // cause = the UNWRAPPED exception (Positioned when the raise
             // was ours) — assertError's position adjudication reads it
-            java.sql.SQLException un = RaisedErrors.unwrapped(e);
+            java.sql.SQLException un = RaisedErrors.unwrapped(e, connection);
             throw new DataError(String.valueOf(un.getMessage()), un);
         }
     }
@@ -229,7 +232,7 @@ public final class Executor {
         } catch (SQLException e) {
             // cause = the UNWRAPPED exception (Positioned when the raise
             // was ours) — assertError's position adjudication reads it
-            java.sql.SQLException un = RaisedErrors.unwrapped(e);
+            java.sql.SQLException un = RaisedErrors.unwrapped(e, connection);
             throw new DataError(String.valueOf(un.getMessage()), un);
         }
     }
@@ -261,7 +264,7 @@ public final class Executor {
         } catch (SQLException e) {
             // cause = the UNWRAPPED exception (Positioned when the raise
             // was ours) — assertError's position adjudication reads it
-            java.sql.SQLException un = RaisedErrors.unwrapped(e);
+            java.sql.SQLException un = RaisedErrors.unwrapped(e, connection);
             throw new DataError(String.valueOf(un.getMessage()), un);
         }
     }
@@ -295,7 +298,7 @@ public final class Executor {
         } catch (SQLException e) {
             // cause = the UNWRAPPED exception (Positioned when the raise
             // was ours) — assertError's position adjudication reads it
-            java.sql.SQLException un = RaisedErrors.unwrapped(e);
+            java.sql.SQLException un = RaisedErrors.unwrapped(e, connection);
             throw new DataError(String.valueOf(un.getMessage()), un);
         }
     }
@@ -515,7 +518,7 @@ public final class Executor {
                                com.legend.sql.dialect.SqlDialect dialect, boolean anyRoot,
                                boolean variantRoot)
             throws SQLException {
-        Object fetched = fetch(rs, 1, sqlTypeOf(plan, 0));
+        Object fetched = fetch(rs, 1, sqlTypeOf(plan, 0), dialect);
         // presence is the RAW wire fact — read before unwrap (a JSON
         // null node is a present cell; unwrap/decode may host-null it)
         boolean present = fetched != null;
@@ -668,7 +671,7 @@ public final class Executor {
      * a BC value keeps its LocalDateTime.
      */
     private static @com.legend.base.Nullable Object fetch(ResultSet rs, int i,
-            com.legend.sql.@com.legend.base.Nullable SqlType type)
+            com.legend.sql.@com.legend.base.Nullable SqlType type, com.legend.sql.dialect.SqlDialect dialect)
             throws SQLException {
         Object o = rs.getObject(i);
         if (o != null) {
@@ -691,6 +694,14 @@ public final class Executor {
             // sibling of the deleted midnight heuristic): every
             // timestamp cell re-fetches as java.time, the BC-faithful
             // carrier — Timestamp's epoch is WRONG for BC years
+            // (a dialect whose driver delivers no java.time says so and keeps the Timestamp it delivered:
+            // Databricks' answers the re-fetch with its text, Snowflake's refuses it, both measured 2026-10-11;
+            // their BC date-time is designed, not built, docs/CLOUD_BACKENDS_PCT_2026_10_11.md §15. Any other
+            // driver's refusal fails loudly, AGENTS invariant 4 -- the independent review of
+            // neema2/legend-lite#30 narrowed a catch that had kept the Timestamp for every driver.)
+            if (!dialect.refetchesTimestampAsJavaTime()) {
+                return o;
+            }
             java.time.LocalDateTime ldt =
                     rs.getObject(i, java.time.LocalDateTime.class);
             return ldt != null ? ldt : o;
@@ -757,13 +768,22 @@ public final class Executor {
                 return Json.parse(text);
             }
         }
-        if (type instanceof com.legend.sql.SqlType.Array at && v instanceof java.sql.Array a) {
+        // a map carried as its entries, a list of (key, value) structs (BigQuery's, which has no MAP type: a
+        // repeated key_value record), decodes as that list, each entry by the struct arm, then to the map in entry
+        // order, key and value by their declared types
+        if ((type instanceof com.legend.sql.SqlType.Array || type instanceof com.legend.sql.SqlType.Map)
+                && v instanceof java.sql.Array a) {
+            com.legend.sql.SqlType element = type instanceof com.legend.sql.SqlType.Map mt
+                    ? new com.legend.sql.SqlType.Struct(List.of(
+                            new com.legend.sql.SqlType.Struct.Field("key", mt.key()),
+                            new com.legend.sql.SqlType.Struct.Field("value", mt.value())))
+                    : ((com.legend.sql.SqlType.Array) type).element();
             Object[] elements = (Object[]) a.getArray();
             List<Object> out = new ArrayList<>(elements.length);
             for (Object e : elements) {
-                out.add(unwrap(e, at.element(), dialect));
+                out.add(unwrap(e, element, dialect));
             }
-            return out;
+            return type instanceof com.legend.sql.SqlType.Map ? mapOfEntries(out) : out;
         }
         // the ONE-CARRIER rule at every LEAF (documented-debts
         // 2018-08-18, HARDENED 2026-08-21 user directive): the wire's
@@ -816,6 +836,18 @@ public final class Executor {
                                     ? s.substring(0, s.length() - 1) : s);
             case null, default -> v;
         };
+    }
+
+    /** A map's decoded entries, each the struct arm's {@code {key, value}}, as the map. */
+    private static java.util.Map<Object, Object> mapOfEntries(List<Object> entries) {
+        java.util.LinkedHashMap<Object, Object> m = new java.util.LinkedHashMap<>();
+        for (Object e : entries) {
+            if (!(e instanceof java.util.Map<?, ?> kv) || kv.size() != 2) {
+                throw new IllegalStateException("a map cell's entry is not a (key, value) struct: " + e);
+            }
+            m.put(kv.get("key"), kv.get("value"));
+        }
+        return m;
     }
 
     private static boolean isTemporalType(com.legend.sql.@com.legend.base.Nullable SqlType type) {
@@ -930,7 +962,7 @@ public final class Executor {
         List<Object> cells = new ArrayList<>(n);
         boolean lateBound = schema.isLateBound();
         for (int i = 1; i <= n; i++) {
-            Object cell = unwrap(fetch(rs, i, sqlTypeOf(plan, i - 1, lateBound)),
+            Object cell = unwrap(fetch(rs, i, sqlTypeOf(plan, i - 1, lateBound), dialect),
                     sqlTypeOf(plan, i - 1, lateBound), dialect);
             // E2 (JAVA_EVICTION_PLAN): the host-side row explosion is
             // DEAD — the scalar-stream projection explodes IN SQL

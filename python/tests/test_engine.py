@@ -8,6 +8,7 @@ import json
 from decimal import Decimal
 import os
 import socket
+import sys
 import tempfile
 import threading
 import time
@@ -21,7 +22,8 @@ import pyarrow as pa
 import pyarrow.ipc
 
 import legend_lite as ll
-from legend_lite.engine import Engine, WebServer
+from legend_lite.engine import Engine, NativePlanner, WebServer
+from legend_lite._home import SavedPages
 
 GROUP = "->filter(x|$x.qty > 5)->groupBy(~[desk], ~[q: x|$x.qty : y|$y->sum()])->sort(~desk->ascending())"
 
@@ -191,6 +193,198 @@ class Refusals(Served):
     def test_a_path_the_api_does_not_serve_is_404_in_the_engines_shape(self):
         status, body = self.error('/api/pure/v1/nope', '{}')
         self.assertEqual((status, body['message']), (404, 'no such legend-engine API in legend-lite: /api/pure/v1/nope'))
+
+
+class Planes(Served):
+    """Where the engine plans (R3): one planner, chosen once, which every call the compiler answers goes through, and
+    which services.json names for the page."""
+
+    def test_it_plans_on_pythons_own_planner_and_says_so(self):
+        said = json.loads(self.server.engine.answer('GET', '/services.json', '', None).body)
+        local = {'word': 'local', 'label': 'Plan local (in Python: the native library)'}
+        self.assertEqual((said['plane'], said['planes']), (local, [local]))
+
+    def test_every_call_goes_through_the_planner_it_was_made_with(self):
+        asked = []
+
+        class Counting(NativePlanner):
+            def answer(self, path, query, body):
+                asked.append(path)
+                return super().answer(path, query, body)
+
+            def execute_plan(self, body, models):
+                asked.append('execute')
+                return super().execute_plan(body, models)
+
+        self.server.close()
+        self.server = WebServer(Engine(self.frames, planner=Counting()))
+        self.arrow(GROUP)
+        self.post('/api/pure/v1/grammar/grammarToJson/lambda', '|1')
+        self.assertEqual(asked, ['execute', '/api/pure/v1/grammar/grammarToJson/lambda'])
+
+
+class PlanAndRunRoutes(Served):
+    """PLANANDRUN ON PYTHON (docs/DATACUBE_ONE_APP_DESIGN_2026_10_11.md §15): a page's grid planned against the model
+    Python holds and run on its DuckDB in one call (plan-and-run.json), the planner's other answers from Python's native
+    library (planner.json) -- only over the models this engine serves, no handle crossing, never a dropped call."""
+
+    def plan_and_run(self, steps, model=None):
+        return self.post('/plan-and-run.json', json.dumps({
+            'lambda': json.dumps(ll.parse('|' + self.table.accessor + steps)),
+            'model': self.table.model if model is None else model,
+            'runtime': self.table.runtime,
+        }))
+
+    def test_a_grid_is_planned_over_the_model_held_run_here_and_typed_by_its_plan(self):
+        status, headers, body = self.plan_and_run(GROUP)
+        self.assertEqual((status, headers['Content-Type']), (200, 'application/vnd.apache.arrow.stream'), body[:300])
+        rows = pyarrow.ipc.open_stream(pa.py_buffer(body)).read_all()
+        plan = rows.schema.metadata[b'legend.plan'].decode()
+        self.assertTrue(plan.startswith('OK\n'), plan[:200])
+        self.assertEqual(json.loads(plan[3:])['sql'], self.table.plan(GROUP).sql)
+        self.assertEqual({f.name: f.metadata[b'legend.type'] for f in rows.schema}, {'desk': b'String', 'q': b'Float'})
+        kept = self.df[self.df.qty > 5]
+        self.assertEqual(rows.to_pylist(), [{'desk': d, 'q': q} for d, q in kept.groupby('desk')['qty'].sum().sort_index().items()])
+
+    def test_a_model_it_does_not_serve_is_refused_and_nothing_runs(self):
+        status, headers, body = self.plan_and_run(GROUP, model=self.table.model + '\n')
+        self.assertEqual((status, headers['Content-Type']), (200, 'application/json'))
+        self.assertTrue(json.loads(body)['plan'].startswith('ERR\nMODEL\n'), body)
+
+    def test_sql_the_database_refuses_is_answered_with_its_plan(self):
+        status, headers, body = self.plan_and_run("->extend(~[n: x|$x.desk->toOne()->parseInteger()])")
+        self.assertEqual((status, headers['Content-Type']), (422, 'application/json'), body[:300])
+        said = json.loads(body)
+        self.assertTrue(said['plan'].startswith('OK\n'), said)
+        self.assertIn('Exception', said['error'])
+
+    def test_a_request_that_is_not_one_is_refused(self):
+        for body in ('not json', '[]', json.dumps({'lambda': 1, 'model': '', 'runtime': ''})):
+            self.assertEqual(self.post('/plan-and-run.json', body)[0], 400, body)
+        for body in ('not json', '[]', json.dumps({'kind': []}), json.dumps({'kind': 'nope'})):
+            self.assertEqual(self.post('/planner.json', body)[0], 400, body)
+
+    def test_the_planner_answers_over_the_model_held_and_keeps_no_handle_of_the_page(self):
+        lam = json.dumps(ll.parse('|' + self.table.accessor + GROUP))
+        status, _, body = self.post('/planner.json', json.dumps({
+            'kind': 'planJson', 'model': self.table.model, 'lambda': lam, 'runtime': self.table.runtime,
+            # a handle the page names is never used: the one Python holds for that model is
+            'handle': 'not-a-handle'}))
+        said = json.loads(body)
+        self.assertEqual(status, 200)
+        self.assertTrue(said['ok'] and said['answer'].startswith('OK\n'), said)
+        self.assertEqual(json.loads(said['answer'][3:])['sql'], self.table.plan(GROUP).sql)
+        refused = json.loads(self.post('/planner.json', json.dumps({
+            'kind': 'planJson', 'model': 'unserved', 'lambda': lam, 'runtime': self.table.runtime}))[2])
+        self.assertTrue(refused['answer'].startswith('ERR\nMODEL\n'), refused)
+        # holding and letting go are the page's own: Python holds nothing for a page
+        for kind in ('hold', 'release'):
+            self.assertEqual(self.post('/planner.json', json.dumps({'kind': kind, 'model': self.table.model, 'handle': '1'}))[0], 400)
+
+    def test_both_need_the_token_and_neither_is_a_get(self):
+        for path in ('/plan-and-run.json', '/planner.json'):
+            self.assertEqual(self.post(path, '{}', headers={'Authorization': 'Bearer nope'})[0], 401, path)
+            request = urllib.request.Request(self.server.url + path, headers={'Authorization': self.server.authorization})
+            try:
+                with urllib.request.urlopen(request, timeout=30) as r:
+                    status = r.status
+            except urllib.error.HTTPError as e:
+                status = e.code
+            self.assertNotEqual(status, 200, path)
+
+
+class SavedPagesKept(unittest.TestCase):
+    """The page's saved pages (step 2d): the browser's records, kept whole, one file each in this user's folder, the
+    store's rules the page's own -- the engine answers only all, find, put and remove."""
+
+    def setUp(self):
+        self.place = tempfile.TemporaryDirectory()
+        self.addCleanup(self.place.cleanup)
+        self.folder = Path(self.place.name) / 'pages'
+        self.engine = Engine(ll.Frames(), pages=SavedPages(self.folder))
+
+    def call(self, **asked):
+        return self.engine.answer('POST', '/saved-pages.json', '', json.dumps(asked))
+
+    def test_all_find_put_remove_as_the_browser_keeps_them(self):
+        record = {'id': 'p-1', 'name': 'Q3', 'content': '{"kind":"datacube.page","dec":12.30}', 'owner': 'this user',
+                  'createdAt': 1, 'lastUpdatedAt': 2, 'lastOpenAt': 2}
+        self.assertEqual(self.call(call='put', record=record).status, 204)
+        self.assertEqual(json.loads(self.call(call='all').body), [record])
+        # kept exactly as sent: its content the page's JSON text, never read here
+        self.assertEqual(json.loads(self.call(call='find', id='p-1').body)['content'], record['content'])
+        none = self.call(call='find', id='p-2')
+        self.assertEqual((none.status, json.loads(none.body)), (200, None))
+        self.assertEqual(self.call(call='remove', id='p-1').status, 204)
+        self.assertEqual(json.loads(self.call(call='all').body), [])
+        # every write whole: nothing half-written left beside the records
+        self.assertEqual([p.name for p in self.folder.iterdir() if p.suffix == '.part'], [])
+
+    def test_an_id_that_could_name_another_place_is_refused(self):
+        for bad in ('../escape', '.lock', '', 'a/b', 'a\\b', 'C:x', 7, 'CON', 'nul', 'COM1', 'lpt9'):
+            with self.subTest(id=bad):
+                self.assertEqual(self.call(call='find', id=bad).status, 400)
+                self.assertEqual(self.call(call='put', record={'id': bad, 'name': 'x', 'content': '{}'}).status, 400)
+        self.assertEqual(self.call(call='put', record={'id': 'ok', 'name': 'x', 'content': {'not': 'text'}}).status, 400)
+        self.assertEqual(self.call(call='rename').status, 400)
+
+    def test_a_file_that_is_not_a_record_is_left_out_and_the_others_open(self):
+        self.assertEqual(self.call(call='put', record={'id': 'good', 'name': 'G', 'content': '{}'}).status, 204)
+        (self.folder / 'cut-short.json').write_text('{"id": "cut-sho', encoding='utf-8')
+        (self.folder / 'a-list.json').write_text('[1, 2]', encoding='utf-8')
+        self.assertEqual([r['id'] for r in json.loads(self.call(call='all').body)], ['good'])
+
+    @unittest.skipIf(sys.platform == 'win32', 'a folder private to its owner is a POSIX mode')
+    def test_the_folder_is_private_to_this_user(self):
+        self.assertEqual(self.call(call='put', record={'id': 'p', 'name': 'P', 'content': '{}'}).status, 204)
+        self.assertEqual(self.folder.stat().st_mode & 0o777, 0o700)
+
+    def test_one_writer_at_a_time_across_its_holders(self):
+        # another holder of the folder's lock (another notebook's process takes the same file lock) holds it: a put waits
+        store = SavedPages(self.folder)
+        order = []
+        with store._locked():
+            writer = threading.Thread(target=lambda: (store.put({'id': 'w', 'name': 'W', 'content': '{}'}), order.append('put')))
+            writer.start()
+            time.sleep(0.3)
+            order.append('released')
+        writer.join(timeout=10)
+        self.assertEqual(order, ['released', 'put'])
+
+    def test_the_folder_is_this_users_unless_pointed_elsewhere(self):
+        from unittest import mock
+        import importlib
+        home_module = importlib.import_module('legend_lite._home')
+        self.addCleanup(setattr, home_module, '_chosen', home_module._chosen)
+        home_module._chosen = None
+        with mock.patch.dict(os.environ, {'LEGEND_LITE_HOME': self.place.name}):
+            self.assertEqual(ll.home(), Path(self.place.name).resolve())
+            # a folder the process points itself at wins over the one it was started with
+            chosen = Path(self.place.name) / 'chosen'
+            self.assertEqual(ll.home(chosen), chosen.resolve())
+            self.assertEqual(ll.home(), chosen.resolve())
+        home_module._chosen = None
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop('LEGEND_LITE_HOME', None)
+            if sys.platform == 'darwin':
+                self.assertEqual(ll.home(), Path.home() / 'Library' / 'Application Support' / 'legend-lite')
+            elif sys.platform.startswith('linux'):
+                os.environ['XDG_DATA_HOME'] = self.place.name
+                self.assertEqual(ll.home(), Path(self.place.name) / 'legend-lite')
+        said = json.loads(self.engine.answer('GET', '/services.json', '', None).body)
+        self.assertEqual(said['pages'], {'where': str(self.folder), 'user': 'this user'})
+
+
+class NoFiles(Served):
+    """An engine given no DataCube code to read a page's file with (no headless): it says so, and takes none."""
+
+    def test_it_says_it_takes_no_file_and_refuses_one(self):
+        answer = self.server.engine.answer('GET', '/services.json', '', None)
+        self.assertFalse(json.loads(answer.body)['files'])
+        for path, asked in (('/file-part.json', {'at': 0, 'bytes': 'YQoxCg=='}), ('/file.json', {'upload': 'u', 'name': 'a.csv', 'table': 'a'})):
+            status, _, body = self.post(path, json.dumps(asked))
+            self.assertEqual(status, 404, path)
+            self.assertIn(b'datacube extra', body)
 
 
 class OnlyItsOwnPage(Served):

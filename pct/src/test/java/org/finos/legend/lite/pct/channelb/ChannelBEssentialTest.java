@@ -64,6 +64,13 @@ class ChannelBEssentialTest {
         // PCT.test functions in the 6 new platform files (binFloor, left,
         // right, substr, elementPath, lenientPathToElement)
         assertEquals(PctRatchets.measured("channel_b.essential.discovered"), out.size(), "essential discovery moved -- an upstream move or a discovery-rule change: bazel run //pct:update_ratchets, with the reason in the commit");
+        // ANOTHER LANE (2026-10-11, the user's ask): channel B on a database other than DuckDB is judged against that
+        // lane's own channel A ledger and engine manifest, by its own measured numbers (ChannelBLane); the pins below
+        // are the reference lane's
+        if (!ChannelBLane.isReference()) {
+            ChannelBLane.judge("Essential", "chB", out);
+            return;
+        }
         int pass = census.getOrDefault(ChannelB.Status.PASS, 0);
         // 293 (slice 11): exists ×2 (adapter shadow-stop), concatenate
         // (type() sig [1]→[*] per real type.pure:18), + the is/assertIs

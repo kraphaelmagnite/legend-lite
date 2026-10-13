@@ -239,9 +239,10 @@ legend-engine's own: a rendered column quoted into a FreeMarker template argumen
 > and legend-engine's three-render-method contract on that `SQLDialect` are **engine-only**. They do not exist
 > in core. `WindowAggregate` exists in neither tree.
 
-Dialects: `AnsiSqlRenderer` → `DuckDb`; `H2` → `H2Modern`; `EngineStyleH2` →
-`EngineStyleDB2` → `EngineStyleComposite`. SQLite is not a class — it is
-`Lexicon.SQLITE` passed to `AnsiSqlRenderer`.
+Dialects: `AnsiSqlRenderer` → `DuckDb`, `Postgres`, `SQLite`, `MariaDb` (→ `MySql`), `Trino`,
+`ClickHouse`, `Snowflake`, `Databricks`, `BigQuery`; `H2` → `H2Modern`; `EngineStyleH2` →
+`EngineStyleDB2` → `EngineStyleComposite`. `com.legend.database.Databases` constructs the
+one a declared database type runs on.
 
 Render methods are switch **expressions** with **no `default ->` arm**, so
 javac enforces exhaustiveness. When a dialect genuinely cannot express a

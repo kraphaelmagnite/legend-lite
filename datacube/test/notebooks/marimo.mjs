@@ -67,9 +67,10 @@ try {
   await page.keyboard.press('ArrowLeft');
   await until('a marimo control re-running the cells shows the new frame in the cube',
     () => page.locator('.dc-app').first().getByText(/\b2 rows\b/).waitFor({ timeout: 60_000 }));
-  const title = await page.locator('.dc-app').first().innerText();
-  say(/\bframe \(on the engine\)/.test(title) && !/frame_2/.test(title),
-    'the re-run cube has the same name: the cell\'s run closed the old cube and freed its name');
+  // the page's name box: a page of one grid is named by its grid, the frame by its name, as DataCube's app names every
+  // source (where its rows are is said above: the engine)
+  const title = (await page.locator('.dc-page .dc-page-name').first().innerText()).trim();
+  say(title === 'frame', `the re-run cube has the same name: the cell's run closed the old cube and freed its name (${title})`);
   say(await page.locator('.dc-app').count() === 1, 'one cube on the page after the re-run');
   // the re-run cube styled too: the page's DataCube module and its styles reused, not fetched again
   say(await page.locator('.dc-app').first().evaluate((app) => getComputedStyle(app).getPropertyValue('--dc-font').trim() !== ''),

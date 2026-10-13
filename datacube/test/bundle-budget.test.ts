@@ -67,13 +67,32 @@ function startup(bundle = join(DEMO, 'bundle.js')): string[] {
  *  (query.ts duplicateLambda) and each grid's class read and written with the page (page-document.ts), at startup; the
  *  windows, the actions, the names and the SDLC client are chunks fetched the first time one is asked for
  *  (src/model-actions.ts, src/model-names.ts: imported by nothing the page loads at startup). Measured 386,448, main
- *  before it 385,251 (+1,197). */
-const BUDGET = 387_000;
+ *  before it 385,251 (+1,197).
+ *  387,000 -> 389,000 (2026-10-11, DataCube one app, step 1, docs/DATACUBE_ONE_APP_DESIGN_2026_10_11.md §12): the tab's
+ *  services (src/services/browser.ts: the planner, the database, the page store, the query store, the model home, the
+ *  warehouse and the browser, built once), which the app reads everything through (1a, +520); the app building its own
+ *  windows -- Open…'s list, Share, the Generated Pure & SQL -- whose markup was index.html's, not counted here (1c);
+ *  the dead branches of a planner that opens no file gone. Measured 388,056, main before it 386,536 (+1,520).
+ *  389,000 -> 391,000 (2026-10-12, DataCube one app, step 2a: Python's pages open the app): what the app does for a host
+ *  whose rows are its own -- the frame as a source, a grid's rows in the host's shape, following another editor of the
+ *  page and reporting to it (src/app/datacube-app.ts, src/app/sources.ts), the picker's sections as the services offer
+ *  them, and the status line's look moved into the app's styles. Measured 390,035, step 1 before it 388,056 (+1,979).
+ *  391,000 -> 392,000 (2026-10-12, DataCube one app, PlanAndRun, docs/DATACUBE_ONE_APP_DESIGN_2026_10_11.md §15): every
+ *  host's grid through one runner -- PlanAndRun over a host's plan-and-run (runner.ts, the tab's localHost), the plan's
+ *  request and reading shared by every host (lite-planner.ts planRequest, readPlan). Measured 391,138, phase 2 before
+ *  it 390,817 (+321). */
+const BUDGET = 392_000;
 
-/** The engine page's (demo/engine.html: one cube on an engine that runs its queries, Python's) startup download,
- *  gzipped: the grid and the remote client, no DuckDB-WASM and no compiler. Set 2026-10-08 at its first measure
- *  (288,876 bytes) and the app's headroom (about 4%), so its growth is a decision too. */
-const ENGINE_BUDGET = 300_000;
+/** The engine page's (demo/engine.html: DataCube on Python's engine, which runs its queries) startup download,
+ *  gzipped: no DuckDB-WASM and no compiler. Set 2026-10-08 at its first measure (288,876 bytes) and the app's headroom
+ *  (about 4%), so its growth is a decision too.
+ *  300,000 -> 380,000 (2026-10-12, DataCube one app, step 2a, docs/DATACUBE_ONE_APP_DESIGN_2026_10_11.md R1): the page
+ *  is DataCube's app over Python's services, and `ll.show(df)` a page of one grid -- so the page shell, its sheets, the
+ *  app (its sources, the source picker, the saved pages' windows) are at startup, where one cube's tab loaded the
+ *  grid alone and fetched the page's code only for a page. The design's "the engine page's startup holds" (§10) did
+ *  not survive R1: the page itself is what grew. What the tab's startup carries, less the planner's and DuckDB's
+ *  clients. Measured 366,792; its first measure, one cube's tab, 288,876 (2026-10-08). */
+const ENGINE_BUDGET = 380_000;
 
 /** A notebook's cube (legend_lite.notebook.DataCube): DataCube's module and its styles (widget.js, widget.css),
  *  gzipped, which the widget's loader fetches over the kernel's channel once per notebook page. Set 2026-10-08 at its
@@ -81,8 +100,13 @@ const ENGINE_BUDGET = 300_000;
  *  itself, which anywidget sends with every widget: small.
  *  480,000 -> 500,000 (2026-10-09, Python pages step 1, docs/DATACUBE_PYTHON_PAGES_DESIGN_2026_10_09.md): a notebook's
  *  cube can be a whole page (demo/engine-page.ts, the page shell with its sheets and stacks), in the one file -- a module
- *  from a blob URL loads no chunk. Measured 489,067 (+11,532 over main, by widget.js and widget.css alone). */
-const WIDGET_BUDGET = 500_000;
+ *  from a blob URL loads no chunk. Measured 489,067 (+11,532 over main, by widget.js and widget.css alone).
+ *  500,000 -> 560,000 (2026-10-12, DataCube one app, step 2a, docs/DATACUBE_ONE_APP_DESIGN_2026_10_11.md §10): the module
+ *  is DataCube's app over Python's services, every window the app has inside the one file -- what are chunks in the
+ *  tab (the saved pages' windows, the model actions, the saved queries' client) are not lazy here. As the design said
+ *  it would be, measured and raised with its reason; a loader that fetches chunks over the channel is its own piece,
+ *  on a measurement. Measured 536,970 (widget.js 519,659, widget.css 17,311). */
+const WIDGET_BUDGET = 560_000;
 const LOADER_BUDGET = 10_000;
 
 describe('the page loads ECharts only when a chart draws', () => {
@@ -139,7 +163,10 @@ describe('a notebook\'s cube is one module, fetched once, and its loader small',
 
   it(`the module and its styles are at most ${WIDGET_BUDGET.toLocaleString()} bytes gzipped, with no DuckDB-WASM`, () => {
     const text = readFileSync(module, 'utf8');
-    assert.ok(!/duckdb/i.test(text), 'the notebook cube runs nothing in the page: no DuckDB-WASM');
+    // DuckDB-WASM's code, by what a page that can start it must name: its package, its workers and its modules
+    // (duckdb-browser-*.worker.js, duckdb-eh.wasm), its client. Not the word: since 2026-10-12 (DataCube one app, step
+    // 2a) the module is the app, whose examples and Remote section say in words what DuckDB does with a file
+    assert.ok(!/duckdb-wasm|duckdb-(?:browser|eh|mvp|coi)\b|AsyncDuckDB/i.test(text), 'the notebook cube runs nothing in the page: no DuckDB-WASM');
     const size = gzipSync(readFileSync(module)).length + gzipSync(readFileSync(styles)).length;
     assert.ok(size <= WIDGET_BUDGET,
       `a notebook cube's module is ${size.toLocaleString()} bytes gzipped, over its budget of ${WIDGET_BUDGET.toLocaleString()}`);

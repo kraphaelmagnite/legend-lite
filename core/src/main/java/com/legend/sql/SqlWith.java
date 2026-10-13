@@ -13,13 +13,23 @@ import java.util.List;
  * becomes {@code subquery_cte_<level>_<index>}); the body's outputs are
  * the query's.
  */
-public record SqlWith(List<Cte> ctes, SqlQuery body) implements SqlQuery {
+public record SqlWith(List<Cte> ctes, SqlQuery body, boolean recursive) implements SqlQuery {
 
     public SqlWith {
         ctes = List.copyOf(ctes);
         if (ctes.isEmpty()) {
             throw new IllegalArgumentException("a WITH without expressions is its body");
         }
+    }
+
+    public SqlWith(List<Cte> ctes, SqlQuery body) {
+        this(ctes, body, false);
+    }
+
+    /** The same WITH over other expressions and body: {@code recursive} carried (a rebuilding pass must not drop it:
+     *  a recursive expression reads itself, and without the keyword its own name is unknown). */
+    public SqlWith with(List<Cte> ctes, SqlQuery body) {
+        return new SqlWith(ctes, body, recursive);
     }
 
     /** One {@code name AS (query)}; {@code materialized} asks the database
@@ -36,15 +46,21 @@ public record SqlWith(List<Cte> ctes, SqlQuery body) implements SqlQuery {
     /** {@code ctes} defined ahead of {@code q}'s own (a WITH merges; any
      * other query becomes the body). */
     public static SqlQuery prepend(List<Cte> ctes, SqlQuery q) {
+        return prepend(ctes, q, false);
+    }
+
+    /** {@link #prepend}, the WITH {@code recursive} when {@code ctes} need it
+     * (or {@code q}'s own did). */
+    public static SqlQuery prepend(List<Cte> ctes, SqlQuery q, boolean recursive) {
         if (ctes.isEmpty()) {
             return q;
         }
         if (q instanceof SqlWith w) {
             List<Cte> all = new java.util.ArrayList<>(ctes);
             all.addAll(w.ctes());
-            return new SqlWith(all, w.body());
+            return new SqlWith(all, w.body(), recursive || w.recursive());
         }
-        return new SqlWith(ctes, q);
+        return new SqlWith(ctes, q, recursive);
     }
 
     @Override

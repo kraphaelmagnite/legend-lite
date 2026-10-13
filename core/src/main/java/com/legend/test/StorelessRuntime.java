@@ -36,6 +36,14 @@ public final class StorelessRuntime {
                 + "'; port: " + port + "; };\n  auth: Test");
     }
 
+    /** {@code model} with the storeless runtime on {@code type}, its connection declared by
+     *  {@code specificationAndAuth} -- a cloud warehouse's coordinates and its credential's vault REFERENCE, never
+     *  the secret -- for the session the caller opens (the cloud PCT lanes; the session is checked against
+     *  {@code type}, as every session is). */
+    public static String declaring(String model, DatabaseType type, String specificationAndAuth) {
+        return model + "\n" + runtime(type, specificationAndAuth);
+    }
+
     /** The empty database, its connection on the in-process {@code type}, and the runtime binding them. */
     public static String declaration(DatabaseType type) {
         return runtime(type, specificationAndAuth(type));
@@ -67,7 +75,7 @@ public final class StorelessRuntime {
             case DuckDB -> "specification: DuckDB { };\n  auth: Test";
             case H2 -> "specification: LocalH2 { };\n  auth: DefaultH2";
             case SQLite -> "specification: SQLite { };\n  auth: Test";
-            case Postgres -> throw new IllegalArgumentException("Postgres is a server: its storeless runtime"
+            case Postgres, MariaDB, MySQL -> throw new IllegalArgumentException(type + " is a server: its storeless runtime"
                     + " declares the session's coordinates (onServer)");
             case DB2, MemSQL, Sybase, SybaseIQ, Composite, SqlServer, Hive, Snowflake, Presto, Trino, BigQuery,
                  Redshift, Databricks, Spanner, Athena, Oracle, ClickHouse, Aurora ->

@@ -7,7 +7,12 @@ import com.legend.sql.SqlQuery;
 import com.legend.sql.dialect.DuckDb;
 import com.legend.sql.dialect.EngineStyleH2;
 import com.legend.sql.dialect.H2;
+import com.legend.sql.dialect.MariaDb;
+import com.legend.sql.dialect.BigQuery;
+import com.legend.sql.dialect.Databricks;
 import com.legend.sql.dialect.Postgres;
+import com.legend.sql.dialect.SQLite;
+import com.legend.sql.dialect.Snowflake;
 import com.legend.sql.dialect.SqlDialect;
 
 import java.nio.charset.StandardCharsets;
@@ -47,6 +52,11 @@ public final class RenderCensus {
         dialects.put("H2", H2::new);
         dialects.put("EngineStyleH2", EngineStyleH2::new);
         dialects.put("Postgres", Postgres::new);
+        dialects.put("Databricks", Databricks::new);
+        dialects.put("Snowflake", Snowflake::new);
+        dialects.put("BigQuery", BigQuery::new);
+        dialects.put("SQLite", SQLite::new);
+        dialects.put("MariaDb", MariaDb::new);
         Map<String, Object> models = new HashMap<>();
         StringBuilder out = new StringBuilder();
         int n = 0;

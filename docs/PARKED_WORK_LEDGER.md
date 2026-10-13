@@ -174,7 +174,12 @@ subtree once and points both readers at the name, with the measurement above clo
 **Anchor.** `extractSubqueriesAsCtes` is called from exactly one product file
 (`SqlPostProcessors.java`, the opt-in path) and `new SqlWith(` is constructed in exactly
 one (`SqlRewriter.java`, its structural copy-on-write). A real common-subexpression pass
-moves at least one of those.
+moves at least one of those. *Anchor note 2026-10-11 (BigQuery's burn-down): a `SqlWith`
+carries a `recursive` flag (a fold hoisted as a top-level recursive CTE,
+`FoldsAsRecursiveCtes`), and every rebuild of one goes through `SqlWith.with`, which keeps
+it; so `SqlRewriter`'s copy-on-write constructs through `SqlWith.java`, and the anchor names
+`SqlWith.java` and `VerdictSql.java`. The recursive CTE is not a common-subexpression pass;
+this item stays parked.*
 
 ---
 

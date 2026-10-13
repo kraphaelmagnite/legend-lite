@@ -90,6 +90,10 @@ public enum SqlFn {
     ROUND_HALF_UP, ERROR, FLOOR_RAW,
     // Variant construction
     TO_VARIANT, BOOL_TO_TEXT,
+    /** A Float's Pure literal spelling (2026-10-11): every zero {@code 0.0}, the exponent unfolded to fixed point, at
+     *  least one fraction digit -- the kind-faithful carrier's text of a double (lowering/LiteralSpelling). One call
+     *  per value, which each dialect spells (dialect/FloatCanonText the portable decomposition). */
+    FLOAT_CANON,
     // Variant navigation: logical JSON access; text-extraction idioms are rendering
     VARIANT_ELEMENTS, VARIANT_GET, JSON_TYPE,
     /** json_array_length(doc): the element count of a JSON array (the size of a serialized class collection — database-mode assertSize). */

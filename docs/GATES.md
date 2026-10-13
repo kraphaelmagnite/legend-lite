@@ -23,8 +23,9 @@ PCT, the stress corpus, parser equivalence, Channel B, the native image's tests)
 | `corpus_h2` | 5 | `//spec:corpus_h2` | the relational corpus on H2, both judges and their per-assert join — :corpus_duckdb's shape (joined since 2026-09-23; `rcorpus/h2-database-untriaged-register.txt` lists what the first join found and has yet to be explained) |
 | `pct_duckdb` | 6 | `//pct:pct_duckdb` | the five PCT suites on DuckDB, a suite of one target per PCT suite (`//pct:pct_duckdb_<suite>`, each judged on its own census traffic; Bazel workplan P3-09) |
 | `pct_h2` | 7 | `//pct:pct_h2` | PCT relation on H2 2.4.240: 469 tests, H2's 26 expected failures (27 -> 26, 2026-10-02: the self-referencing exists) each pinned by message (`Test_LegendLite_H2_RelationFunctions_PCT`) |
-| `pct_postgres` | 7P | `//pct:pct_postgres` | PCT, all five suites, on Postgres 16.15 (one target per suite, `//pct:pct_postgres_<suite>`; P3-09) started by the test JVM from pinned binaries (`@embedded_postgres`, no Docker): 1,249 tests, Postgres's expected failures each pinned by message (`Test_LegendLite_Postgres_*Functions_PCT`), grouped as wrong answers, Postgres's own errors, leg P4's collections and Variant, and named refusals: 267 first measured, 242 after tier 1 (multi-column pivots, the self-referencing exists, half-even rounding to a scale, calendar buckets, whole-partition median/mode/quantile, maxBy/minBy, pow, ordered removeDuplicates), 230 after tier 2 (Variant over jsonb: key and index access, toVariant, parse, typed reads), 145 after tier 3 (lists of scalars as native arrays), 129 after tier 4 (structs and non-scalar lists as jsonb, held flat); its census divergence ceilings measured per suite (Essential 12, Grammar 4, the others 0; P3-09) |
+| `pct_postgres` | 7P | `//pct:pct_postgres` | PCT, all five suites, on Postgres 16.15 (one target per suite, `//pct:pct_postgres_<suite>`; P3-09) started by the test JVM from pinned binaries (`@embedded_postgres`, no Docker): 1,249 tests, Postgres's expected failures each pinned by message (`Test_LegendLite_Postgres_*Functions_PCT`), grouped as wrong answers, Postgres's own errors, leg P4's collections and Variant, and named refusals: 267 first measured, 242 after tier 1 (multi-column pivots, the self-referencing exists, half-even rounding to a scale, calendar buckets, whole-partition median/mode/quantile, maxBy/minBy, pow, ordered removeDuplicates), 230 after tier 2 (Variant over jsonb: key and index access, toVariant, parse, typed reads), 145 after tier 3 (lists of scalars as native arrays), 129 after tier 4 (structs and non-scalar lists as jsonb, held flat); its census divergence ceilings measured per suite (Essential 13, Grammar 5, the others 0; P3-09; 12 and 4 until 2026-10-11, when two more tests reached the wire with a struct as jsonb, the by-design class: `PctCensusGate.maxWireDiverge`) |
 | `pct_channel_b` | 9 | `//pct:pct_channel_b` | Channel B dual-verdict suites, one target per class (`//pct:pct_channel_b_<suite>`; P3-09) |
+| (heavy) | 9 | `//pct:pct_channel_b_<lane>` | Channel B on each other database (h2, postgres, sqlite, mariadb, mysql, databricks, snowflake, bigquery, trino, clickhouse), judged against that lane's own channel A ledger (2026-10-11, `docs/CLOUD_BACKENDS_PCT_2026_10_11.md` §16); manual, in `//gates:heavy` |
 | `parser_equivalence` | 8 | `//parser-equivalence:parser_parity`, `//parser-equivalence:round_trip_proof`, `//wasm:round_trip_test` | byte parity with legend-engine's parser; text to JSON to text to JSON over the corpus, lite's projects and the upstream showcase projects, in the JVM and in the tab (the WebAssembly build held to the JVM's answers; the protocol program's leg 5) |
 | `stress` | 10 | `//core:stress_suites`, `//core:stress_suites_h2` | the stress corpus, on DuckDB (shared sessions, MIN_PASS) and on H2 (a fresh session per test, the engine's shape, MIN_PASS_H2; enforced since 2026-10-05, Bazel workplan P3-12); its measuring knobs are `bazel run //core:stress_tool` |
 | `warehouse` (also Linux arm64) | — | `//warehouse:tests`, `//warehouse:sqlapi_wasm_build_test`, `//warehouse:tests_native`, `//warehouse:postgres_live`, `//warehouse:postgres_live_native` | the warehouse's suite on the JVM, and its SQL API compiled to WebAssembly (P3-24); the suite against the native binary, on Linux, macOS and Windows x64 (since 2026-10-02) and Linux arm64 (since 2026-10-04, P1-13), linked on Linux by the hermetic LLVM toolchain (P1-09); the launchers and their test went with the build rebuild's L1c (2026-10-07: the server runs as built, nothing of Bazel in it; the app as a plain folder is `//datacube:verify_app_test`'s, in `datacube`); the two tests against a live Postgres, in a lane for the first time on 2026-10-07. On Windows the lane runs in Eastern time, not the runners' UTC, so a test that reads the machine's zone shows (since 2026-10-03; the warehouse's reference session) |
@@ -32,6 +33,37 @@ PCT, the stress corpus, parser equivalence, Channel B, the native image's tests)
 | `ui` | — | `//studio:tests`, `//query:tests`, `//query-store:local_test`, `//query-store:share_test`, `//query-store:lite_test` | Studio's and Query's suites and typechecks; the saved-query store's one suite against the page's own store and against legend-lite's server (started by the test), and a saved query's share link round trip. Their browser harnesses (`//studio:verify_test`, `//query:verify`, `//site:verify`) join in L1b |
 | `sdlc` | — | `//sdlc-server:git_repository_test`, `//sdlc-client:tests`, `//depot-client:tests` | the model home (`docs/STUDIO_DESIGN_2026_10_02.md`): the SDLC and Depot suites, each run on the page's WebAssembly module and on the server over git |
 | `heavy` (manual; no per-push lane) | — | `//spec:reference_lane`, `//spec:update_reference_lane_test`, `//spec:corpus_warehouse_verdict`, `//spec:manifest_world_census`, `//parser-equivalence:diagnostics`, `//pct:update_ratchets_test`, `//tools/python:requirements.test` | the reference lane (about 8 GB), the warehouse corpus passes (they build the GraalVM server), the manifest-world census, the parser-equivalence diagnostics battery, PCT's ratchet re-measure, the Python requirements test: a landing runs the ones it needs by hand (`docs/build-inventory/program/START_HERE.md` §5); a scheduled run is PHASE_8.md Test-11 |
+
+**The Postgres lanes in a root container** (2026-10-11). The embedded Postgres refuses root (`initdb` does), so a
+session that runs as root (a cloud container) runs a Postgres test as an unprivileged user, outside the sandbox:
+`chmod o+x /root` once (other users may pass through the Bazel output base's parent, not list it), then
+`bazel test //pct:pct_postgres --strategy=TestRunner=standalone --run_under="$PWD/tools/postgres/as_unprivileged.sh ubuntu"`
+(any existing non-root user). The wrapper hands the test's own directories to the user and drops root with `setpriv`.
+Measured: all five Postgres suites green as `ubuntu`. CI runs as a non-root user and needs none of this.
+
+**`//gates:local` in a root container behind a TLS-intercepting proxy** (2026-10-12, measured at 5b05af7 in a
+Claude Code cloud container). Three things differ from CI, and each has its own remedy:
+
+1. *Postgres refuses root*: the recipe above, over the whole gate (every test then runs as `ubuntu`). With it alone,
+   334 of 347 tests passed; the 13 that failed were all DataCube, Query and site tests over DuckDB-WASM or the pinned
+   Chromium, not one of them a Postgres test.
+2. *The proxy re-signs TLS, and a Bazel test inherits none of the variables that trust it.* DuckDB-WASM downloads its
+   `json` and `parquet` extensions from `extensions.duckdb.org` when a test first reads JSON or Parquet. In Node it
+   fetches them on a worker thread and waits on an `Atomics` flag that only a successful fetch sets. Without
+   `NODE_EXTRA_CA_CERTS`, Node 22 refuses the proxy's certificate (`SELF_SIGNED_CERT_IN_CHAIN`, measured with the
+   toolchain's node). The flag is never set, so the test hangs until its TIMEOUT. Chromium reads its trust store from
+   `$HOME/.pki/nssdb`, and a test's `HOME` is its `TEST_TMPDIR`, which has none. Pass the bundle and a home whose NSS
+   store trusts the proxy's CA (made once with `certutil -A -t "C,," ...` as that user):
+   `--test_env=NODE_EXTRA_CA_CERTS=/root/.ccr/ca-bundle.crt --test_env=HOME=/home/ubuntu`. With these, 11 of the 13
+   passed.
+3. *Two tests write into their working directory*, the runfiles tree, which root owns: `//datacube:upload_test` and
+   `//engine-client:model_data_test` (DuckDB-WASM's `COPY ... TO 'nested.json'`, `'tmp_made.parquet'`). As `ubuntu`
+   they fail with `EACCES`. Run those two as root, without `--run_under`, with item 2's
+   `NODE_EXTRA_CA_CERTS`: both passed.
+
+So all 347 tests passed in this container. The two hazards are the tests' own: an extension fetched from the
+network at run time, and a scratch file written outside `TEST_TMPDIR`. CI doesn't see them because it has direct
+internet and owns its runfiles tree.
 
 Beside the gates, in `bazel test //...`:
 
@@ -8707,6 +8739,33 @@ compiled in lite and failed in the engine.
    "Can't find the packageable element '<descriptor>'" at the class mapping (its id conversion fails and the raw text is
    looked up): a deliberate difference, so an engine-fixture comparison of this case sees two messages.
 
+## 2026-10-12 — DataCube one app, steps 1 and 2 and PlanAndRun: the tab, then Python's pages, one app and one path on both hosts (the DataCube + Python line)
+
+The design is `docs/DATACUBE_ONE_APP_DESIGN_2026_10_11.md` (agreed 2026-10-11; §15 PlanAndRun agreed 2026-10-12). PR
+#31, merged as 36b72ee13. CI: run 38323008283 on f735d1857, every job green on every platform (52 checks), the branch up
+to date with main acd7a1df6; main's own run 38327366349 (dispatched: the push run was skipped by the merged commits'
+`[skip ci]`) green. `//gates:local //datacube/... //python/... //parser-equivalence/...` green on the rebased head before
+the push (361 pass, 2 of main's guards skipped on macOS).
+
+1. **What it is.**
+   - One DataCube app (`datacube/src/app/`) over services; the tab, Python's tab and widget, and Python headless each give
+     a set of them. `demo/boot.ts` is the tab's host; `demo/page.ts`, `engine-page.ts` and `engine-cube.ts` are gone.
+   - On Python's pages: a page's files and examples (sent a part at a time, any size), remote files (DuckDB's httpfs,
+     pinned and carried in the wheel), Save and Open… (records in `ll.home()`), every feature by giving services.
+   - PlanAndRun: every grid on either host is plan + run + read. On Python, one call (`plan-and-run.json`) plans
+     against the model Python holds, runs only that SQL on its DuckDB, and the page reads the rows with the tab's reader.
+     Python's own results (`table.execute`, `grid.to_pandas()`) are typed by the plan.
+   - The tab's DuckDB is set up from the compiler's session setup (`Boundary.sessionSetup`: UTC), as Python's is.
+2. **What proves it.**
+   - `//datacube:python_engine_test` (35 checks, its browser in America/New_York): every cube case answers the same
+     through PlanAndRun on Python and in the tab, SQL included; seven reader files read alike on both hosts; `now()`
+     alike; Python's tab and widget; files, examples, remote files and saved pages on Python's page.
+   - `//python:engine_test`, `:frames_test`, `:headless_test`, `:wheel_test`; `//datacube:upload_test`, `:duckdb_test`.
+3. **Known, and where it goes** (§15.7): two DuckDB patch versions (1.5.4 in the tab, 1.5.5 in Python); Python's
+   results come back whole (streaming a follow-up); a query's own `sourceUrl('file:...')` accepted on Python (the user,
+   §15.4); a Variant stored as a STRUCT under `SELECT *` comes back raw until the Compiler Rewrite line's egress fix
+   lands (core/variant-star-egress).
+
 ## 2026-10-11 — DataCube headless in Python: DataCube's own code in V8, planned by the native library, run on Python's DuckDB, no WebAssembly (the DataCube + Python line)
 
 The design is `docs/DATACUBE_HEADLESS_PYTHON_DESIGN_2026_10_11.md`. The user agreed it and ruled §10: one package, V8,
@@ -8807,3 +8866,257 @@ on the landing and on its amendment after the audit); the lane query empty.
    port and the landed file (the collection wrapper's methods are unreachable from the planner and dropped).
 5. **Not chased:** `Class.getEnumConstants` (2.5 % of the profile: TeaVM's `EnumSet` asks for the constants on every
    lookup) and the module's remaining 2.4x over the native library.
+
+## 2026-10-11 — `#SQL{...}#`: a Postgres SELECT inside any Pure query, judged against Postgres 16 (the seventh line)
+
+Announced in `docs/IN_FLIGHT.md` the same day (2aa74a8). Branch `claude/loving-euler-gjta59`; the study and the plan,
+`docs/LEGEND_SQL_STUDY_2026_10_11.md` (§9 and §9.1 hold the numbers below).
+
+1. **What lands.** A Postgres `SELECT` written as `#SQL{...}#` in a Pure query becomes an ordinary Relation expression.
+   - **The reader and the translator:** a new package, `protocol/sql/`.
+   - **The seam:** `compiler/spec/SqlIslands`, typed once by the Typer's island arm.
+   - **What it reads:**
+     - joins of every kind (ON, USING, NATURAL);
+     - FROM subqueries and WITH; UNION, INTERSECT and EXCEPT;
+     - subqueries in expressions, correlated to any level (IN, EXISTS, ANY/ALL, scalar);
+     - window functions with ROWS and RANGE frames, and named windows;
+     - a catalog of Postgres's scalar functions, the statistical aggregates, and casts.
+   - **Semantics:** Postgres's three-valued logic is spelled out in the Pure itself (register S44). What has no
+     faithful Pure spelling is refused by name, never approximated.
+   - **Registered:** S43 to S47 in `docs/SEMANTICS_REGISTER.md`.
+2. **Four lowering fixes in `lowering/Lowerer.java`.** The island's cases found them in plain Pure; each has a test
+   that fails without its fix (`ConcatenateFlattenCheckerTest`, `CorrelatedRelationCheckerTest`):
+   - A concatenate whose branch sorts or limits rendered `... LIMIT 2 UNION ALL ...`. Such a branch is now a
+     subselect.
+   - `exists` over a sliced relation (limit, offset, qualify) merged its predicate into the slice's WHERE, so it ran
+     before the LIMIT. That was a silent wrong answer: `[1, 2]` for `[2]`. Such a relation is now isolated first.
+   - A join condition read any variable but the left side's as the right side, so an enclosing row's `$p.id` became
+     the right side's own `id`. An enclosing row now resolves through the enclosing scopes.
+   - A relation `map` read as a value (`map->toOne`) did not push the enclosing row's scope, so a correlated one
+     could not resolve. It now pushes it, as the `exists` and `size` arms do. The independent review found that
+     this let a row's own column that a filter cannot fold in place (a window column) resolve to the enclosing
+     row's same-named column, or fail at the query's root; a row's own variable is now never looked up among the
+     enclosing rows (`scopedResolver`, two more tests).
+3. **The parity corpus.** legend-engine 4.145.0's 1,703 `parity-tests` cases, plus 177 of legend-lite's own
+   (`core/src/test/resources/sql-parity/lite/`), run as islands.
+   - **Two lanes:** `//core:sql_parity_test` (DuckDB) and `//core:sql_parity_postgres_test` (Postgres 16), both in
+     `//gates:core`.
+   - **The judge:** Postgres 16's own answers, snapped. The Postgres lane checks each snapped answer against
+     Postgres itself on every run.
+   - **The ratchet:** each case's status is held by `ledger.tsv`.
+   - **The result, identical in both lanes:**
+
+     | | upstream's 1,703 | own 177 |
+     |---|---|---|
+     | PASS | 951 | 144 |
+     | FAIL (wrong answer) | 0 | 0 |
+     | BUG (answers what Postgres rejects) | 0 | 0 |
+     | ERROR (errs where Postgres answers) | 0 | 0 |
+     | REFUSED by name | 623 | 18 |
+     | BOTH_ERROR | 61 | 15 |
+     | SKIP | 68 | 0 |
+
+   - **Against upstream:** upstream legend-engine passes 1,026 of its 1,703, with 36 wrong answers and 61 accepted
+     invalid queries.
+4. **Judges.**
+   - **The local gate:** `bazel test --lockfile_mode=error //gates:local` on the branch merged with main e56d802: 332 targets, 316 pass. The 16 that fail are this root container's. 13 are browser and timeout targets that fail the same way on main's tree before this work (11283c8): a WebAssembly signature trap in three DataCube and Query harnesses, `//site:verify_test`'s selector wait, six tests that time out even alone, and a download from `extensions.duckdb.org`. The other 3 are the Postgres targets, which `initdb` refuses as root.
+   - **The Postgres targets in a root container:** `//core:sql_parity_postgres_test`, `//core:sql_island_postgres_test`
+     and `//core:postgres_arm_test` pass through the unprivileged wrapper (`tools/postgres/as_unprivileged.sh`,
+     7c21e6d on `claude/great-wright-p6t5s1`).
+   - **The six corpus passes,** rerun against a baseline built from main 8c8b92d the same day: 22 result files
+     identical, 0 differing (`compare_judges.py`; both builds executed every pass, 31 sandboxed processes each,
+     about 16 minutes). Rerun on 2026-10-12 with the review's `scopedResolver` fix: 0 differing again
+     (the six passes executed, about 20 minutes).
+   - **The full CI run:** the pull request's (neema2/legend-lite#28). It landed 2026-10-12 as ebc419f, merging d312dfd
+     over main d2eefc5 with `[skip ci]`:
+     - gates run 38198865199, green on every job (52 checks) after one re-run of windows / warehouse;
+     - diagnostics run 38198865034, green.
+
+     The re-run's failure was `//datacube:python_engine_test`'s teardown race, which this change does not touch: answers
+     to a taken-down widget view were still in flight when the browser closed. Its first two runs failed only in the
+     core lanes, in `//core:sql_parity_postgres_test`'s check that the snapped answers are Postgres's:
+     - **Linux, macOS and Windows** (38194644588): the two `AGE(x)` answers drifted a day after their snap. `AGE(x)` is
+       measured from today, and so is `CURRENT_DATE - INTERVAL '365 days'`: the three are now volatile, not snapped
+       (SKIP; they were refused).
+     - **macOS and Windows** (both runs): 13 `bytea` answers had been snapped as the JVM's identity hash of a byte
+       array (`[B@2abf4075`), which repeats from run to run on Linux only; they are Postgres's `\x` hex now. And 15
+       answers of Postgres's float functions (`cbrt`, `atan`, `log`, `cosh`, ...) differ in the last digit, because
+       each platform's C library computes them: the check now lets two doubles differ by 1e-12 of the larger (the
+       judge's own tolerance is 1e-6).
+5. **Not done, recorded in the study** (§9.1, "Refused by name" and "Next steps"):
+   - `round(x, n)`: Pure's round is half to even, Postgres's numeric round half away from zero.
+   - `strpos`: Pure's `indexOf` is lowered one too high; PCT pins it.
+   - `parseDecimal` lowers to a fixed `DECIMAL(5, 2)`.
+   - LATERAL, intervals, arrays, JSON operators, regular expressions.
+
+## 2026-10-12 — `#SQL{...}#`: the semi-structured step — jsonb over Variant, LATERAL, set-returning functions
+
+Announced in `docs/IN_FLIGHT.md` the same day (d9adc5a). Branch `claude/loving-euler-gjta59`; the study,
+`docs/LEGEND_SQL_STUDY_2026_10_11.md` §9.2 (what reads, what is refused, the findings, the numbers below).
+
+1. **What lands.** A Variant column is Postgres's `jsonb` in the SQL front end (register S49).
+   - **Navigation:** `->` and subscripts are `get`. `->>` is its text (`to(@String)`). `#>` and `#>>` walk a constant
+     `text[]` path, as do `json(b)_extract_path(_text)`.
+   - **Constants and casts:** `'...'::jsonb`, `jsonb '...'` and `text::jsonb` are `fromJson`. `to_jsonb` is `toVariant`.
+   - **Set-returning functions,** in FROM, after a LATERAL, or as a whole select-list item:
+     - `json(b)_array_elements(_text)` and `json(b)_object_keys`;
+     - `generate_series` of integers (`range`);
+     - `unnest(ARRAY[...])` and `unnest(string_to_array(...))` (`flatten`).
+   - **LATERAL subqueries:** by comma, `CROSS JOIN` and `[INNER] JOIN ... ON`, each Pure's `lateral`.
+   - **A query without FROM:** one row.
+   - **Refused by name:** what lite would answer otherwise than Postgres (the study's list), e.g. `jsonb`'s order and
+     equality as keys, `json(b)_array_length`, `LEFT JOIN LATERAL`, `WITH ORDINALITY`.
+2. **Two fixes in `sql/dialect/`,** found by the cases, both in plain Pure:
+   - **`DuckDb.java`:** `toMany(@Variant)` cast to `JSON[]`, which turns jsonb's null elements into SQL's NULL: a
+     list read them as missing. It now reads an array's elements with `json_extract(x, '$[*]')`.
+     `LowerRelationTest`'s two pins of that SQL changed with it. PCT's `testToManyFromNonArray` still holds.
+   - **`Postgres.java`:** `toMany(@Variant)` and `to(@Map)` read a value of the wrong shape as an empty list or no
+     map, where Postgres, Pure and DuckDB raise an error. They now raise Postgres's own.
+3. **The parity corpus,** identical in both lanes (`//core:sql_parity_test`, `//core:sql_parity_postgres_test`):
+
+   | | upstream's 1,703 | own 244 (177 before) |
+   |---|---|---|
+   | PASS | 1,016 (951 before) | 192 (144 before) |
+   | FAIL, BUG, ERROR | 0 | 0 |
+   | REFUSED by name | 558 | 30 |
+   | BOTH_ERROR | 61 | 22 |
+   | SKIP | 68 | 0 |
+
+   The own cases are `lite/json.yaml` (41) and `lite/lateral.yaml` (26), new. The judge reads a `json` or `jsonb`
+   cell as its JSON value, and the text of an object or array as JSON (S49).
+4. **Judges,** on the branch rebased onto main c03ac6b (main's d9adc5a since, documentation only, merged in):
+   - **core, checks, the PCT lanes:** `//core:core_tests`, `//gates:checks`, `//pct:pct_duckdb` and `//pct:pct_channel_b`: 169 of 169
+     pass. Their first run found two red: `//core:guardrails` (four rules: the bare-name switch arms, the regex
+     family, TeaVM's `isBlank`, SQL-shaped text) and `//core:update_generated_4_test` (the claim census named the
+     translator for `fromJson`'s FQN). Each is held now without moving a pin (51ef576): the set-returning functions
+     are a table, not name arms, and the translator calls `fromJson` by its simple name, as it does every native.
+   - **The Postgres targets** (`//pct:pct_postgres`, `//core:sql_parity_postgres_test`,
+     `//core:sql_island_postgres_test`, `//core:postgres_arm_test`), through the unprivileged wrapper: 8 of 8 pass.
+   - **The six corpus passes,** against a baseline built from main d9adc5a: 0 result files differing
+     (`compare_judges.py`). The branch changes core, which every pass reads, so with the disk cache off both builds
+     executed all six.
+   - **The full CI run:** the pull request's, neema2/legend-lite#33: run 38316829892 on fee1fd8 green on every job
+     (Linux, macOS, Windows, linux-arm; "gates green"), as was the run on d774f93; merged as e647bf3.
+5. **Not done, recorded in the study** (§9.2's open findings and its "Next steps"):
+   - the literal-Variant fold in `CarrierStrategies` on Postgres, H2 and the engine text;
+   - DuckDB's arrow reading a key that starts with `$` or `/` as a path;
+   - Postgres's `toOne` of a `jsonb` value, and `toVariant` of a string constant there;
+   - a lateral over a correlated one-row relation.
+
+## 2026-10-12 — `#SQL{...}#`: the basics — filters, aggregates, functions, casts, dates, judged and fuzzed against Postgres
+
+Announced in `docs/IN_FLIGHT.md` as the semi-structured step's widenings (5cb0ac1, aa0c469). Same branch
+`claude/loving-euler-gjta59`; it lands in one pull request with the semi-structured step above. The study,
+`docs/LEGEND_SQL_STUDY_2026_10_11.md` §9.3, says what reads, what is refused and why, and the numbers below.
+
+1. **What lands.** The user's order: the basics first (filters, aggregations, joins, select lists, functions).
+   - **Aggregates:** `FILTER (WHERE ...)`, `DISTINCT` in each, `string_agg(... ORDER BY ...)`, `bool_and`/`bool_or`/
+     `every`, `percentile_cont`/`percentile_disc ... WITHIN GROUP`, `corr`/`covar_pop`/`covar_samp`; the boolean
+     ones and the covariances also over a window.
+   - **Windows:** `lag`/`lead` with a default (where the other row is outside the partition, never where its value
+     is NULL).
+   - **NULL and typing:** NULL constants typed as Postgres types them; comparisons with NULL, IN lists and BETWEEN in
+     three-valued logic; CASE, COALESCE, GREATEST and LEAST resolved to one type; ceil, floor, sign, round, extract
+     and date_part in Postgres's types.
+   - **Functions:** exact integer division; `round(x, n)`/`trunc(x, n)` of a numeric exact; `substring`, `strpos`,
+     `left`/`right` with negative counts, `power`; `concat` and `||` spellings.
+   - **Casts:** integer and smallint ranges, a numeric rounded half away from zero, a double half to even,
+     `varchar(n)`. Text values cast to numbers are refused (DuckDB reads `'1.5'`, `'1e3'`, `'1_000'`).
+   - **Inexact numerics:** a quotient, average or root of numerics is a Float here and exact in Postgres; what
+     rounds or spells one is refused (`floor(0.3 / 0.1)` is 3 there, 2 from the double), a double in it or not.
+   - **A sum of integers** is a bigint or a numeric in Postgres by the column's width, which the translator does not
+     know: dividing it by an integer is refused (`sum(x)::bigint / n` and `sum(x)::numeric / n` translate).
+   - **Dates:** a date plus or minus days, the days between dates, interval constants (months, then days, then
+     time), `make_date`, `make_timestamp`, `date_trunc` of a timestamp.
+2. **Two fixes in `sql/dialect/`,** each announced in IN_FLIGHT, each with a test that fails without it:
+   - **`RootNumericTypes.java`:** under DISTINCT, an ORDER BY key that is a projection cast to its numeric type is
+     ordered by the cast expression (Postgres: "for SELECT DISTINCT, ORDER BY expressions must appear in select
+     list").
+   - **`QuantileOrder.java`:** DuckDB's descending discrete percentile at `p = 0` read element 0 of a 1-based list
+     (NULL); it is the first value, as Pure's percentile and Postgres's `percentile_disc` say.
+     `TypeInferenceIntegrationTest.testPercentile_GroupBy_Discrete_Descending_AtZero` pins it. Widened by the
+     review (6d5f0e1): both orders compute the element as Postgres does, `ceil(p * N)` in double precision.
+3. **The parity corpus,** identical in both lanes (`//core:sql_parity_test`, `//core:sql_parity_postgres_test`):
+
+   | | upstream's 1,703 | own 381 (244 at the step above) |
+   |---|---|---|
+   | PASS | 1,122 (1,016 at the step above) | 284 |
+   | FAIL, BUG, ERROR | 0 | 0 |
+   | REFUSED by name | 452 | 46 |
+   | BOTH_ERROR | 61 | 51 |
+   | SKIP | 68 | 0 |
+
+   New own cases: `lite/functions.yaml` (139 now), `lite/windows.yaml` (51), `lite/dates.yaml` (21, new).
+4. **The randomized check.** A scratch generator (never committed) wrote type-correct Postgres queries over the
+   parity schema and ran them through both lanes against Postgres: 13 seeds, about 6,300 queries, growing with each
+   feature. Each wrong answer it found is fixed and pinned by a case (the study lists them); the last seeds found
+   none. One error remains by design: a product beyond the 38-digit decimal overflows where Postgres's numeric
+   answers.
+5. **Judges,** on the branch with main cbd8f01 merged in (main's changes since the step above are IN_FLIGHT only):
+   - **core, checks, the PCT lanes:** `//core:core_tests`, `//gates:checks`, `//pct:pct_duckdb`,
+     `//pct:pct_channel_b`: 169 of 169 pass on every commit of the step. Guard findings on the way were held without
+     moving a pin: name arms became set lookups, `rowMapper` is called by its simple name (the claim census), a
+     regex split became a scan, a `HashMap` an unmodifiable `LinkedHashMap`.
+   - **The Postgres targets** (`//pct:pct_postgres`, `//core:sql_parity_postgres_test`,
+     `//core:sql_island_postgres_test`, `//core:postgres_arm_test`), through the unprivileged wrapper: 8 of 8 pass.
+   - **The six corpus passes,** against a baseline built from main cbd8f01: 0 result files differing (`compare_judges.py`); with the disk cache off both builds executed all six.
+   - **The full CI run:** the pull request's, neema2/legend-lite#33: run 38316829892 on fee1fd8 green on every job
+     (Linux, macOS, Windows, linux-arm; "gates green"), as was the run on d774f93; merged as e647bf3.
+   - **The independent review** (an agent that wrote none of it): eight wrong answers traced, each measured, fixed and
+     pinned (the study's §9.3 lists them); three recorded (a constant column's `corr` noise in Postgres, inexact
+     comparisons at the exact boundary, `make_date` of year 0).
+6. **Not done, recorded in the study:** regular expressions (`~`, `regexp_*`); `mode()` (DuckDB breaks ties
+   otherwise); `corr` over a window; text cast to a number; intervals as values and timestamp differences; the
+   semi-structured step's open findings (DuckDB's JSON numbers as doubles among them, for the user to decide).
+
+## 2026-10-12 — A stored Variant column leaves the statement as JSON, whatever the shape of the query (the Compiler Rewrite line)
+
+The design is `docs/VARIANT_STORAGE_CENSUS_2026_09_27.md` (the user's "go", 2026-09-27), its "Addendum 2026-10-12: the
+star egress" this landing adds. The finding is the DataCube line's (2026-10-12), probed on Python's DuckDB and the tab's
+alike; the Plan Gen / Exec Split line agreed with the placement (lowering only; result typing may assume JSON for a
+Variant output in every shape) and asked for the statement's own column type to be held, which the test does. Branch
+`core/variant-star-egress`; the announcement cbd8f014f on `main` first; rebased onto main 36b72ee13 (PRs #31 and #33 in)
+before landing, the core change byte-identical (the two patches compared line for line), and the judges, the render
+census, the local gate and one CI run re-run on the rebased tree. CI: run 38327604817 on the rebased branch, green on
+all 50 jobs first time (the summary job a dispatched run skips); the first run, 38310588988 on the commit before the
+rebase, green on all 50 too (every lane, every platform; `core` is where the test runs, and the module in `wasm` and
+DataCube's tests plan through the same renderer). `//gates:local` green (348 pass, 2 skipped:
+`//tools/guards:classpath_test` and `markdown_inputs_test`, which depend on the MariaDB lane, incompatible on this Mac
+tests); the lane query empty; the judges against baselines built from main 36b72ee13: every result file the same (0 of
+23 differ; `docs/build-inventory/program/evidence/variant-star-egress/judges_compare.txt`); the render census: 55,016
+entries, 41 differ, every one in the core lane's own unit tests: the new test's renders, and seven `extend` shapes over
+a table holding a Variant column now listing their columns, each with its successor (`render_census_compare.txt` beside
+it; the audit is `AUDIT.md` there).
+
+1. **The cause.** V2 of the census reads a stored Variant column as JSON through the DuckDB dialect's `columnRef`
+   hook, `CAST(col AS JSON)` on a column REFERENCE. A star renders none: a star frame (`SELECT *`, which a bare
+   source, `limit`, `filter`, `sort` and `distinct` keep to the statement's end) and a star projection
+   (`SELECT t0.*, x`: `extend`) alike. So an uploaded JSON file's `customer` column, a STRUCT as DuckDB's `read_json`
+   stores it and a Variant to the model, left the query as `{"name":"A","tier":2}` under `select` and as the
+   STRUCT under `limit`, and each executor rendered the STRUCT its own way (the tab's reader quoted the nested
+   integer). D2 of the census ("a whole column value leaving the query") was removed for projections, not for stars;
+   the census's own test projected and grouped and never took a bare `limit`.
+2. **What landed.** `core/src/main/java/com/legend/sql/dialect/VariantEgress.java`, a DuckDB render pass on the
+   statement root only (the renderer's `rewriteRoot` hook, last of the dialect's passes; `StoredReads` follows):
+   every star standing for a source that holds a stored Variant column is spelled into that source's columns
+   (`Stars.columns`, as `StoredReads` spells a star over a read table), the Variant ones read through the hook
+   (`CAST(t0.V AS JSON) AS V`), every other a bare reference, a join's sides each in place; a UNION's branches and a
+   WITH's body are roots too (`RootNumericTypes`'s precedent). Below the root nothing changes (a star there feeds a
+   reference the hook already reads); no other dialect changes (native nested storage is DuckDB's); the wire wrappers
+   (`_wire0`, the JSON and CSV wires) already read through references and are unchanged. `DuckDb.storedVariant` over
+   an output column; the pass added last in `DuckDb.passes()`.
+3. **How it is held.** `LowerRelationTest.wholeVariantReadsAsJsonInEveryShape` (`//core:core_tests_lowering`, the
+   `core` lane): ten shapes (bare, sort and limit, filter, sort, distinct, select, extend, join, a sorted join,
+   concatenate) over one column held three ways (JSON text in a VARCHAR, DuckDB JSON, a native STRUCT): the read in
+   the SQL (`CAST(t0.V AS JSON) AS V`, and in each UNION branch), the statement's own column type `JSON` as DuckDB's
+   JDBC reports it (what a result decoder sees), identical rows across the storages. Without the pass the JSON-type
+   check and the row comparison fail for the VARCHAR and STRUCT storages. The judges, the render census and the
+   corpora show no other SQL text changed: no pinned text anywhere has a root star over a DuckDB Variant column.
+4. **The audit** (the branch's, before landing): one blocker, the star projections (`extend`'s `SELECT t0.*, x`,
+   `ExistsJoinForm`'s, `Pivots`' `StarExcept`), which the first cut's star-frame-only rule missed; three should-fix:
+   UNION and WITH roots, the first cut's join wrapper dropping the frame's ORDER BY from the outermost statement
+   (gone with the wrapper: a join's sides are listed in place), and the test's coverage; three nits (a comment, line
+   lengths). All taken.
+5. **Not chased.** `Fold.declaredKindEnvelope`'s Float rule still rides a star frame through unchanged (its own
+   2026-09-17 reason: a wire already DOUBLE); it is a different rule and untouched. The tab's reader's JSON rendering
+   of a STRUCT that reaches it by another route (the DataCube line's `toScalar` fix) stands on its own.

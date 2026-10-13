@@ -12,18 +12,26 @@ http_jar (rules_java's) downloads each jar from Maven Central, checks its sha256
 load("@rules_java//java:http_jar.bzl", "http_jar")
 load(":jars_table.bzl", "JARS")
 
+def _file(coordinate):
+    """The jar's file name: artifact-version.jar, or artifact-version-classifier.jar (group:artifact:version:classifier)."""
+    parts = coordinate.split(":")
+    if len(parts) == 3:
+        return "%s-%s.jar" % (parts[1], parts[2])
+    if len(parts) == 4:
+        return "%s-%s-%s.jar" % (parts[1], parts[2], parts[3])
+    fail("a jar coordinate is group:artifact:version or group:artifact:version:classifier, not " + coordinate)
+
 def _url(coordinate):
-    group, artifact, version = coordinate.split(":")
-    return "https://repo1.maven.org/maven2/%s/%s/%s/%s-%s.jar" % (group.replace(".", "/"), artifact, version, artifact, version)
+    group, artifact, version = coordinate.split(":")[:3]
+    return "https://repo1.maven.org/maven2/%s/%s/%s/%s" % (group.replace(".", "/"), artifact, version, _file(coordinate))
 
 def _product_jars_impl(module_ctx):
     for name, jar in JARS.items():
-        _, artifact, version = jar.coordinate.split(":")
         http_jar(
             name = name,
             urls = [_url(jar.coordinate)],
             sha256 = jar.sha256,
-            downloaded_file_name = "%s-%s.jar" % (artifact, version),
+            downloaded_file_name = _file(jar.coordinate),
         )
     return module_ctx.extension_metadata(reproducible = True)
 

@@ -60,6 +60,13 @@ class ChannelBUnclassifiedTest {
         }
         System.out.println("[chB-Unclassified] census=" + census
                 + " total=" + out.size());
+        // ANOTHER LANE (2026-10-11, the user's ask): channel B on a database other than DuckDB is judged against that
+        // lane's own channel A ledger and engine manifest, by its own measured numbers (ChannelBLane); the pins below
+        // are the reference lane's
+        if (!ChannelBLane.isReference()) {
+            ChannelBLane.judge("Unclassified", "chB-Unclassified", out);
+            return;
+        }
         ChannelBDiff.Counts c = ChannelBDiff.report("chB-Unclassified", out,
                 com.legend.testing.Runfile.property("pct.suite.Unclassified"),
                 com.legend.testing.Runfile.property("pct.oracle.Unclassified"));

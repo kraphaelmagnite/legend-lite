@@ -61,11 +61,17 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * which the runner passes on unread (C1.2's carriage), one choke point for both. It
  * replaces Executor.wireText's and streamWireRows' two sites, which step 4 deletes
  * with the paths they serve: 12 then.)
+ * (2026-10-11, the MariaDB dialect, docs/CLOUD_BACKENDS_PCT_2026_10_11.md §13: 14 -> 15.
+ * Sessions.raisedMessage's ONE getString carries the message a MariaDB raise left in
+ * its session variable, the database's own text passed on unread (C1.2's carriage): a
+ * MariaDB SELECT can raise no error of its own text (SIGNAL runs only in a stored
+ * program; every run-time error's text is fixed, measured), so the raise keeps it in
+ * the session and fails on a fixed error.)
  */
 @Tag("guardrail")
 class TenetRatchetTest {
 
-    private static final int RESULT_SET_ACCESSOR_SITES = 14;
+    private static final int RESULT_SET_ACCESSOR_SITES = 15;
 
     private static final Pattern ACCESSOR = Pattern.compile(
             "\\.get(String|Object|Int|Long|Double|Boolean|BigDecimal"

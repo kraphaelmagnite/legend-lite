@@ -9,7 +9,8 @@
 // first: points Playwright at the Chromium Bazel fetched
 import '../../../tools/browser/pinned-chromium.mjs';
 import { spawn } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { chromium } from 'playwright';
 import { runfileFromEnv } from '../../../tools/js/runfiles.mts';
@@ -18,11 +19,15 @@ const fixture = runfileFromEnv('ENGINE_FIXTURE');
 const site = runfileFromEnv('DATACUBE_SITE');
 const bundle = readFileSync(runfileFromEnv('PYTHON_ENGINE_PAGE'));
 const upstream = readFileSync(runfileFromEnv('UPSTREAM_ARROW_ANSWER'));
+// this user's legend-lite folder, the test's own (the pages Save writes go there, never into a real home)
+const home = mkdtempSync(join(process.env.TEST_TMPDIR, 'legend-lite-home-'));
 
 // the library by its runfiles path, as //python's tests are given it: a program a test starts gets no BUILD env
 const engine = spawn(fixture, ['--site', site], {
   stdio: ['pipe', 'pipe', 'pipe'],
-  env: { ...process.env, LEGEND_LITE_LIBRARY: runfileFromEnv('LEGEND_LITE_LIBRARY'), PYTHONUTF8: '1',
+  env: { ...process.env, LEGEND_LITE_LIBRARY: runfileFromEnv('LEGEND_LITE_LIBRARY'),
+    LEGEND_LITE_DATACUBE: runfileFromEnv('LEGEND_LITE_DATACUBE'),
+    LEGEND_LITE_DUCKDB_EXTENSIONS: runfileFromEnv('LEGEND_LITE_DUCKDB_EXTENSIONS'), LEGEND_LITE_HOME: home, PYTHONUTF8: '1',
     PYTHONDONTWRITEBYTECODE: '1' },
 });
 // the engine's own account, in this test's log: a server-side reason is then never invisible
@@ -55,10 +60,15 @@ const served = JSON.parse(first);
 const origin = served.url;
 
 let failed = false;
+// the browser closing at the end: a message the engine sends meanwhile (an answer to a call a view taken down made, say)
+// finds its page gone, which is the test's own close and no case's failure (CI runs 38175909649 and 38187695487)
+let closing = false;
 let browser;
 try {
   browser = await chromium.launch();
-  const page = await browser.newPage();
+  // a browser away from UTC: every check here answers alike whatever zone the person is in (the tab's DuckDB set up as
+  // Python's: services/browser.ts setUpSession)
+  const page = await browser.newPage({ timezoneId: 'America/New_York' });
   page.on('pageerror', (e) => { console.log(`page error: ${e.message}`); failed = true; });
   page.on('console', (m) => { if (m.type() === 'error') console.log(`page console: ${m.text()}`); });
   page.on('requestfailed', (r) => console.log(`request failed: ${r.url()} -- ${r.failure()?.errorText ?? ''}`));
@@ -86,8 +96,8 @@ try {
     console.log(`FAIL the setup: ${verdict.setupError}`);
     failed = true;
   }
-  if (verdict.outcomes.length !== 4) {
-    console.log(`FAIL ${verdict.outcomes.length} checks ran, not 4`);
+  if (verdict.outcomes.length !== 7) {
+    console.log(`FAIL ${verdict.outcomes.length} checks ran, not 7`);
     failed = true;
   }
 
@@ -95,11 +105,15 @@ try {
   // token in its fragment; the cube opens over the engine and shows the frame's rows, with nothing run in the tab
   const cube = await browser.newPage();
   cube.on('pageerror', (e) => { console.log(`engine page error: ${e.message}`); failed = true; });
-  cube.on('requestfailed', (r) => console.log(`engine page request failed: ${r.url()} -- ${r.failure()?.errorText ?? ''}`));
+  cube.on('requestfailed', (r) => console.log(`engine page request failed: ${r.url()} ${r.postData() ?? ''} -- ${r.failure()?.errorText ?? ''}`));
   cube.on('console', (m) => console.log(`engine page console ${m.type()}: ${m.text()}`));
   // every file and call the page asks for is answered: a refusal (a missing file, a refused call) fails the test
   cube.on('response', (r) => {
-    if (r.status() >= 400) { console.log(`FAIL engine page answer ${r.status()}: ${r.url()}`); failed = true; }
+    if (r.status() >= 400) {
+      failed = true;
+      // with the engine's reason, as the page was told it
+      void r.text().then((t) => t, () => '').then((t) => console.log(`FAIL engine page answer ${r.status()}: ${r.url()} ${t.slice(0, 600)}`));
+    }
   });
   // the link show() returned (cube.url)
   await cube.goto(served.link);
@@ -108,6 +122,23 @@ try {
   console.log(`${shown ? 'ok  ' : 'FAIL'} the engine's page opens the frame's cube and shows its rows`);
   if (!shown) {
     console.log(`  the page showed: ${(await cube.evaluate(() => document.body.innerText)).slice(0, 400)}`);
+    failed = true;
+  }
+
+  // THE APP ON PYTHON (docs/DATACUBE_ONE_APP_DESIGN_2026_10_11.md, step 2a): the frame is a page of one grid (R1), the
+  // tab's app over Python's services; its Generated Pure & SQL window has the query the page sent and the SQL that
+  // answered it, which Python's planner wrote and Python ran (R4: the page sends Pure, never SQL)
+  const onApp = await cube.waitForFunction(() => document.querySelector('.dc-page') !== null
+    && window.__dataPage?.grids.length === 1
+    // where it plans, as Python said it (services.json: R3), in the status bar's one word
+    && document.querySelector('.dc-app-status')?.textContent === 'local'
+    && /#>\{/.test(document.getElementById('pure')?.textContent ?? '')
+    && /\bSELECT\b/i.test(document.getElementById('sql')?.textContent ?? ''), undefined, { timeout: 30_000 }).then(() => true, () => false);
+  console.log(`${onApp ? 'ok  ' : 'FAIL'} the frame is a page of one grid on DataCube's app, its Pure & SQL window the query sent and the SQL Python ran`);
+  if (!onApp) {
+    const seen = await cube.evaluate(() => ({ grids: window.__dataPage?.grids.length, pure: document.getElementById('pure')?.textContent?.slice(0, 200),
+      sql: document.getElementById('sql')?.textContent?.slice(0, 200) }));
+    console.log(`  the page had: ${JSON.stringify(seen)}`);
     failed = true;
   }
 
@@ -126,6 +157,140 @@ try {
     () => /\b11 rows\b/.test(document.body.innerText));
   await after('columns', 'a frame with a new column opens the cube again over its new model',
     () => document.body.innerText.includes('trader'));
+
+  // A FILE INTO PYTHON'S DUCKDB (docs/DATACUBE_ONE_APP_DESIGN_2026_10_11.md, step 2b): the app's own picker on Python's
+  // page, a CSV chosen there; Python reads it into its DuckDB with DataCube's own code (upload.ts, headless), and the
+  // grid's rows are Python's over the model that code wrote -- the SQL Python ran, in the Pure & SQL window, reads the
+  // file's own table
+  await cube.click('.dc-titlebar-menu');
+  await cube.locator('.dc-menu .dc-menu-item', { has: cube.locator(':scope > .dc-menu-label:text-is("New")') }).hover();
+  await cube.locator('.dc-menu .dc-menu-item', { has: cube.locator(':scope > .dc-menu-label:text-is("Blank Page")') }).click();
+  await cube.locator('.dc-blank .dc-primary').click();
+  await cube.setInputFiles('.dc-picker-file', {
+    name: 'books.csv', mimeType: 'text/csv', buffer: Buffer.from('title,pages\nDune,412\nEmma,474\nUlysses,730\n'),
+  });
+  const fileRead = await cube.waitForFunction(() => document.querySelector('.dc-picker') === null
+    && /\b3 rows\b/.test(document.body.innerText) && document.body.innerText.includes('Ulysses')
+    && /"?books"?/.test(document.getElementById('sql')?.textContent ?? ''), undefined, { timeout: 60_000 }).then(() => true, () => false);
+  console.log(`${fileRead ? 'ok  ' : 'FAIL'} a file chosen on Python's page is read into Python's DuckDB, its rows Python's`);
+  if (!fileRead) {
+    console.log(`  the page showed: ${(await cube.evaluate(() => `${document.body.innerText.slice(0, 300)} | sql: ${document.getElementById('sql')?.textContent?.slice(0, 200)}`))}`);
+    failed = true;
+  }
+  // AN EXAMPLE goes the same way: generated in the page, read into Python's DuckDB as a file is (and the file before it
+  // let go of: its grid gone, its table dropped in Python -- forget.json, every answer here a success)
+  await cube.click('.dc-titlebar-menu');
+  await cube.locator('.dc-menu .dc-menu-item', { has: cube.locator(':scope > .dc-menu-label:text-is("New")') }).hover();
+  await cube.locator('.dc-menu .dc-menu-item', { has: cube.locator(':scope > .dc-menu-label:text-is("Blank Page")') }).click();
+  await cube.locator('.dc-blank .dc-primary').click();
+  await cube.locator('.dc-picker-tab[data-section="examples"]').click();
+  // the trades example, a CSV (an example whose rows hold nested values, a Variant, is read too; its queries wait on
+  // the compatibility plan's spelling of Variant, which Python's execute plans by)
+  await cube.click('.dc-picker-card[data-example="trades"]');
+  await cube.fill('.dc-picker-rows', '300');
+  await cube.click('.dc-picker-choice .dc-primary');
+  const exampleRead = await cube.waitForFunction(() => document.querySelector('.dc-picker') === null
+    && /\b300 rows\b/.test(document.body.innerText) && /\bSELECT\b/i.test(document.getElementById('sql')?.textContent ?? ''),
+  undefined, { timeout: 60_000 }).then(() => true, () => false);
+  console.log(`${exampleRead ? 'ok  ' : 'FAIL'} an example opened on Python's page is read into Python's DuckDB as a file is`);
+  if (!exampleRead) {
+    console.log(`  the page showed: ${(await cube.evaluate(() => document.body.innerText.slice(0, 300)))}`);
+    failed = true;
+  }
+  // NESTED VALUES (a Variant column) on Python's page: the orders example, its customers and items JSON -- planned and
+  // run as the tab plans and runs them (PlanAndRun), where Python's legend-engine answer refused a Variant column
+  await cube.click('.dc-titlebar-menu');
+  await cube.locator('.dc-menu .dc-menu-item', { has: cube.locator(':scope > .dc-menu-label:text-is("New")') }).hover();
+  await cube.locator('.dc-menu .dc-menu-item', { has: cube.locator(':scope > .dc-menu-label:text-is("Blank Page")') }).click();
+  await cube.locator('.dc-blank .dc-primary').click();
+  await cube.locator('.dc-picker-tab[data-section="examples"]').click();
+  await cube.click('.dc-picker-card[data-example="orders-json"]');
+  await cube.fill('.dc-picker-rows', '40');
+  await cube.click('.dc-picker-choice .dc-primary');
+  const nestedRead = await cube.waitForFunction(() => document.querySelector('.dc-picker') === null
+    && /\b40 rows\b/.test(document.body.innerText), undefined, { timeout: 60_000 }).then(() => true, () => false);
+  console.log(`${nestedRead ? 'ok  ' : 'FAIL'} a file of nested values (Variant columns) opens on Python's page, as in the tab`);
+  if (!nestedRead) {
+    console.log(`  the page showed: ${(await cube.evaluate(() => document.body.innerText.slice(0, 300)))}`);
+    failed = true;
+  }
+  // A REMOTE FILE, read by Python's DuckDB through the httpfs extension the wheel carries: the app's own Remote section,
+  // a Parquet file a server on this machine serves (nothing leaves the machine)
+  await cube.click('.dc-titlebar-menu');
+  await cube.locator('.dc-menu .dc-menu-item', { has: cube.locator(':scope > .dc-menu-label:text-is("New")') }).hover();
+  await cube.locator('.dc-menu .dc-menu-item', { has: cube.locator(':scope > .dc-menu-label:text-is("Blank Page")') }).click();
+  await cube.locator('.dc-blank .dc-primary').click();
+  await cube.locator('.dc-picker-tab[data-section="remote"]').click();
+  await cube.fill('.dc-picker-url', served.remote);
+  await cube.click('.dc-picker-form .dc-primary');
+  const remoteRead = await cube.waitForFunction(() => document.querySelector('.dc-picker') === null
+    && /\b3 rows\b/.test(document.body.innerText) && document.body.innerText.includes('Ulysses'),
+  undefined, { timeout: 60_000 }).then(() => true, () => false);
+  console.log(`${remoteRead ? 'ok  ' : 'FAIL'} a remote file opened on Python's page is read by Python's DuckDB, through the httpfs it carries`);
+  if (!remoteRead) {
+    console.log(`  the page showed: ${(await cube.evaluate(() => document.body.innerText.slice(0, 300)))}`);
+    failed = true;
+  }
+
+  // SAVE AND OPEN ON PYTHON (step 2d): the page saved by the app's own Save As…, its record in this user's folder (the
+  // store's rules the page's own, Python keeping the records), then opened again from Open… over its source as it is now
+  const menuEntry = async (label) => {
+    await cube.click('.dc-titlebar-menu');
+    await cube.locator(`.dc-menu-item:has(> .dc-menu-label:text-is(${JSON.stringify(label)}))`).first().click();
+  };
+  await menuEntry('Save As\u2026');
+  await cube.locator('.dc-save').waitFor({ timeout: 10_000 });
+  await cube.fill('.dc-save-input', 'Books from Python');
+  await cube.locator('.dc-save-foot .dc-primary').click();
+  const saved = await cube.locator('.dc-save').waitFor({ state: 'detached', timeout: 30_000 }).then(() => true, () => false);
+  const records = saved ? readdirSync(join(home, 'pages')).filter((f) => f.endsWith('.json')) : [];
+  const record = records.length === 1 ? JSON.parse(readFileSync(join(home, 'pages', records[0]), 'utf8')) : undefined;
+  const inFolder = saved && record?.name === 'Books from Python' && record.owner === 'this user' && typeof record.content === 'string';
+  console.log(`${inFolder ? 'ok  ' : 'FAIL'} a page saved on Python's page is a record in this user's folder`);
+  if (!inFolder) {
+    console.log(`  saved: ${saved}, records: ${JSON.stringify(records)}, record: ${JSON.stringify(record)?.slice(0, 300)}`);
+    failed = true;
+  }
+  // a blank page, then the saved one opened from Open…: its grid over its remote file again
+  await cube.click('.dc-titlebar-menu');
+  await cube.locator('.dc-menu .dc-menu-item', { has: cube.locator(':scope > .dc-menu-label:text-is("New")') }).hover();
+  await cube.locator('.dc-menu .dc-menu-item', { has: cube.locator(':scope > .dc-menu-label:text-is("Blank Page")') }).click();
+  await cube.locator('.dc-blank').waitFor({ timeout: 10_000 });
+  await menuEntry('Open\u2026');
+  const row = cube.locator('#cubelib .dc-lib-row', { hasText: 'Books from Python' });
+  const listed = await row.waitFor({ timeout: 10_000 }).then(() => true, () => false);
+  if (listed) await row.locator('.dc-lib-button', { hasText: 'Open' }).click();
+  const reopened = listed && await cube.waitForFunction(() => /\b3 rows\b/.test(document.body.innerText)
+    && document.body.innerText.includes('Ulysses') && document.querySelector('.dc-page-name')?.textContent?.includes('Books from Python'),
+  undefined, { timeout: 60_000 }).then(() => true, () => false);
+  console.log(`${reopened ? 'ok  ' : 'FAIL'} a page saved on Python opens again from Open…, over its source`);
+  if (!reopened) {
+    console.log(`  listed: ${listed}; the page showed: ${(await cube.evaluate(() => document.body.innerText.slice(0, 300)))}`);
+    failed = true;
+  }
+
+  // A FRAME CLOSED IN PYTHON: its open tab keeps what it shows, and says it no longer follows the frame -- in its status
+  // line and its title (the app's live page, docs/DATACUBE_ONE_APP_DESIGN_2026_10_11.md §5)
+  engine.stdin.write('show-closing\n');
+  const closingLine = await nextLine();
+  if (!closingLine.startsWith('done show-closing ')) throw new Error(`the engine did not show the frame: ${closingLine}`);
+  const closingTab = await browser.newPage();
+  closingTab.on('pageerror', (e) => { console.log(`closing tab error: ${e.message}`); failed = true; });
+  await closingTab.goto(JSON.parse(closingLine.slice('done show-closing '.length)));
+  const closingShown = await closingTab.waitForFunction(() => /\b2 rows\b/.test(document.body.innerText), undefined,
+    { timeout: 60_000 }).then(() => true, () => false);
+  engine.stdin.write('close-closing\n');
+  if ((await nextLine()) !== 'done close-closing') throw new Error('the engine did not close the frame');
+  const closedSaid = closingShown && await closingTab.waitForFunction(
+    () => /not following the frame: the frame was closed/.test(document.querySelector('.dc-app-status')?.textContent ?? '')
+      && /not followed: the frame was closed/.test(document.title) && /\b2 rows\b/.test(document.body.innerText),
+    undefined, { timeout: 30_000 }).then(() => true, () => false);
+  console.log(`${closedSaid ? 'ok  ' : 'FAIL'} a frame closed in Python: its tab keeps its rows and says it no longer follows the frame`);
+  if (!closedSaid) {
+    console.log(`  the tab said: ${await closingTab.evaluate(() => `${document.title} | ${document.querySelector('.dc-app-status')?.textContent}`)}`);
+    failed = true;
+  }
+  await closingTab.close();
 
   // A PAGE FROM PYTHON (docs/DATACUBE_PYTHON_PAGES_DESIGN_2026_10_09.md, step 1): a page of the engine's two frames
   // on two sheets, written by DataCube's own writers (the test page's __pythonPageDocument), served by Python as `q3`,
@@ -242,7 +407,11 @@ try {
           const views = m.buffers.map((b) => new DataView(Uint8Array.from(atob(b), (c) => c.charCodeAt(0)).buffer));
           model.fire('msg:custom', m.content, views);
         }
-      }, [line.slice(0, space), line.slice(space + 1)]).catch((e) => { console.log(`FAIL a widget message: ${e}`); failed = true; });
+      }, [line.slice(0, space), line.slice(space + 1)]).catch((e) => {
+        if (closing) return;
+        console.log(`FAIL a widget message: ${e}`);
+        failed = true;
+      });
     }
   };
   await widgets.route(`${origin}/widgets.html`, (r) => r.fulfill({
@@ -286,6 +455,11 @@ try {
   await check('two notebook cubes show their frames\' rows, over the widget\'s channel',
     () => /\b10 rows\b/.test(document.getElementById('nb').innerText) && document.getElementById('nb').innerText.includes('APAC')
       && /\b3 rows\b/.test(document.getElementById('nb2').innerText));
+  // the app's windows in a notebook: its Generated Pure & SQL window, in the widget's own element, has the SQL that
+  // answered the grid -- Python's planner's, run by Python
+  await check('a notebook cube\'s Pure & SQL window has the query sent and the SQL Python ran',
+    () => /#>\{/.test(document.getElementById('nb').querySelector('#pure')?.textContent ?? '')
+      && /\bSELECT\b/i.test(document.getElementById('nb').querySelector('#sql')?.textContent ?? ''));
   const once = fetched.get('/widget.js') === 1 && fetched.get('/widget.css') === 1;
   console.log(`${once ? 'ok  ' : 'FAIL'} DataCube's module came once for the page (${fetched.get('/widget.js')} widget.js, ${fetched.get('/widget.css')} widget.css)`);
   if (!once) failed = true;
@@ -361,6 +535,7 @@ try {
     failed = true;
   }
 } finally {
+  closing = true;
   await browser?.close();
   // stopped and WAITED for: the engine serves until its input closes, and is gone before the test reports
   engine.stdin.end();

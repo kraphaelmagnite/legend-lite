@@ -137,13 +137,17 @@ public final class PctCensusGate {
     // 13), or text (STRUCT <- VARCHAR, 3)
     // PER SUITE since 2026-10-05 (Bazel workplan P3-09): each suite is judged on its own traffic, measured on its own
     // target: Postgres's 16 are Essential's 12 and Grammar's 4
+    // 16 -> 18 (2026-10-11, BigQuery's burn-down): the portable carrier strategies now read a lambda parameter's field
+    // (p.first) as the folded element's, so two tests that failed before the wire reach it on Postgres, each with one
+    // more struct as jsonb (STRUCT <- JSON, the by-design class above): testExistsInSelect's empty list of firms
+    // (Essential 12 -> 13) and testFilterInstance's persons (Grammar 4 -> 5). No other class moved.
     private static long maxWireDiverge(String suite) {
         if (!POSTGRES) {
             return 0;
         }
         return switch (suite) {
-            case "Essential" -> 12;
-            case "Grammar" -> 4;
+            case "Essential" -> 13;
+            case "Grammar" -> 5;
             default -> 0;
         };
     }

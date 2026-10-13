@@ -60,9 +60,6 @@
      when the page was a document with text above and below it. The
      page is the viewport now, so the grid takes whatever the title
      bar and the zones leave. */
-  #status { font-size: 12px; opacity: .75; margin-top: 10px; }
-  #status.bad { color: crimson; opacity: 1; }
-  #status.warn-text { color: #a15c00; opacity: 1; font-weight: 600; }
   #busy {
     font-size: 12px; padding: 2px 8px; border-radius: 4px;
     background: color-mix(in srgb, currentColor 10%, transparent);
@@ -82,50 +79,9 @@
 <style>
   #app { height: 100vh; }
 
-  /* A host panel, floating: `makeWindow` positions and sizes it, so
-     only the frame is described here. */
-  .hostwin {
-    position: absolute;
-    z-index: 20;
-    display: flex;
-    flex-direction: column;
-    background: #fff;
-    border: 1px solid #d4d4d4;
-    box-shadow: 0 8px 24px rgb(0 0 0 / 18%);
-  }
-  .hostwin[hidden] { display: none !important; }
-  .hostwin-head {
-    display: flex; align-items: center; justify-content: space-between;
-    height: 24px; padding: 0 6px; background: #f5f5f5;
-    border-bottom: 1px solid #e5e5e5; font-weight: 500;
-  }
-  .hostwin-close {
-    border: 0; background: transparent; cursor: pointer;
-    font: inherit; font-size: 14px; line-height: 1; padding: 0 4px;
-  }
-  .hostwin-body { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 8px; }
-  .hostwin-body h2 { font-size: 12px; margin: 8px 0 4px; }
-  .hostwin-body pre {
-    margin: 0; white-space: pre-wrap; word-break: break-word;
-    font: 11px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
-  }
-
   /* In the cube's STATUS bar now, so it has to be small and quiet.
      Scoped to the bar: the same element is offstage until `boot`
      moves it, and an offstage width cap would be nonsense. */
-  /* the Share window: the link, whole, and what it holds */
-  .sharelink { width: 100%; box-sizing: border-box; font: 12px/16px ui-monospace, monospace;
-    resize: vertical; word-break: break-all; }
-  .sharerow { display: flex; gap: 8px; align-items: flex-start; margin-top: 6px; }
-  .sharenote { flex: 1; opacity: .8; }
-  .sharenote.warn { color: #b45309; opacity: 1; }
-  .sharenote.bad { color: crimson; opacity: 1; }
-
-  .dc-status-host #status {
-    /* the bar's own type: one face and size across it */
-    font: inherit; opacity: .75; white-space: nowrap; overflow: hidden;
-    text-overflow: ellipsis; max-width: 40vw; margin: 0;
-  }
 
 </style>
 </head>
@@ -155,33 +111,8 @@
             background: color-mix(in srgb, crimson 10%, #fff);
             border-color: color-mix(in srgb, crimson 45%, transparent);"></p>
 
-  <!-- The panels, in windows of their own. Hidden until asked for. -->
-  <!-- The saved cubes' list lives here between showings; Open… shows it in a window of its own. -->
-  <div id="cubeholder" hidden><div id="cubelib"></div></div>
-
-  <div id="sharewin" class="hostwin" hidden>
-    <div class="hostwin-head"><span>Share</span>
-      <button type="button" class="hostwin-close" data-win="sharewin"
-              aria-label="Close">&times;</button></div>
-    <div class="hostwin-body">
-      <textarea id="sharelink" class="sharelink" rows="4" readonly
-                aria-label="The link to this page"></textarea>
-      <div class="sharerow"><button type="button" id="sharecopy">Copy</button>
-        <span id="sharenote" class="sharenote" role="status"></span></div>
-    </div>
-  </div>
-
-  <div id="querywin" class="hostwin" hidden>
-    <div class="hostwin-head"><span>Generated Pure &amp; SQL</span>
-      <button type="button" class="hostwin-close" data-win="querywin"
-              aria-label="Close">&times;</button></div>
-    <div class="hostwin-body">
-      <h2>Pure</h2>
-      <pre id="pure"></pre>
-      <h2>SQL</h2>
-      <pre id="sql"></pre>
-    </div>
-  </div>
+  <!-- The app's windows (Open…, Share, the Generated Pure & SQL) are the app's own: src/app/datacube-app.ts builds
+       them. -->
 
   <script type="module" src="./bundle.js"></script>
 </body>

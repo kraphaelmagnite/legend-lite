@@ -162,6 +162,27 @@ tests pin text). If any row other than JSON whitespace changes, stop and report.
   DataCube upload test plans an index, a key and a whole value through the WASM planner over an
   upload kept as STRUCTs, in DuckDB-WASM.
 
+### Addendum 2026-10-12: the star egress (found by the DataCube line)
+
+V2 reads a stored Variant column as JSON through the DuckDB dialect's `columnRef` hook, which fires on a column
+REFERENCE. A star frame (`SELECT *`) renders none: a bare source, `limit`, `filter` and `sort` keep one to the
+statement's end, so under those shapes a native STRUCT left the query as stored while `select` gave the JSON text
+(the DataCube line's probe, 2026-10-12: an uploaded JSON file's `customer` column was `{"name":"A","tier":2}` under
+`select` and a STRUCT under `limit`, and each executor rendered the STRUCT its own way). D2 was removed for
+projections, not for the star egress; this census's own test projected and grouped and never took a bare `limit`.
+
+Landed as `sql/dialect/VariantEgress.java`, a DuckDB render pass on the statement root only. A star projection
+(`SELECT t0.*, x`: `extend`) renders no reference either (the landing's audit), so the rule is the star's: at the
+root, every star standing for a source that holds a stored Variant column is spelled into that source's columns
+(`Stars.columns`, as `StoredReads` spells a star over a read table), the Variant ones read through the hook
+(`CAST(t0.V AS JSON) AS V`), every other a bare reference, a join's sides each in place; a UNION's branches and a
+WITH's body are roots too (`RootNumericTypes`'s precedent). Below the root nothing changes (a star there feeds a
+reference the hook already reads), and no other dialect changes (native nested storage is DuckDB's).
+`LowerRelationTest.wholeVariantReadsAsJsonInEveryShape` runs ten shapes (bare, sort and limit, filter, sort,
+distinct, select, extend, join, a sorted join, concatenate) over VARCHAR text, JSON and STRUCT storage: the same
+read in the SQL, the statement's own column type `JSON` as the database reports it (what a result decoder sees: the
+Plan Gen line's ask), identical rows. The rejected alternative below stands: no `to_json` at the scan.
+
 ### Rejected alternatives
 
 - **Read every Variant column through `to_json` at the scan.** One rule, no storage fact -- but every

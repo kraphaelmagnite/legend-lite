@@ -66,6 +66,10 @@ js_library(
         # the page's model (src/page-model.ts, Create a Class…: docs/DATACUBE_MODEL_DESIGN_2026_10_10.md §15.3): the
         # SDLC's client, over the page's own SDLC (Studio's) or a server's
         "//sdlc-client:sdlc_client",
+        # the model home's Depot client (a saved query's project opened by name): src/services/browser.ts connects to it
+        # and src/app/sources.ts reads a project's model text, both by a dynamic import that every bundle of the app
+        # inlines or splits off
+        "//depot-client:depot_client",
         # where a query runs: the engine interface, results, the type reader, DuckDB, the warehouse,
         # pure/v1 (engine-client/README.md; moved out of here 2026-10-04)
         "//engine-client:engine_client",
@@ -365,7 +369,6 @@ _HEADLESS_TESTS = [
     "tree",
     "treeview",
     "type-columns",
-    "upload",
     "values",
     "warehouse-session",
     "window",
@@ -384,6 +387,9 @@ _HEADLESS_LEFT_OUT = {
     "warehouse-session-http": "the warehouse sign-in's HTTP",
     # the chart renderer (ECharts) draws on a DOM canvas: a screen test, though it imports no jsdom itself
     "chart-echarts": "ECharts draws on a DOM canvas",
+    # a picked File read as a stream (Blob, TextDecoderStream: upload.ts fileParts) is the page's: headless reads a file
+    # by its path (readFileInto, run by //python:headless_test's Files)
+    "upload": "a picked File, read as the page's stream",
     # the lane's own stand-ins and web layer, held to Node's built-ins: they need the Node they compare against
     "headless-assert": "node:assert/strict, its reference",
     "headless-test-runner": "node:test's own run, its reference",
@@ -901,6 +907,8 @@ py_binary(
     # skipped as incompatible, never analysed against a wheel there is none of (CI's A25 analysis, the product step)
     target_compatible_with = compatible_with(COMPILER_LIBRARY_PLATFORMS),
     deps = [
+        # DataCube's own code headless (the datacube extra): what reads a page's file into Python's DuckDB (step 2b)
+        "//python:headless",
         "//python:legend_lite",
         "//python:notebook",
     ],
@@ -923,17 +931,30 @@ browser_test(
         ":node_modules/playwright",
         ":python_engine_page",
         ":engine_fixture",
+        ":headless_bundle",
         ":upstream_arrow_answer",
         "//native:compiler",
+        "//python:wheel_duckdb",
     ],
     entry_point = "test/python-engine/python-engine.mjs",
     env = {
         "DATACUBE_SITE": "$(rlocationpath :dist)",
         "ENGINE_FIXTURE": "$(rlocationpath :engine_fixture)",
+        # DataCube's headless bundle, as //python:headless_test is given it: a page's file is read into Python's DuckDB
+        # by it (docs/DATACUBE_ONE_APP_DESIGN_2026_10_11.md, step 2b)
+        "LEGEND_LITE_DATACUBE": "$(rlocationpath :headless_bundle)",
+        # DuckDB's extensions as the wheel carries them: a page's remote file is read through httpfs
+        "LEGEND_LITE_DUCKDB_EXTENSIONS": "$(rlocationpath //python:wheel_duckdb)",
         "LEGEND_LITE_LIBRARY": "$(rlocationpath //native:compiler)",
         "PYTHON_ENGINE_PAGE": "$(rlocationpath :python_engine_page)",
         "UPSTREAM_ARROW_ANSWER": "$(rlocationpath :upstream_arrow_answer)",
     },
+    # as //python:headless_test sets it: Python reads the architecture from it where it cannot ask WMI, and mini-racer's
+    # V8 (a page's file read in Python) needs it; a test's environment on Windows does not carry it
+    platform_env = select({
+        "//tools/platforms:windows_x86_64": {"PROCESSOR_ARCHITECTURE": "AMD64"},
+        "//conditions:default": {},
+    }),
 )
 
 # A NOTEBOOK'S CUBE IN REAL NOTEBOOKS (docs/DATACUBE_PYTHON_SHOW_DESIGN_2026_10_08.md, "In a notebook" and "In a marimo
@@ -1019,11 +1040,10 @@ browser_test(
 # entry point -> bundle
 _BUNDLES = {
     "demo/main.ts": "demo/bundle.js",
-    "demo/page.ts": "demo/bundle-page.js",
     "src/planner-worker.ts": "demo/planner-worker.js",
     "demo/remote-harness.ts": "demo/remote-bundle.js",
     "demo/stress.ts": "demo/stress.js",
-    # one cube on an engine that runs its queries (Python's: docs/DATACUBE_PYTHON_SHOW_DESIGN_2026_10_08.md)
+    # DataCube's app on Python, every query Python's (docs/DATACUBE_ONE_APP_DESIGN_2026_10_11.md, step 2a)
     "demo/engine.ts": "demo/bundle-engine.js",
 }
 
@@ -1034,8 +1054,7 @@ _UNSPLIT = ["src/planner-worker.ts"]
 
 [esbuild_bundle(
     name = "bundle_" + out[len("demo/"):-len(".js")].replace("-", "_"),
-    # demo/boot.ts opens a saved query's project by name from Depot (the model home; design Phase 3)
-    srcs = glob(["demo/**/*.ts"]) + [":src", "//depot-client:depot_client", "//sdlc-client:sdlc_client"],
+    srcs = glob(["demo/**/*.ts"]) + [":src"],
     outs = [out],
     out_dirs = [] if entry in _UNSPLIT else ["demo/chunks-" + out[len("demo/"):-len(".js")]],
     args = [
@@ -1075,9 +1094,9 @@ esbuild_bundle(
 
 esbuild_bundle(
     name = "widget",
+    # DataCube's app over Python's services (src/app/, src/services/python-host.ts), and the libraries it reaches -- the
+    # model home's Depot client among them, inlined here as everything is -- through :src
     srcs = [
-        "demo/engine-cube.ts",
-        "demo/engine-page.ts",
         "demo/widget.ts",
         "demo/widget-loader.ts",
         "demo/widget-styles.css",
@@ -1103,16 +1122,16 @@ esbuild_bundle(
     ],
 )
 
-# THE BUNDLES DATACUBE SHIPS (//:web; docs/BUILD_REBUILD_DESIGN_2026_10_05.md, D10): the app, the embeddable page, the
-# page of one cube on an engine (engine.html: Python's engine serves it), a notebook's cube (the widget's loader and
-# DataCube's module) and the planner's worker. remote-bundle and stress are fixtures of their harnesses (verify_remote,
+# THE BUNDLES DATACUBE SHIPS (//:web; docs/BUILD_REBUILD_DESIGN_2026_10_05.md, D10): the app, the page of one cube on an
+# engine (engine.html: Python's engine serves it), a notebook's cube (the widget's loader and DataCube's module) and the
+# planner's worker. (The page of several cubes, demo/page.ts, went with the one-app design's step 1d: its checks run on
+# the app, verify_page.) remote-bundle and stress are fixtures of their harnesses (verify_remote,
 # run_stress), not product: they leave the site with D5.
 filegroup(
     name = "bundles",
     srcs = [
         ":bundle_bundle",
         ":bundle_bundle_engine",
-        ":bundle_bundle_page",
         ":bundle_planner_worker",
         ":widget",
         ":widget_loader",

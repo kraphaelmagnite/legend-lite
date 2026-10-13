@@ -1,6 +1,6 @@
 """Frames as Legend tables (legend_lite.frames): answers checked against pandas computing the same; Live reads
 the frame as it is at each query, Snapped as it was copied; pandas, polars and Arrow answer alike; the model
-writer's conversions hold exact values; and what a frame cannot be is refused."""
+writer's conversions hold exact values; an answer is typed by its plan; and what a frame cannot be is refused."""
 
 import datetime
 import unittest
@@ -191,6 +191,60 @@ class Conversions(unittest.TestCase):
             table = ll.Frames().register('t', pd.DataFrame({'at': [at]}), mode=mode)
             self.assertEqual([(c.name, c.type) for c in table.columns], [('at', 'DateTime')])
             self.assertEqual(table.execute('->select(~[at])').to_pylist(), [{'at': datetime.datetime(2026, 10, 8, 13, 30)}])
+
+
+class TypedByPlan(unittest.TestCase):
+    """An answer typed by its plan (frames.typed_by_plan; docs/DATACUBE_ONE_APP_DESIGN_2026_10_11.md §15.3a), as the
+    tab's executor types its own: each column the compiler's type, each value exact."""
+
+    def test_each_column_carries_the_compilers_type_and_its_value_exact(self):
+        frame = pa.table({
+            'i': pa.array([1, None], pa.int32()),
+            'f': pa.array([1.5, None]),
+            'd': pa.array([Decimal('300.75'), None], pa.decimal128(10, 2)),
+            's': pa.array(['a', None]),
+            'b': pa.array([True, None]),
+            'day': pa.array([datetime.date(2024, 1, 2), None]),
+            'at': pa.array([datetime.datetime(2024, 1, 2, 3, 4, 5, 123456), None], pa.timestamp('us')),
+            'v': pa.array(['{"a": [1, 2.50]}', None], pa.json_()),
+        })
+        table = ll.Frames().register('t', frame)
+        rows = table.execute('->select()')
+        self.assertEqual({f.name: f.metadata[b'legend.type'].decode() for f in rows.schema},
+                         {'i': 'Integer', 'f': 'Float', 'd': 'Decimal', 's': 'String', 'b': 'Boolean', 'day': 'StrictDate',
+                          'at': 'DateTime', 'v': 'meta::pure::metamodel::variant::Variant'})
+        self.assertEqual(rows.schema.field('i').type, pa.int64())
+        # a Decimal exact, a DateTime as stored (UTC) to the microsecond, a Variant its JSON text
+        self.assertEqual(rows.to_pylist()[0], {
+            'i': 1, 'f': 1.5, 'd': Decimal('300.75'), 's': 'a', 'b': True, 'day': datetime.date(2024, 1, 2),
+            'at': datetime.datetime(2024, 1, 2, 3, 4, 5, 123456), 'v': '{"a": [1, 2.50]}'})
+        self.assertEqual(set(rows.to_pylist()[1].values()), {None})
+
+    def test_a_sum_of_integers_is_an_integer_and_past_64_bits_exact(self):
+        # DuckDB answers a SUM of integers as an exact decimal(38, 0): an Integer, so an int64; past 64 bits, the
+        # database's exact decimal, never wrapped
+        frame = pa.table({'k': ['a', 'a'], 'n': pa.array([2 ** 63 - 1, 2 ** 63 - 1]), 'm': pa.array([1, None], pa.int32())})
+        rows = ll.Frames().register('t', frame).execute('->groupBy(~[k], ~[s: x|$x.n : y|$y->sum(), t: x|$x.m : y|$y->sum()])')
+        self.assertEqual(rows.schema.field('t').type, pa.int64())
+        self.assertEqual(rows.schema.field('s').metadata[b'legend.type'], b'Integer')
+        self.assertEqual(rows.to_pylist(), [{'k': 'a', 's': 2 * (2 ** 63 - 1), 't': 1}])
+
+    def test_a_column_the_plan_does_not_type_is_refused(self):
+        from legend_lite.frames import typed_by_plan
+        plan = ll.Plan('SELECT 1 AS a, 2 AS b', (ll.Column('a', 'Integer', {}),))
+        with self.assertRaises(RuntimeError) as e:
+            typed_by_plan(pa.table({'a': [1], 'b': [2]}), plan)
+        self.assertIn("does not type the result column 'b'", str(e.exception))
+
+    def test_pandas_keeps_an_integer_and_a_boolean_with_nulls(self):
+        from legend_lite.frames import to_pandas
+        frame = pa.table({'i': pa.array([1, None]), 'b': pa.array([True, None]), 'd': pa.array([Decimal('0.10'), None])})
+        out = to_pandas(ll.Frames().register('t', frame).execute('->select()'))
+        self.assertEqual((str(out['i'].dtype), str(out['b'].dtype)), ('Int64', 'boolean'))
+        self.assertEqual((out['i'][0], out['b'][0], out['d'][0]), (1, True, Decimal('0.10')))
+        # an integer, never 1.0 (numpy's float64 is a float)
+        self.assertNotIsInstance(out['i'][0], float)
+        self.assertTrue(pd.isna(out['i'][1]) and pd.isna(out['b'][1]))
 
 
 class Refusals(unittest.TestCase):

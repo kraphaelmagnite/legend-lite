@@ -10,7 +10,7 @@ import { openDatabase } from '#test-host';
 
 import { DuckDbEngine } from '../../engine-client/src/duckdb.ts';
 import { sampleById, sampleFileName } from '../src/samples.ts';
-import { forgetUpload, ingestFile, type DuckDbFiles } from '../src/upload.ts';
+import { fileBytes, fileParts, forgetUpload, ingestFile, type DuckDbFiles } from '../src/upload.ts';
 import type { QueryEngine } from '../../engine-client/src/engine.ts';
 import { plannerFor } from './catalog-builder.ts';
 
@@ -41,12 +41,8 @@ after(async () => {
 });
 
 /** A picked file, as `ingestFile` reads one. */
-function picked(name: string, text: string) {
-  return {
-    name,
-    text: async () => text,
-    arrayBuffer: async () => new TextEncoder().encode(text).buffer,
-  };
+function picked(name: string, text: string): File {
+  return new File([text], name);
 }
 
 const ORDERS = [
@@ -128,11 +124,7 @@ describe('ingestFile with JSON', () => {
                     TIME '13:14:15.678901' AS tod)
          TO 'zoned.parquet' (FORMAT PARQUET)`, 0);
     const bytes = await copyOut('zoned.parquet');
-    const r = await ingestFile(engine, files, {
-      name: 'zoned.parquet',
-      text: async () => '',
-      arrayBuffer: async () => bytes.slice().buffer,
-    }, writer);
+    const r = await ingestFile(engine, files, new File([bytes.slice()], 'zoned.parquet'), writer);
     for (const [column, sql] of [['stamp', 'TIMESTAMP'], ['big', 'DECIMAL\\(20,0\\)'],
       ['id', 'OTHER'], ['tod', 'OTHER']] as const) {
       assert.match(r.model, new RegExp(`${column} ${sql}`), column);
@@ -184,6 +176,61 @@ describe('ingestFile with JSON', () => {
     assert.deepEqual(col('first_event'), docs.map((d) => d.shipments[0]!.events[0]!.status));
     assert.deepEqual(col('billing_city'), docs.map((d) => d.customer.addresses[0]!.city));
     assert.deepEqual(col('first_sizes').map(Number), docs.map((d) => d.items[0]!.attributes.sizes.length));
+  });
+});
+
+describe('a text file reads as the tab has always read it: the bytes every host\'s DuckDB is given (fileParts, fileBytes)', () => {
+  /** A picked file of these bytes. */
+  function pickedBytes(name: string, bytes: Uint8Array): File {
+    return new File([bytes.slice()], name);
+  }
+
+  /** Every part `fileParts` hands over, at this size. */
+  async function parts(file: File, size: number): Promise<number[][]> {
+    const out: number[][] = [];
+    for await (const part of fileParts(file, size)) out.push([...part]);
+    return out;
+  }
+
+  it('a Latin-1 CSV opens, its letters as the decoding replaced them, as it always has', async () => {
+    // "name,city\nJosé,München\n" in Latin-1: é and ü are single bytes no UTF-8 reader takes
+    const latin1 = Uint8Array.from([...'name,city\nJos'].map((c) => c.charCodeAt(0)).concat(
+      [0xe9], [...',M'].map((c) => c.charCodeAt(0)), [0xfc], [...'nchen\n'].map((c) => c.charCodeAt(0))));
+    const r = await ingestFile(engine, files, pickedBytes('latin1.csv', latin1), writer);
+    assert.equal(r.rowCount, 1);
+    const row = await engine.run(`SELECT name, city FROM "${r.table}"`, 0);
+    assert.deepEqual(row.columns.map((c) => c.values[0]), ['Jos\uFFFD', 'M\uFFFDnchen']);
+  });
+
+  it('a JSON array with a byte-order mark reads as its records\' columns', async () => {
+    const bom = new Uint8Array([0xef, 0xbb, 0xbf, ...new TextEncoder().encode('[{"a": 1}, {"a": 2}]')]);
+    const r = await ingestFile(engine, files, pickedBytes('bom.json', bom), writer);
+    assert.equal(r.rowCount, 2);
+    assert.match(r.model, /\ba INTEGER|\ba BIGINT/);
+  });
+
+  it('gives a Parquet file\'s bytes as they are, and a text file\'s as UTF-8 without its mark', async () => {
+    const raw = new Uint8Array([0xef, 0xbb, 0xbf, 0x61, 0x0a]);
+    assert.deepEqual([...await fileBytes(pickedBytes('x.parquet', raw))], [...raw]);
+    assert.deepEqual([...await fileBytes(pickedBytes('x.csv', raw))], [0x61, 0x0a]);
+  });
+
+  it('hands the same bytes over a part at a time: each its size but the last, decoded as the whole file is', async () => {
+    // a mark, a two-byte é split between two parts, a Latin-1 byte, and a part boundary inside a four-byte emoji
+    const text = new Uint8Array([0xef, 0xbb, 0xbf, ...new TextEncoder().encode('a,b\nJos\u00e9,'), 0xfc,
+      ...new TextEncoder().encode('\n\u{1F600}\n')]);
+    const whole = [...await fileBytes(pickedBytes('t.csv', text))];
+    // what a File's text() is, written out again: the tab's reading, on every host
+    assert.deepEqual(whole, [...new TextEncoder().encode(await pickedBytes('t.csv', text).text())]);
+    for (const size of [1, 2, 3, 5, 64]) {
+      const got = await parts(pickedBytes('t.csv', text), size);
+      assert.deepEqual(got.flat(), whole, `size ${size}`);
+      assert.ok(got.slice(0, -1).every((p) => p.length === size) && got.at(-1)!.length <= size, `size ${size}`);
+    }
+    // Parquet as it is, a part at a time; an empty file, no part
+    const raw = new Uint8Array([0xef, 0xbb, 0xbf, 1, 2, 3, 4]);
+    assert.deepEqual(await parts(pickedBytes('x.parquet', raw), 3), [[0xef, 0xbb, 0xbf], [1, 2, 3], [4]]);
+    assert.deepEqual(await parts(pickedBytes('e.csv', new Uint8Array(0)), 3), []);
   });
 });
 

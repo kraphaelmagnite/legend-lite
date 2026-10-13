@@ -254,6 +254,45 @@ export class BrowserRecords implements CubeRecords {
   }
 }
 
+/** One of the four calls a host answers for the records it keeps (python/legend_lite/_home.py's SavedPages). */
+export type HostRecordsCall =
+  | { readonly call: 'all' }
+  | { readonly call: 'find' | 'remove'; readonly id: string }
+  | { readonly call: 'put'; readonly record: Record<string, unknown> };
+
+/**
+ * Records the page's HOST keeps (Python: this user's folder; docs/DATACUBE_ONE_APP_DESIGN_2026_10_11.md, step 2d):
+ * each call carried to it, each record the browser's row (its content the exact JSON text), so the store's rules
+ * stay the page's own -- RuleStore over these, as over the browser's IndexedDB. `carry` answers a call: the records,
+ * the record, or undefined (none found; put and removed).
+ */
+export class HostRecords implements CubeRecords {
+  readonly #carry: (call: HostRecordsCall) => Promise<unknown>;
+
+  constructor(carry: (call: HostRecordsCall) => Promise<unknown>) {
+    this.#carry = carry;
+  }
+
+  async all(): Promise<DataCubeQuery[]> {
+    const rows = await this.#carry({ call: 'all' });
+    if (!Array.isArray(rows)) throw new Error('the host answered no list of saved pages');
+    return rows.map(fromRow);
+  }
+
+  async find(id: string): Promise<DataCubeQuery | undefined> {
+    const row = await this.#carry({ call: 'find', id });
+    return row === undefined ? undefined : fromRow(row);
+  }
+
+  async put(query: DataCubeQuery): Promise<void> {
+    await this.#carry({ call: 'put', record: toRow(query) });
+  }
+
+  async remove(id: string): Promise<void> {
+    await this.#carry({ call: 'remove', id });
+  }
+}
+
 /** The content as exact JSON text in the row; the rest as it is. */
 function toRow(q: DataCubeQuery): Record<string, unknown> {
   return { ...q, content: toJson(q.content) };

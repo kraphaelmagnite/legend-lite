@@ -11,3 +11,10 @@ import type { ArrowishTable } from './duckdb.ts';
 export function arrowIpcTable(stream: Uint8Array): ArrowishTable {
   return tableFromIPC(stream) as unknown as ArrowishTable;
 }
+
+/** One Arrow IPC stream as a host's answer: its table, and what its schema's metadata says beside the rows (a host that
+ *  plans and runs in one step carries its plan there: Python's plan-and-run). */
+export function arrowIpcAnswer(stream: Uint8Array): { readonly table: ArrowishTable; readonly metadata: ReadonlyMap<string, string> } {
+  const table = tableFromIPC(stream);
+  return { table: table as unknown as ArrowishTable, metadata: table.schema.metadata };
+}

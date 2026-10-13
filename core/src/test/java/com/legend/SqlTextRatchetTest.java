@@ -108,6 +108,11 @@ class SqlTextRatchetTest {
         // renderer is gone — the view's SQL is the compiler's, handed in by
         // the driver (TestDataGenerator.ViewSql)
         REGISTER.put("testdatagen/TestDataGenerator.java", 15);
+        // 0 -> 1 (2026-10-11, the MariaDB dialect, docs/CLOUD_BACKENDS_PCT_2026_10_11.md §13): after a
+        // MariaDB statement fails, Sessions.raisedMessage reads the session variable its raise left
+        // (SELECT @legend_raise) -- no query of the user's, one fixed read of a session's state: a
+        // MariaDB SELECT can raise no error of its own text, so its dialect keeps the text there
+        REGISTER.put("exec/Sessions.java", 1);
     }
 
     @Test

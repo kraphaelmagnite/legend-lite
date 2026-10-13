@@ -57,8 +57,12 @@ class ParkedWorkLedgerTest {
             // row), NOT a common-subexpression pass; PARK-2 stays parked
             // leg 3.4 step 2 (2026-09-20): SqlWith.prepend hoists a statement's
             // frame CTEs to its head — a construction helper, not a pass
+            // 2026-10-11 (BigQuery's burn-down, the recursive fold CTE): SqlRewriter's
+            // copy-on-write rebuilds a WITH through SqlWith.with, which carries
+            // its new recursive flag — the construction moved into SqlWith.java,
+            // still no common-subexpression pass; PARK-2 stays parked
             Map.entry("PARK-2 union common-subexpression pass (construction)",
-                    new Anchor("new SqlWith\\(", List.of("SqlRewriter.java", "SqlWith.java", "VerdictSql.java"))),
+                    new Anchor("new SqlWith\\(", List.of("SqlWith.java", "VerdictSql.java"))),
             // PARK-3: the relational toString renders as the DATABASE's cast
             // in the engine; ours passes through to pure's ISO form. The
             // obvious arm collapses multiplicity (it LOST a corpus row), so

@@ -47,6 +47,10 @@ public final class ConnectionSectionGrammar implements LexableSectionGrammar {
                     "Spanner", "Athena", "DuckDB", "Oracle", "ClickHouse",
                     "Aurora");
 
+    /** The database types legend-lite adds to the oracle's (docs/CLOUD_BACKENDS_PCT_2026_10_11.md §12-13): declared
+     *  lite extensions, refused on the drop-in surface. */
+    private static final java.util.Set<String> LITE_DATABASE_TYPES = java.util.Set.of("SQLite", "MariaDB", "MySQL");
+
     private ConnectionSectionGrammar() {
     }
 
@@ -528,12 +532,13 @@ public final class ConnectionSectionGrammar implements LexableSectionGrammar {
                     int tTok = c.pos();
                     dbType = c.parseIdentifier();
                     // DatabaseType.valueOf in the walker — enum javap'd
-                    // from the 4.138.2 oracle jar (21 values); SQLite is
-                    // a DECLARED lite extension (same gate as BOOLEAN/BOOL
-                    // columns), so it refuses only on the drop-in surface
+                    // from the 4.138.2 oracle jar (21 values); SQLite,
+                    // MariaDB and MySQL are DECLARED lite extensions (same
+                    // gate as BOOLEAN/BOOL columns), so they refuse only on
+                    // the drop-in surface
                     if (!DATABASE_TYPES.contains(dbType)
                             && !(!c.dialect().refusesLiteExtensions()
-                                    && "SQLite".equals(dbType))) {
+                                    && LITE_DATABASE_TYPES.contains(dbType))) {
                         throw TokenStreamCursor.throwAt(c.tokens(), tTok,
                                 "Unknown database type '" + dbType + "'");
                     }

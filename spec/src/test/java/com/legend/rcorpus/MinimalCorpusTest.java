@@ -157,8 +157,12 @@ public class MinimalCorpusTest {
         List<String> fail = new ArrayList<>();
         List<String> skipped = new ArrayList<>();
         List<String> accepted = new ArrayList<>();
-        java.util.Map<String, String[]> acceptedRegister = readAccepted(
-                MinimalCorpus.H2_BACKEND ? H2_ACCEPTED : DUCKDB_ACCEPTED);
+        // a lane on another database (MinimalCorpus.OTHER_LANE) accepts nothing the reference lanes accept: its
+        // failures are its own, held to its own roster below
+        java.util.Map<String, String[]> acceptedRegister = MinimalCorpus.OTHER_LANE ? new java.util.HashMap<>()
+                : readAccepted(MinimalCorpus.H2_BACKEND ? H2_ACCEPTED : DUCKDB_ACCEPTED);
+        // -Drcorpus.tests=<file>: the tests named there, one fully qualified name a line (a covering subset)
+        java.util.Set<String> listed = testList();
         if ("database".equalsIgnoreCase(System.getProperty("legend.judge.mode", "host"))) {
             // a divergence the DATABASE verdict names and the host's kept
             // tolerance hides (homework §4j: the calendar goldens computed
@@ -184,6 +188,9 @@ public class MinimalCorpusTest {
         try {
             for (com.legend.test.PureTests.TestCase t : corpus.tests()) {
                 if (!only.isEmpty() && !t.fqn().contains(only)) {
+                    continue;
+                }
+                if (listed != null && !listed.contains(t.fqn())) {
                     continue;
                 }
                 MinimalCorpus.Result r;
@@ -361,6 +368,12 @@ public class MinimalCorpusTest {
                 .forEach(e -> System.out.println("[corpus2] slow " + e.getValue() + "ms " + e.getKey()));
         // (no per-test wall-clock ceiling, Bazel workplan P3-15: elapsed time is a machine's, not the code's; each
         // test's time stays in corpus2-elapsed.txt for reading, and a runaway is the lane's Bazel timeout)
+        if (MinimalCorpus.OTHER_LANE || listed != null) {
+            // a lane on another database, or a listed subset: measured, and held to its own roster when it has one;
+            // the reference lanes' censuses below are DuckDB's and H2's, and a whole corpus's
+            holdToLaneRoster(fail, ran);
+            return;
+        }
         // setups the platform derived as inert (never ran): named, and
         // pinned exactly on the full run — Phase 0.2
         for (String s : corpus.inertSetups()) {
@@ -1153,6 +1166,50 @@ public class MinimalCorpusTest {
                 sb.append("\n  STALE  ").append(s);
             }
             org.junit.jupiter.api.Assertions.fail(sb.toString());
+        }
+    }
+
+    /** {@code -Drcorpus.tests}: the listed tests (a covering subset, tools/census/primitive_cover.py's output: the
+     *  first tab-separated field of each line, '#' lines skipped), or null when no list is named. */
+    private static @com.legend.base.Nullable java.util.Set<String> testList() throws IOException {
+        String file = System.getProperty("rcorpus.tests", "").trim();
+        if (file.isEmpty()) {
+            return null;
+        }
+        java.util.Set<String> names = new java.util.LinkedHashSet<>();
+        for (String line : Files.readAllLines(Path.of(file), StandardCharsets.UTF_8)) {
+            String l = line.strip();
+            if (!l.isEmpty() && !l.startsWith("#")) {
+                names.add(l.split("\t", 2)[0]);
+            }
+        }
+        return names;
+    }
+
+    /** A lane on another database is held to its own fail roster ({@code /rcorpus/<lane>-fail-roster.txt}) when it
+     *  has one, over the tests that ran: a failure off the roster fails the run, and so does a rostered test that
+     *  passes (its row is deleted); until then its failures are only printed (the measurement). */
+    private static void holdToLaneRoster(List<String> fail, List<String> ran) throws IOException {
+        String resource = "/rcorpus/" + MinimalCorpus.BACKEND + "-fail-roster.txt";
+        try (InputStream in = MinimalCorpusTest.class.getResourceAsStream(resource)) {
+            if (in == null) {
+                System.out.println("[corpus2] " + MinimalCorpus.BACKEND + ": no " + resource + " yet -- measured only");
+                return;
+            }
+            java.util.Set<String> roster = new java.util.TreeSet<>();
+            for (String l : new String(in.readAllBytes(), StandardCharsets.UTF_8).split("\n")) {
+                if (!l.isBlank()) {
+                    roster.add(l.strip());
+                }
+            }
+            java.util.Set<String> failing = new java.util.TreeSet<>();
+            for (String f : fail) {
+                failing.add(f.substring(0, f.indexOf(" :: ")));
+            }
+            java.util.Set<String> ranNames = new HashSet<>(ran);
+            org.junit.jupiter.api.Assertions.assertEquals(roster.stream().filter(ranNames::contains).toList(),
+                    failing.stream().toList(), "[" + MinimalCorpus.BACKEND + "] the failing tests moved against "
+                    + resource + " (a new failure, or a rostered test that passes)");
         }
     }
 

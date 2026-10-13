@@ -19,6 +19,8 @@ import java.util.Map;
  *   <li>{@code corpus-trace}, {@code detach-trace}, {@code progress}, {@code timing}: the corpus runner's traces</li>
  *   <li>{@code corpus-containing=TEXT}: parser-equivalence's corpus, only the sources containing TEXT (iteration)</li>
  *   <li>{@code chb-only=TEXT}: Channel B, only the PCT tests whose name contains TEXT (iteration; no pins)</li>
+ *   <li>{@code primitives}: tally the MIR primitives of every statement the executor sends, by outcome, printed at
+ *       the JVM's exit (the coverage map's input, exec/PrimitiveCensus)</li>
  * </ul>
  */
 public final class Diagnostics {
@@ -28,7 +30,7 @@ public final class Diagnostics {
     /** The vocabulary: the switches that exist. */
     public static final List<String> NAMES = List.of(
             "dump-sql", "pct-cases", "corpus-trace", "detach-trace", "progress", "timing",
-            "corpus-containing", "chb-only");
+            "corpus-containing", "chb-only", "primitives");
 
     private static final Map<String, String> ON = java.util.Collections.unmodifiableMap(new java.util.LinkedHashMap<>(parse(System.getProperty("legend.diagnostics", ""))));
 

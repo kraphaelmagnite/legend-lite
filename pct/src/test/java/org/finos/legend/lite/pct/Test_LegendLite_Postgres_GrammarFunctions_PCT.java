@@ -40,13 +40,11 @@ public class Test_LegendLite_Postgres_GrammarFunctions_PCT extends PCTReportConf
             one("meta::pure::functions::boolean::tests::equality::eq::testEqNonPrimitive_Function_1__Boolean_1_", "Assert failed"),
             one("meta::pure::functions::boolean::tests::equality::equal::testEqualNonPrimitive_Function_1__Boolean_1_", "Assert failed"),
             // Postgres raises differently (its own error, or a different position or wording)
-            one("meta::pure::functions::collection::tests::filter::testFilterInstance_Function_1__Boolean_1_", "ERROR: missing FROM-clause entry for table \"p"),
+            one("meta::pure::functions::collection::tests::filter::testFilterInstance_Function_1__Boolean_1_", "no typed conversion for org.postgresql.util.PGobject"),
             // refused by name: a construct the Postgres dialect does not spell yet
             one("meta::pure::functions::boolean::tests::equality::eq::testEqPrimitiveExtension_Function_1__Boolean_1_", "unknown type 'meta::pure::functions::boolean::tests::equalitymodel::ExtendedInteger' in @meta::pure::functions::boolean::tests::equalitymodel::ExtendedInteger"),
             one("meta::pure::functions::boolean::tests::equality::equal::testEqualPrimitiveExtension_Function_1__Boolean_1_", "unknown type 'meta::pure::functions::boolean::tests::equalitymodel::ExtendedInteger' in @meta::pure::functions::boolean::tests::equalitymodel::ExtendedInteger"),
             one("meta::pure::functions::collection::tests::first::testFirstComplex_Function_1__Boolean_1_", "no typed conversion for org.postgresql.util.PGobject (type=ClassType[fqn=meta::pure::functions::collection::tests::model::CO_Firm])"),
-            // 2026-10-04 C3b: the same refusal, now by the session owner (Sessions.openPrivate) and by the declared type
-            one("meta::pure::functions::collection::tests::getAll::testBasic_Function_1__Boolean_1_", "no in-memory instance of database type 'Postgres'"),
             one("meta::pure::functions::collection::tests::map::testMapRelationshipFromManyToMany_Function_1__Boolean_1_", "no typed conversion for org.postgresql.util.PGobject (type=ClassType[fqn=meta::pure::functions::collection::tests::map::model::M_Location])"),
             one("meta::pure::functions::collection::tests::map::testMapRelationshipFromManyToOne_Function_1__Boolean_1_", "no typed conversion for org.postgresql.util.PGobject (type=ClassType[fqn=meta::pure::functions::collection::tests::map::model::M_Address])"),
             one("meta::pure::functions::collection::tests::map::testMapRelationshipFromOneToOne_Function_1__Boolean_1_", "unbound variable '$address'"),

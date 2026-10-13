@@ -1,0 +1,114 @@
+# legend-lite's own Postgres-judged cases over upstream's parity schema: subqueries in expressions (IN, EXISTS,
+# ANY/SOME/ALL, scalar), correlated to one and two enclosing levels, and INTERSECT/EXCEPT. NULLs decide most of them:
+# persons 7 (Grace) has no age and no dept_id, persons 8 (Hank) no salary and no active.
+# Each answer is snapped from Postgres 16 with upstream's (postgres-answers.jsonl, key lite/subqueries/<id>).
+tests:
+  # IN and NOT IN
+  - id: in_subquery
+    sql: "SELECT name FROM persons WHERE id IN (SELECT person_id FROM orders) ORDER BY id"
+  - id: not_in_subquery
+    sql: "SELECT name FROM persons WHERE id NOT IN (SELECT person_id FROM orders) ORDER BY id"
+  - id: not_in_a_null_row_is_never_true
+    sql: "SELECT name FROM persons WHERE id NOT IN (SELECT dept_id FROM persons) ORDER BY id"
+  - id: not_in_a_null_operand_is_not_true
+    sql: "SELECT name FROM persons WHERE dept_id NOT IN (SELECT id FROM departments WHERE id > 2) ORDER BY id"
+  - id: in_as_a_value_is_null_for_a_null_operand
+    sql: "SELECT name, dept_id IN (SELECT id FROM departments WHERE budget > 600000) AS big FROM persons ORDER BY id"
+  - id: not_in_as_a_value_with_a_null_row
+    sql: "SELECT d.id, d.id NOT IN (SELECT dept_id FROM persons) AS unused FROM departments d ORDER BY d.id"
+  - id: in_no_rows_is_false_even_for_null
+    sql: "SELECT name, dept_id IN (SELECT id FROM departments WHERE id > 100) AS v FROM persons ORDER BY id"
+  - id: not_in_no_rows_keeps_every_row
+    sql: "SELECT name FROM persons WHERE dept_id NOT IN (SELECT id FROM departments WHERE id > 100) ORDER BY id"
+  - id: not_in_correlated
+    sql: "SELECT p.name FROM persons p WHERE p.dept_id NOT IN (SELECT q.dept_id FROM persons q WHERE q.id <> p.id AND q.age > 30) ORDER BY p.id"
+  - id: in_subquery_with_limit
+    sql: "SELECT name FROM persons WHERE id IN (SELECT person_id FROM orders ORDER BY amount DESC LIMIT 3) ORDER BY id"
+  - id: in_subquery_union
+    sql: "SELECT name FROM persons WHERE id IN (SELECT person_id FROM orders WHERE amount > 600 UNION SELECT id FROM departments WHERE name = 'HR') ORDER BY id"
+  - id: in_a_with_query
+    sql: "WITH big AS (SELECT id FROM departments WHERE budget >= 750000) SELECT name FROM persons WHERE dept_id IN (SELECT id FROM big) ORDER BY id"
+  - id: in_subquery_too_many_columns
+    sql: "SELECT name FROM persons WHERE id IN (SELECT id, name FROM departments)"
+  - id: in_subquery_type_mismatch
+    sql: "SELECT name FROM persons WHERE name IN (SELECT id FROM departments)"
+  # EXISTS
+  - id: exists_correlated
+    sql: "SELECT name FROM persons p WHERE EXISTS (SELECT 1 FROM orders o WHERE o.person_id = p.id) ORDER BY p.id"
+  - id: not_exists_correlated
+    sql: "SELECT name FROM persons p WHERE NOT EXISTS (SELECT 1 FROM orders o WHERE o.person_id = p.id AND o.amount > 400) ORDER BY p.id"
+  - id: exists_uncorrelated
+    sql: "SELECT count(*) AS n FROM persons WHERE EXISTS (SELECT 1 FROM departments WHERE budget > 900000)"
+  - id: exists_as_a_value
+    sql: "SELECT d.name, EXISTS (SELECT 1 FROM persons p WHERE p.dept_id = d.id) AS staffed FROM departments d ORDER BY d.id"
+  - id: not_exists_star
+    sql: "SELECT d.name FROM departments d WHERE NOT EXISTS (SELECT * FROM persons p WHERE p.dept_id = d.id) ORDER BY d.id"
+  - id: exists_with_group_by_having
+    sql: "SELECT name FROM persons p WHERE EXISTS (SELECT o.person_id FROM orders o WHERE o.person_id = p.id GROUP BY o.person_id HAVING count(*) > 1) ORDER BY p.id"
+  - id: exists_two_levels_deep
+    sql: "SELECT d.name FROM departments d WHERE EXISTS (SELECT 1 FROM persons p WHERE p.dept_id = d.id AND EXISTS (SELECT 1 FROM orders o WHERE o.person_id = p.id AND o.amount > 400)) ORDER BY d.id"
+  # ANY, SOME, ALL
+  - id: greater_than_any
+    sql: "SELECT name FROM persons WHERE salary > ANY (SELECT salary FROM persons WHERE dept_id = 3) ORDER BY id"
+  - id: some_is_any
+    sql: "SELECT name FROM persons WHERE dept_id = SOME (SELECT id FROM departments WHERE name LIKE 'S%') ORDER BY id"
+  - id: all_with_a_null_row_is_never_true
+    sql: "SELECT name FROM persons WHERE salary >= ALL (SELECT salary FROM persons) ORDER BY id"
+  - id: all_over_known_values
+    sql: "SELECT name FROM persons WHERE salary >= ALL (SELECT salary FROM persons WHERE salary IS NOT NULL) ORDER BY id"
+  - id: all_over_no_rows_is_true_even_for_null
+    sql: "SELECT count(*) AS n FROM persons WHERE age > ALL (SELECT age FROM persons WHERE age > 100)"
+  - id: any_as_a_value
+    sql: "SELECT id, age < ANY (SELECT age FROM persons WHERE dept_id = 1) AS younger FROM persons ORDER BY id"
+  - id: all_as_a_value_with_a_null_row
+    sql: "SELECT id, age > ALL (SELECT age FROM persons WHERE dept_id = 2 OR dept_id IS NULL) AS oldest FROM persons ORDER BY id"
+  - id: not_equal_any
+    sql: "SELECT id FROM persons WHERE NOT (age = ANY (SELECT age FROM persons WHERE id > 8)) ORDER BY id"
+  - id: not_equal_all
+    sql: "SELECT id FROM persons WHERE age <> ALL (SELECT age FROM persons WHERE id > 8) ORDER BY id"
+  - id: boolean_any
+    sql: "SELECT id FROM persons WHERE active = ANY (SELECT active FROM persons WHERE id IN (3, 6)) ORDER BY id"
+  # scalar subqueries
+  - id: scalar_uncorrelated
+    sql: "SELECT name FROM persons WHERE salary > (SELECT avg(salary) FROM persons) ORDER BY id"
+  - id: scalar_correlated_count_is_zero_not_null
+    sql: "SELECT p.name, (SELECT count(*) FROM orders o WHERE o.person_id = p.id) AS orders_n FROM persons p ORDER BY p.id"
+  - id: scalar_correlated_max_is_null_over_no_rows
+    sql: "SELECT p.name, (SELECT max(o.amount) FROM orders o WHERE o.person_id = p.id) AS biggest FROM persons p ORDER BY p.id"
+  - id: scalar_no_row_is_null
+    sql: "SELECT p.name, (SELECT d.name FROM departments d WHERE d.id = p.dept_id) AS dept FROM persons p ORDER BY p.id"
+  - id: scalar_more_than_one_row_is_an_error
+    sql: "SELECT p.name, (SELECT o.amount FROM orders o WHERE o.person_id = p.id) AS amount FROM persons p ORDER BY p.id"
+  - id: scalar_two_columns_is_an_error
+    sql: "SELECT (SELECT id, name FROM departments WHERE id = 1) AS x FROM persons"
+  - id: scalar_correlated_in_where
+    sql: "SELECT name FROM persons p WHERE salary > (SELECT avg(q.salary) FROM persons q WHERE q.dept_id = p.dept_id) ORDER BY id"
+  - id: scalar_is_null
+    sql: "SELECT name FROM persons p WHERE (SELECT max(amount) FROM orders o WHERE o.person_id = p.id) IS NULL ORDER BY p.id"
+  - id: scalar_boolean
+    sql: "SELECT id, (SELECT active FROM persons q WHERE q.id = p.id + 1) AS next_active FROM persons p ORDER BY id"
+  - id: scalar_in_order_by
+    sql: "SELECT name FROM persons p ORDER BY (SELECT count(*) FROM orders o WHERE o.person_id = p.id) DESC, p.id"
+  - id: scalar_in_having
+    sql: "SELECT dept_id, count(*) AS n FROM persons GROUP BY dept_id HAVING count(*) > (SELECT count(*) FROM orders WHERE person_id = 1) ORDER BY dept_id"
+  - id: scalar_correlated_on_a_group_key
+    sql: "SELECT dept_id, (SELECT name FROM departments d WHERE d.id = persons.dept_id) AS dname, count(*) AS n FROM persons GROUP BY dept_id ORDER BY dept_id"
+  - id: scalar_two_levels_deep
+    sql: "SELECT p.name FROM persons p WHERE EXISTS (SELECT 1 FROM orders o WHERE o.person_id = p.id AND o.amount > (SELECT avg(o2.amount) FROM orders o2 WHERE o2.person_id = p.id)) ORDER BY p.id"
+  - id: aggregate_of_an_outer_column
+    sql: "SELECT dept_id, (SELECT max(p.salary) FROM departments d WHERE d.id = 1) AS m FROM persons p GROUP BY dept_id ORDER BY dept_id"
+  - id: aggregate_of_an_outer_column_in_where
+    sql: "SELECT dept_id FROM persons p GROUP BY dept_id HAVING EXISTS (SELECT 1 FROM orders o WHERE o.amount * 100 > max(p.salary)) ORDER BY dept_id"
+  # INTERSECT and EXCEPT
+  - id: intersect
+    sql: "SELECT dept_id FROM persons INTERSECT SELECT id FROM departments ORDER BY 1"
+  - id: intersect_nulls_are_equal
+    sql: "SELECT age FROM persons WHERE id >= 7 INTERSECT SELECT age FROM persons WHERE id = 7 OR id = 9 ORDER BY 1"
+  - id: except
+    sql: "SELECT id FROM departments EXCEPT SELECT dept_id FROM persons ORDER BY 1"
+  - id: except_keeps_a_null_row
+    sql: "SELECT dept_id FROM persons EXCEPT SELECT id FROM departments ORDER BY 1"
+  - id: except_removes_duplicates
+    sql: "SELECT status FROM orders EXCEPT SELECT status FROM orders WHERE status = 'cancelled' ORDER BY 1"
+  - id: intersect_all
+    sql: "SELECT dept_id FROM persons INTERSECT ALL SELECT id FROM departments ORDER BY 1"

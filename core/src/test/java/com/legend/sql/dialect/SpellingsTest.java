@@ -36,6 +36,8 @@ class SpellingsTest {
             // struct_insert(s, name := v): named-argument syntax, coded per dialect
             SqlFn.STRUCT_INSERT,
             SqlFn.BOOL_TO_TEXT,
+            // a Float's literal spelling: a decomposition over the double's text, coded per dialect (2026-10-11)
+            SqlFn.FLOAT_CANON,
             SqlFn.ADD_INTERVAL,
             SqlFn.ADD_INTERVAL_TEMPORAL,
             SqlFn.AND,

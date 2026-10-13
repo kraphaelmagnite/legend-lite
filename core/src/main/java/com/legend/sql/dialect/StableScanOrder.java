@@ -68,7 +68,7 @@ public final class StableScanOrder extends SqlRewriter {
                 changed = true;
             }
             if (changed) {
-                q = new com.legend.sql.SqlWith(cs, w.body());
+                q = w.with(cs, w.body());
             }
         }
         // deep walk FIRST (fires the select hook on every nested

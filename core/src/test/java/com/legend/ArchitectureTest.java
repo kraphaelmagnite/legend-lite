@@ -1238,6 +1238,13 @@ final class ArchitectureTest {
                 // witnesses; measurement only, deliberately unpinned
                 "com.legend.exec.SqlTypeCensus.SLACK_CLASSES",
                 "com.legend.exec.SqlTypeCensus.SLACK_SAMPLES",
+                // the primitive census (2026-10-12, the coverage map, docs/CLOUD_BACKENDS_PCT_2026_10_11.md §20): a
+                // tally per MIR primitive by outcome, bounded by the MIR's vocabulary; written only under
+                // -Dlegend.diagnostics=primitives; measurement only, never verdict-affecting (the SqlTypeCensus
+                // pattern)
+                "com.legend.exec.PrimitiveCensus.TALLY",
+                // and its per-test sets under primitives=per-test (the same day): bounded by tests x vocabulary
+                "com.legend.exec.PrimitiveCensus.TESTS",
                 // serializer registry: written once at static init; the
                 // ConcurrentHashMap spelling is for safe publication
                 "com.legend.server.serial.SerializerRegistry.SERIALIZERS",

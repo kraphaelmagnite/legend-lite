@@ -28,6 +28,14 @@ public interface SqlDialect {
         return java.util.List.of();
     }
 
+    /** The statements that make {@code table} (TEMPORARY) a table only this session sees, holding {@code rows} (null:
+     *  none) and only read after (a server engine's system database, exec.SystemDatabase). Default: the table, then
+     *  one INSERT of its rows -- this interface's own DDL and DML renders. */
+    default java.util.List<String> sessionTable(com.legend.sql.SqlDdl.CreateTable table,
+            com.legend.sql.SqlDml.@com.legend.base.Nullable InsertValues rows) {
+        return rows == null ? java.util.List.of(render(table)) : java.util.List.of(render(table), render(rows));
+    }
+
     /** A STORED name — a table, schema or column as its database holds it, or a quote-bearing declaration
      *  ({@code "date"}) that is its own spelling — as this dialect's queries reference it: a seed writing the
      *  table and a query reading it spell one name (C3c). */
@@ -37,6 +45,12 @@ public interface SqlDialect {
      *  a dialect whose SQL differs by version says how. Default: every version is spelled alike. */
     default SqlDialect forServer(String version) {
         return this;
+    }
+
+    /** Whether this dialect's driver re-fetches a timestamp cell as {@code java.time.LocalDateTime} (the
+     *  BC-faithful carrier the executor reads every timestamp as). Default: it does, and a refusal fails loudly. */
+    default boolean refetchesTimestampAsJavaTime() {
+        return true;
     }
 
     /** JDBC cell value → canonical Java value for {@code type}. Default: identity. */
@@ -58,6 +72,12 @@ public interface SqlDialect {
 
     default boolean rawH2IsNative() {
         return false;
+    }
+
+    /** Whom the corpus's raw H2 text is translated for (RawSqlBoundary, where the translation lives): DuckDB's
+     *  flavor unless a dialect says otherwise. */
+    default RawSqlBoundary.Target rawTarget() {
+        return RawSqlBoundary.Target.DUCKDB;
     }
 
     /** An effect segment's statements as ONE script (block-compiler stage 3): the

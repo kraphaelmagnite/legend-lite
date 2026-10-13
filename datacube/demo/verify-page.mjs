@@ -1,6 +1,7 @@
-// A PAGE OF SEVERAL CUBES, in a real browser (plan F6): demo/page.html puts two cubes on one
-// DuckDB and one planner. Each must stay its own -- a drag, a keystroke, a window, a removal
-// reach the cube they belong to and no other.
+// A PAGE OF SEVERAL CUBES, in a real browser (plan F6), on DataCube's own page (demo/index.html, the app: since the
+// one-app design's step 1d, docs/DATACUBE_ONE_APP_DESIGN_2026_10_11.md §12, which retired the fixture page.html these
+// checks first ran on): the sample grid and its copy, two cubes on one DuckDB and one planner. Each must stay its own --
+// a drag, a keystroke, a window, a removal reach the cube they belong to and no other.
 //
 //   bazel run //datacube:verify_page            (SHOTS=<dir> also saves a screenshot)
 
@@ -32,10 +33,11 @@ async function check(name, fn) {
   }
 }
 
-const A = 'by-region';
-const B = 'by-desk';
+// the page's grids are numbered alike: the sample's first, its copy second
+const A = 'grid-1';
+const B = 'grid-2';
 const tile = (id) => `[data-tile="${id}"]`;
-const rowsOf = (id) => page.evaluate((t) => window.__page.cubes[t]?.snapshot.rows ?? null, id);
+const rowsOf = (id) => page.evaluate((t) => window.__dataPage.grid(t)?.snapshot.rows ?? null, id);
 
 /** Until no cube is busy and no cube has told the page of a change for a moment: an awaited condition, measured in
  *  the page (G-11), never a sleep in the harness. */
@@ -44,8 +46,9 @@ async function settle() {
   await page.evaluate(() => { window.__settleState = undefined; });
   await page.waitForFunction((quietMs) => {
     const state = JSON.stringify([
-      window.__page.changes,
-      Object.values(window.__page.cubes).map((c) => c.busy),
+      window.__dataCubeSignal?.changes,
+      window.__dataCubeSignal?.printing,
+      (window.__dataPage?.grids ?? []).map((id) => window.__dataPage.grid(id)?.busy),
     ]);
     const now = performance.now();
     if (window.__settleState !== state) {
@@ -53,7 +56,8 @@ async function settle() {
       window.__settleSince = now;
       return false;
     }
-    return !state.includes('true') && now - window.__settleSince > quietMs;
+    return window.__dataPage !== undefined && window.__dataCubeSignal?.printing === 0 && !state.includes('true')
+      && now - window.__settleSince > quietMs;
   }, 300, { timeout: 30_000, polling: 50 }).catch(() => { throw new Error('the page did not settle'); });
 }
 
@@ -64,9 +68,21 @@ async function dragToRows(from, column, to) {
   await settle();
 }
 
+/** Right-click > Insert > `what`, on a cell of the grid in `scope`. */
+async function insert(what, scope) {
+  await page.locator(scope).first().locator('.dc-row').nth(1).locator('.dc-cell').nth(2).click({ button: 'right' });
+  await page.locator('.dc-menu-item:has(> .dc-menu-label:text-is("Insert"))').first().hover();
+  await page.locator(`.dc-menu-item:has(> .dc-menu-label:text-is("Insert")) .dc-menu-item:has(> .dc-menu-label:text-is("${what}"))`).first().click();
+  await settle();
+}
+
 try {
-  await page.goto(`http://127.0.0.1:${port}/demo/page.html`);
-  await page.waitForFunction(() => window.__page?.ready === true, null, { timeout: 120_000 });
+  await page.goto(`http://127.0.0.1:${port}/demo/index.html`);
+  await page.waitForSelector('.dc-row', { timeout: 120_000 });
+  await settle();
+  // the second cube: a copy of the sample's grid, beside it
+  await insert('Copy of Grid', tile(A));
+  await page.locator(`${tile(B)} .dc-row`).first().waitFor({ timeout: 20_000 });
   await settle();
 
   await check('two cubes on one page, each with its own rows', async () => {
@@ -77,21 +93,23 @@ try {
     return `rows ${counts.join(' and ')}`;
   });
 
-  await check('a column dragged within a cube groups that cube, not the other', async () => {
-    const before = [await rowsOf(A), await rowsOf(B)];
-    await dragToRows(A, 'book', A);
-    const after = [await rowsOf(A), await rowsOf(B)];
-    if (!after[0].includes('book')) throw new Error(`A did not group by book: ${after[0]}`);
-    if (JSON.stringify(after[1]) !== JSON.stringify(before[1])) throw new Error(`B changed: ${after[1]}`);
-    return `A ${after[0].join(' > ')}; B ${after[1].join(' > ')}`;
-  });
-
   await check('a column dragged from one cube does not land on the other', async () => {
     const before = await rowsOf(B);
+    // qtr: a dimension neither cube groups by yet (qty, a measure, could never land in its rows); first, while A's
+    // columns list still offers it
     await dragToRows(A, 'qtr', B);
     const after = await rowsOf(B);
     if (JSON.stringify(after) !== JSON.stringify(before)) throw new Error(`B took A's column: ${after}`);
     return `B still ${after.join(' > ')}`;
+  });
+
+  await check('a column dragged within a cube groups that cube, not the other', async () => {
+    const before = [await rowsOf(A), await rowsOf(B)];
+    await dragToRows(A, 'qtr', A);
+    const after = [await rowsOf(A), await rowsOf(B)];
+    if (!after[0].includes('qtr')) throw new Error(`A did not group by qtr: ${after[0]}`);
+    if (JSON.stringify(after[1]) !== JSON.stringify(before[1])) throw new Error(`B changed: ${after[1]}`);
+    return `A ${after[0].join(' > ')}; B ${after[1].join(' > ')}`;
   });
 
   await check('Ctrl-Z undoes the cube it is pressed in, and only it', async () => {
@@ -99,12 +117,12 @@ try {
     await page.locator(`${tile(B)} .dc-row`).first().click();
     await page.keyboard.press(`${mod}+z`);
     await settle();
-    if (!(await rowsOf(A)).includes('book')) throw new Error('Ctrl-Z in B undid A');
+    if (!(await rowsOf(A)).includes('qtr')) throw new Error('Ctrl-Z in B undid A');
     await page.locator(`${tile(A)} .dc-row`).first().click();
     await page.keyboard.press(`${mod}+z`);
     await settle();
     const a = await rowsOf(A);
-    if (a.includes('book')) throw new Error(`Ctrl-Z in A did not undo A: ${a}`);
+    if (a.includes('qtr')) throw new Error(`Ctrl-Z in A did not undo A: ${a}`);
     return `A back to ${a.join(' > ')}`;
   });
 
@@ -112,7 +130,7 @@ try {
     const mod = process.platform === 'darwin' ? 'Meta' : 'Control';
     await page.locator(`${tile(B)} .dc-row`).first().click();
     await page.keyboard.press(`${mod}+e`);
-    const win = page.locator('#page > .dc-app-overlay').first();
+    const win = page.locator('.dc-page > .dc-app-overlay').first();
     await win.waitFor({ timeout: 10_000 });
     const [cubeOfWin, cubeOfB] = await Promise.all([
       win.evaluate((w) => w.dataset.dcCube),
@@ -138,13 +156,20 @@ try {
   });
 
   await check('removing a tile disposes its cube; the other keeps working', async () => {
-    await page.locator(`${tile(A)} .tile-remove`).click();
+    await page.locator(`${tile(A)} .dc-tile-remove`).click();
     await settle();
     if (await page.locator(tile(A)).count()) throw new Error('tile A is still there');
     const before = await rowsOf(B);
-    await dragToRows(B, 'region', B);
+    // B alone now sits in the page's bar (a page of one grid): the one cube left, its columns panel (folded, as a copy
+    // starts) opened first
+    const cube = page.locator('.dc-app');
+    if (await cube.count() !== 1) throw new Error(`${await cube.count()} cubes left`);
+    await cube.locator('.dc-tool-panel-rail').click();
+    await cube.locator('.dc-tool-panel-row[data-column="qtr"]').first()
+      .dragTo(cube.locator('.dc-zone-rows').first(), { timeout: 10_000 });
+    await settle();
     const after = await rowsOf(B);
-    if (!after.includes('region')) throw new Error(`B did not group by region: ${after}`);
+    if (!after.includes('qtr')) throw new Error(`B did not group by qtr: ${after}`);
     return `B ${before.join(' > ')} -> ${after.join(' > ')}`;
   });
 

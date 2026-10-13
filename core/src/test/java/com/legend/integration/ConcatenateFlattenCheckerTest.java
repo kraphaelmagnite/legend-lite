@@ -8,6 +8,7 @@ import org.junit.jupiter.api.Test;
 
 import java.sql.DriverManager;
 import java.sql.SQLException;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -114,6 +115,26 @@ public class ConcatenateFlattenCheckerTest extends AbstractDatabaseTest {
             assertEquals(1, result.rows().get(0).values().get(0));
             assertEquals(2, result.rows().get(1).values().get(0));
             assertEquals(3, result.rows().get(2).values().get(0));
+        }
+
+        @Test
+        @DisplayName("concat of sorted, limited sides keeps each side's own slice")
+        void testConcatLimitedSides() throws SQLException {
+            // a union's branch has no ORDER BY or LIMIT of its own in SQL: each side is a subselect
+            var result = executeRelation("""
+                    |#TDS
+                    id, name
+                    1, Alice
+                    2, Bob
+                    3, Carol
+                    #->sort(descending(~id))->limit(2)->concatenate(
+                      #TDS
+                      id, name
+                      4, Dave
+                      5, Erin
+                      #->sort(ascending(~id))->limit(1)
+                    )->sort(ascending(~id))""");
+            assertEquals(List.of(2, 3, 4), result.rows().stream().map(r -> r.values().get(0)).toList());
         }
     }
 

@@ -172,7 +172,8 @@ class _Session:
     def engine(self) -> Engine:
         with self._lock:
             if self._engine is None:
-                self._engine = Engine(self.frames, site=_site())
+                # a page's file is read into the frames' database by DataCube's own code, headless (file.json)
+                self._engine = Engine(self.frames, site=_site(), headless=self.headless)
             return self._engine
 
     def headless(self) -> Any:
@@ -236,7 +237,8 @@ class _Session:
 
     def _next_name(self) -> str:
         n = 1
-        while (name := 'frame' if n == 1 else f'frame_{n}').lower() in self.cubes or name in self.frames:
+        # a page's file's table holds its name too (the engine's file.json)
+        while (name := 'frame' if n == 1 else f'frame_{n}').lower() in self.cubes or self.frames.taken(name):
             n += 1
         return name
 

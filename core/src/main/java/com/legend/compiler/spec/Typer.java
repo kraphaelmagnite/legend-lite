@@ -177,16 +177,15 @@ final class Typer {
                     synth(new PureCollection(
                             List.<ValueSpecification>copyOf(q.functions())), env);
             case com.legend.protocol.spec.TdsLiteral tl -> synth(tl.desugared(), env);
+            // #SQL{...}#: Postgres SQL, translated to the Relation expression it means and typed as one
+            // (SqlIslands; docs/LEGEND_SQL_STUDY_2026_10_11.md §3)
             case com.legend.protocol.spec.SqlIsland si ->
-                    throw new com.legend.error.NotImplementedException(
-                            "#SQL{...}# expression islands are not compilable —"
-                                    + " an inline SQL string bypasses the typed"
-                                    + " lowering pipeline");
+                    synth(SqlIslands.desugar(si, source -> synth(source, env)), env);
             case com.legend.protocol.spec.GqlIsland gi ->
                     throw new com.legend.error.NotImplementedException(
                             "#GQL{...}# expression islands are not compilable"
                                     + " — the graphQL extension is parse-only"
-                                    + " surface (like #SQL{...}#)");
+                                    + " surface");
             case CInteger lit -> new TypedCInteger(lit.value(), ExprType.one(Type.Primitive.INTEGER));
             case CString lit -> new TypedCString(lit.value(), ExprType.one(Type.Primitive.STRING));
             case CBoolean lit -> new TypedCBoolean(lit.value(), ExprType.one(Type.Primitive.BOOLEAN));

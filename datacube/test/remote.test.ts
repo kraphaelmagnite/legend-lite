@@ -13,6 +13,7 @@ import { describe, it } from 'node:test';
 
 import type { ResultTable } from '../../engine-client/src/result.ts';
 import {
+  credentialScope,
   credentialStatements,
   inferFormat,
   mountRemote,
@@ -130,18 +131,21 @@ describe('the view that hides the remoteness', () => {
 });
 
 describe('credentials', () => {
+  const source = { name: 'trades', url: 's3://bucket/trades/2024.parquet' };
+
   it('writes nothing when there are none', () => {
-    assert.deepEqual(credentialStatements(undefined), []);
-    assert.deepEqual(credentialStatements({}), []);
+    assert.deepEqual(credentialStatements(undefined, source), []);
+    assert.deepEqual(credentialStatements({}, source), []);
   });
 
-  it('writes one scoped secret rather than global settings', () => {
+  it('writes one secret per source, scoped to its own path, rather than global settings', () => {
     const [stmt] = credentialStatements({
       accessKeyId: 'AKIA',
       secretAccessKey: 'shh',
       region: 'eu-west-2',
-    });
-    assert.match(stmt ?? '', /^CREATE OR REPLACE SECRET datacube_s3 \(/);
+    }, source);
+    assert.match(stmt ?? '', /^CREATE OR REPLACE SECRET "datacube_s3_trades" \(/);
+    assert.match(stmt ?? '', /SCOPE 's3:\/\/bucket\/trades\/2024\.parquet'/);
     assert.match(stmt ?? '', /TYPE S3/);
     assert.match(stmt ?? '', /KEY_ID 'AKIA'/);
     assert.match(stmt ?? '', /REGION 'eu-west-2'/);
@@ -152,15 +156,31 @@ describe('credentials', () => {
       endpoint: 'minio:9000',
       urlStyle: 'path',
       useSsl: false,
-    });
+    }, source);
     assert.match(stmt ?? '', /ENDPOINT 'minio:9000'/);
     assert.match(stmt ?? '', /URL_STYLE 'path'/);
     assert.match(stmt ?? '', /USE_SSL false/);
   });
 
   it('escapes a credential containing a quote', () => {
-    const [stmt] = credentialStatements({ secretAccessKey: "a'b" });
+    const [stmt] = credentialStatements({ secretAccessKey: "a'b" }, source);
     assert.match(stmt ?? '', /SECRET 'a''b'/);
+  });
+
+  it('scopes an Iceberg table to its table, and a glob to the path before it', () => {
+    assert.equal(credentialScope('s3://b/warehouse/orders/metadata#iceberg'), 's3://b/warehouse/orders');
+    assert.equal(credentialScope('s3://b/trades/*.parquet'), 's3://b/trades/');
+    assert.equal(credentialScope('https://host/x.csv'), 'https://host/x.csv');
+  });
+
+  it('gives two sources two secrets: one page\'s keys never replace another\'s', () => {
+    const statements = mountStatements({
+      sources: [{ name: 'a', url: 's3://one/a.parquet' }, { name: 'b', url: 's3://two/b.parquet' }],
+      s3: { accessKeyId: 'AKIA', secretAccessKey: 'shh' },
+    }).filter((s) => s.startsWith('CREATE OR REPLACE SECRET'));
+    assert.equal(statements.length, 2);
+    assert.match(statements[0]!, /"datacube_s3_a".*SCOPE 's3:\/\/one\/a\.parquet'/);
+    assert.match(statements[1]!, /"datacube_s3_b".*SCOPE 's3:\/\/two\/b\.parquet'/);
   });
 });
 

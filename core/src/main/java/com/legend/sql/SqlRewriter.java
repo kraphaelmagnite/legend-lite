@@ -82,7 +82,7 @@ public abstract class SqlRewriter {
                     return q2 == c.query() ? c : new SqlWith.Cte(c.name(), q2, c.materialized());
                 });
                 SqlQuery b2 = rewrite(w.body());
-                yield cs == w.ctes() && b2 == w.body() ? w : new SqlWith(cs, b2);
+                yield cs == w.ctes() && b2 == w.body() ? w : w.with(cs, b2);
             }
         };
     }

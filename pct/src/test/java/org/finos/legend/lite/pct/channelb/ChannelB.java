@@ -17,7 +17,6 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.Connection;
-import java.sql.DriverManager;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -59,8 +58,9 @@ public final class ChannelB {
      * platform sources — shared test models, the assert family, the
      * function definitions the tests exercise; files that do not parse
      * are collected as walls, never silently dropped); DISCOVERY is
-     * scoped. One in-memory DuckDB session per test (isolation — PCT
-     * tests assume a fresh world). */
+     * scoped. One session per test on the lane's database (PctBackend: a
+     * fresh in-memory DuckDB by default — isolation, PCT tests assume a
+     * fresh world). */
     public static List<Outcome> run(Path modelRoot, List<Path> scopeDirs)
             throws IOException {
         return run(List.of(modelRoot), scopeDirs, new ArrayList<>());
@@ -112,10 +112,10 @@ public final class ChannelB {
             }
         }
         // a storeless test executes on a declared runtime, as channel A's does (StorelessRuntime):
-        // channel B runs every test on its DuckDB session
+        // channel B runs every test on its lane's session, channel A's database (PctBackend; DuckDB unless
+        // LEGENDLITE_PCT_BACKEND names another, 2026-10-11)
         sources.add(new Compiler.ModelSource("channelb/storeless-runtime.pure",
-                com.legend.test.StorelessRuntime.declaration(
-                        com.legend.model.ConnectionDefinition.DatabaseType.DuckDB)));
+                org.finos.legend.lite.pct.extension.PctBackend.storelessRuntime()));
         List<String> parseWalls = wallsOut;
         // ITERATIVE WALL COLLECTION (census-first): the platform tree
         // includes m3-metamodel internals our model does not carry; an
@@ -265,7 +265,7 @@ public final class ChannelB {
         } catch (Declined d) {
             return new Outcome(fqn, Status.DECLINED, d.getMessage());
         }
-        try (Connection conn = DriverManager.getConnection("jdbc:duckdb:")) {
+        try (Connection conn = org.finos.legend.lite.pct.extension.PctBackend.connect()) {
             var lambda = new LambdaFunction(List.of(), body);
             var imports = module.model().elementImports().get(com.legend.model.FunctionId.of(fd).qualified());
             ValueSpecification resolved = imports == null
@@ -278,7 +278,9 @@ public final class ChannelB {
             // B's identity adapter carries it the same way
             Execution.executeResolved(resolved, ctx, com.legend.test.StorelessRuntime.RUNTIME, conn, null, null,
                     com.legend.ExecuteOptions.NONE.withFeatures(java.util.Set.of(
-                            com.legend.platform.Feature.CORRECT_SQL_SUBSTRING_INDEXING)));
+                            com.legend.platform.Feature.CORRECT_SQL_SUBSTRING_INDEXING))
+                            // a server lane's system connection, as channel A's (PctBackend)
+                            .withSystemConnections(org.finos.legend.lite.pct.extension.PctBackend.systemConnections()));
             return new Outcome(fqn, Status.PASS, "");
         } catch (java.sql.SQLException e) {
             // an assert failure arrives as the database's error() — a

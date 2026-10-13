@@ -80,3 +80,27 @@ From the checkout, with `<node>` and `<esbuild>` Bazel's own (`<output_base>/ext
 4. The fix: `python3 -I port_tcollections.py <sources jar's TCollections.java>
    third_party/teavm_classlib/src/org/teavm/classlib/java/util/TCollections.java`, build `//wasm:planner_dir`, copy it
    aside, and `<node> --experimental-wasm-exnref boot-split.mjs file://<the copy>/`.
+
+## The DataCube line's receipt (2026-10-11, on the landed module)
+
+`//datacube:model_scale_measure` (`datacube/test/model-scale.measure.ts`; manual, in `//gates:heavy`), rerun by the
+DataCube + Python line on main `39218e803` with `--nocache_test_results`, macOS arm64, the tab's module under Node. Its
+clock is not the boot split's above: each compile is on a module already warm and is the median over three model texts
+a line apart (each text's first compile), and each plan the median of seven over the model held; the boot split holds
+one model text and takes the median of three holds. The before numbers are the DataCube design's
+(`docs/DATACUBE_MODEL_DESIGN_2026_10_10.md` §11, "after compile-once", 2026-10-10), ms:
+
+| classes | model text | compile once, before | compile once, after |
+|---|---|---|---|
+| 1 | 1 KB | 9 | 47 |
+| 10 | 7 KB | 125 | 31 |
+| 50 | 36 KB | 664 | 69 |
+| 200 | 146 KB | 3,937 | **321** |
+
+Plans over the model held, ms, at 1/10/50/200 classes, before then after: a table read 5/5/5/9, then 1/2/1/2; a class
+read 7/6/6/12, then 3/2/3/9; a class with one end walked --/7/7/14, then --/3/5/12.
+
+Read as the DataCube line sent it: the 200-class compile is 12x faster on this clock (321 ms against the boot split's
+73 ms is a first compile of each text against repeated holds of one, not the same clock); the 1-class compile reads
+higher than before (47 against 9), one run of a small number, into which that line reads nothing. The GATES entry of
+the landing names this receipt as the number the landing is held to.

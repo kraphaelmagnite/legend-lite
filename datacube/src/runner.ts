@@ -97,72 +97,105 @@ export interface QueryRunner {
   print(query: Lambda, style?: PrintStyle, signal?: AbortSignal): Promise<string>;
 }
 
-/** The planner makes the SQL, the tab's engine runs it. */
-export class PlanThenRun implements QueryRunner {
+/**
+ * WHERE A QUERY IS PLANNED AND RUN, as one step (docs/DATACUBE_ONE_APP_DESIGN_2026_10_11.md §15): a host's two pieces --
+ * its planner's plan, and its runner executing the plan's SQL on the connection, the rows typed by the plan by the
+ * executor of the language they become (§15.3a) -- and the questions only the planner answers. The tab's host plans in
+ * the page and runs on its own database (`localHost`); a Python host plans and runs in Python, in one call
+ * (src/services/python-host.ts). Every grid on every host runs through `PlanAndRun` over one of these.
+ */
+export interface PlanAndRunHost {
+  /** For diagnostics: which arrangement answered. */
   readonly name: string;
+  /** Who answers the compiler's questions: a query's columns, a parse, a print, a plan alone (compile). */
   readonly planner: Planner;
-  readonly engine: QueryEngine;
+  /**
+   * The query planned and its plan's SQL run: the plan, and the rows typed by it. A failure is a QueryFailure: before
+   * the plan, without SQL; after it, with the SQL that was run.
+   */
+  planAndRun(query: Lambda, epoch: number, signal?: AbortSignal): Promise<{ readonly plan: Plan; readonly rows: ResultTable }>;
+  /** The same, its rows handed over a chunk at a time (`QueryRunner.stream`). */
+  stream(query: Lambda, epoch: number, onChunk: (chunk: ResultTable) => void, signal?: AbortSignal): Promise<void>;
+}
 
-  constructor(planner: Planner, engine: QueryEngine) {
-    this.planner = planner;
-    this.engine = engine;
-    this.name = `plan+${engine.name}`;
+/** Every grid's runner, on every host: the host plans and runs, and the planner answers the compiler's questions. */
+export class PlanAndRun implements QueryRunner {
+  readonly name: string;
+  readonly host: PlanAndRunHost;
+
+  constructor(host: PlanAndRunHost) {
+    this.host = host;
+    this.name = host.name;
   }
 
   async run(query: Lambda, snapshot: CubeSnapshot, _scope?: LevelScope, signal?: AbortSignal): Promise<RunOutcome> {
-    let plan: Plan;
-    try {
-      plan = await this.planner.plan(query, signal);
-    } catch (error: unknown) {
-      if (signal?.aborted) throw error;
-      throw new QueryFailure(error, query);
-    }
-    const sql = plan.sql;
-    try {
-      // the engine types every column by the plan (engine.ts typedByPlan)
-      return { rows: await this.engine.execute(plan, snapshot.epoch, signal), sql };
-    } catch (error: unknown) {
-      if (signal?.aborted) throw error;
-      throw new QueryFailure(error, query, sql);
-    }
+    const { plan, rows } = await this.host.planAndRun(query, snapshot.epoch, signal);
+    return { rows, sql: plan.sql };
   }
 
-  async stream(
+  stream(
     query: Lambda,
     snapshot: CubeSnapshot,
     onChunk: (chunk: ResultTable) => void,
     signal?: AbortSignal,
   ): Promise<void> {
-    let plan: Plan;
-    try {
-      plan = await this.planner.plan(query, signal);
-    } catch (error: unknown) {
-      if (signal?.aborted) throw error;
-      throw new QueryFailure(error, query);
-    }
-    try {
-      await this.engine.stream(plan, snapshot.epoch, onChunk, signal);
-    } catch (error: unknown) {
-      if (signal?.aborted) throw error;
-      throw new QueryFailure(error, query, plan.sql);
-    }
+    return this.host.stream(query, snapshot.epoch, onChunk, signal);
   }
 
   relationType(query: Lambda, signal?: AbortSignal): Promise<PlanColumn[]> {
-    return this.planner.relationType(query, signal);
+    return this.host.planner.relationType(query, signal);
   }
 
-  /** Planning IS compiling here: the planner compiles, nothing runs. */
+  /** Planning IS compiling: the planner compiles, nothing runs. */
   async compile(query: Lambda, _snapshot: CubeSnapshot, signal?: AbortSignal): Promise<void> {
-    await this.planner.plan(query, signal);
+    await this.host.planner.plan(query, signal);
   }
 
   parse(text: string, signal?: AbortSignal): Promise<Lambda> {
-    return this.planner.parse(text, signal);
+    return this.host.planner.parse(text, signal);
   }
 
   print(query: Lambda, style?: PrintStyle, signal?: AbortSignal): Promise<string> {
-    return this.planner.print(query, style, signal);
+    return this.host.planner.print(query, style, signal);
+  }
+}
+
+/** A step's failure as the runner says it: the plan's (no SQL yet), or the run's (with the SQL that ran). */
+async function step<T>(query: Lambda, sql: string | undefined, signal: AbortSignal | undefined, work: () => Promise<T>): Promise<T> {
+  try {
+    return await work();
+  } catch (error: unknown) {
+    if (signal?.aborted) throw error;
+    throw new QueryFailure(error, query, sql);
+  }
+}
+
+/** THE TAB'S HOST: its planner plans in the page (its module, or a server it asks), its engine runs the SQL here. */
+export function localHost(planner: Planner, engine: QueryEngine): PlanAndRunHost {
+  return {
+    name: `plan+${engine.name}`,
+    planner,
+    async planAndRun(query, epoch, signal) {
+      const plan = await step(query, undefined, signal, () => planner.plan(query, signal));
+      // the engine types every column by the plan (engine.ts typedByPlan)
+      return { plan, rows: await step(query, plan.sql, signal, () => engine.execute(plan, epoch, signal)) };
+    },
+    async stream(query, epoch, onChunk, signal) {
+      const plan = await step(query, undefined, signal, () => planner.plan(query, signal));
+      await step(query, plan.sql, signal, () => engine.stream(plan, epoch, onChunk, signal));
+    },
+  };
+}
+
+/** The tab's PlanAndRun, its planner and engine named: the planner makes the SQL, the tab's engine runs it. */
+export class PlanThenRun extends PlanAndRun {
+  readonly planner: Planner;
+  readonly engine: QueryEngine;
+
+  constructor(planner: Planner, engine: QueryEngine) {
+    super(localHost(planner, engine));
+    this.planner = planner;
+    this.engine = engine;
   }
 }
 

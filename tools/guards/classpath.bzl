@@ -21,7 +21,7 @@ def _coordinate(jar):
     if i >= 0:
         name = path[i + len(REPOSITORY_MARKER):].split("/")[0]
         if name in JARS:
-            group, artifact, version = JARS[name].coordinate.split(":")
+            group, artifact, version = JARS[name].coordinate.split(":")[:3]
             return ("product_jars", group, artifact, version)
         return None
     marker = "++maven+"

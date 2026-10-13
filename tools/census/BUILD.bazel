@@ -27,11 +27,28 @@ py_binary(
     tags = ["manual"],
 )
 
+# The coverage map and the covering subset (README.md section 3): the primitive census's tallies joined.
+#   bazel run //tools/census:primitive_map -- <corpus log> <db>=<log>[,<log>...] ...
+#   bazel run //tools/census:primitive_cover -- <corpus per-test log> [<k>]
+py_binary(
+    name = "primitive_map",
+    srcs = ["primitive_map.py"],
+    tags = ["manual"],
+)
+
+py_binary(
+    name = "primitive_cover",
+    srcs = ["primitive_cover.py"],
+    tags = ["manual"],
+)
+
 # the hand tools compile (the build rebuild's L1b): the checks lane builds them, nothing runs
 build_test(
     name = "tools_build_test",
     targets = [
         ":lanes_diff",
+        ":primitive_cover",
+        ":primitive_map",
         ":render_census",
     ],
 )

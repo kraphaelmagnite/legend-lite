@@ -20,13 +20,30 @@ import java.util.List;
  * @param columns the target columns, or empty for every column in declared order
  * @param width   the number of cells in every row
  * @param rows    the rows; each exactly {@code width} cells
+ * @param casts   per cell position, the type each cell's text is CAST to in the database (null: none, the column
+ *                takes the text as it is), or empty for no casts at all: for a database that takes no text into a
+ *                column of another type (MariaDB and MySQL take no {@code 'true'} into a BOOLEAN; BigQuery takes no
+ *                string into an INT64 or a BOOL; measured 2026-10-11). The DATABASE still does the typing: the
+ *                dialect spells its own conversion.
  */
 public record RowLoad(@com.legend.base.Nullable String schema, String table, List<String> columns,
-                      int width, List<List<String>> rows) {
+                      int width, List<List<String>> rows,
+                      List<com.legend.sql.@com.legend.base.Nullable SqlType> casts) {
+
+    /** A load whose cells the database takes as text. */
+    public RowLoad(@com.legend.base.Nullable String schema, String table, List<String> columns, int width,
+            List<List<String>> rows) {
+        this(schema, table, columns, width, rows, List.of());
+    }
 
     public RowLoad {
         columns = List.copyOf(columns);
         rows = List.copyOf(rows);
+        casts = java.util.Collections.unmodifiableList(new ArrayList<>(casts));
+        if (!casts.isEmpty() && casts.size() != width) {
+            throw new IllegalArgumentException("row load into " + table + ": "
+                    + casts.size() + " casts for rows of " + width);
+        }
         if (!columns.isEmpty() && columns.size() != width) {
             throw new IllegalArgumentException("row load into " + table + ": "
                     + columns.size() + " columns named for rows of " + width);
@@ -45,8 +62,12 @@ public record RowLoad(@com.legend.base.Nullable String schema, String table, Lis
         List<List<SqlExpr>> out = new ArrayList<>(rows.size());
         for (List<String> row : rows) {
             List<SqlExpr> cells = new ArrayList<>(row.size());
-            for (String cell : row) {
-                cells.add(cell == null ? new SqlExpr.NullLit() : new SqlExpr.StringLit(cell));
+            for (int c = 0; c < row.size(); c++) {
+                String cell = row.get(c);
+                com.legend.sql.SqlType cast = casts.isEmpty() ? null : casts.get(c);
+                cells.add(cell == null ? new SqlExpr.NullLit()
+                        : cast == null ? new SqlExpr.StringLit(cell)
+                        : new SqlExpr.Cast(new SqlExpr.StringLit(cell), cast));
             }
             out.add(cells);
         }
@@ -67,6 +88,10 @@ public record RowLoad(@com.legend.base.Nullable String schema, String table, Lis
      *  database casts each cell) and dropped — a plan's setup step ({@code ExecutionPlan.SetupStep.Rows}), which the
      *  execution side's loader runs. Its rows are not empty. */
     public com.legend.executionplan.ExecutionPlan.SetupStep.Rows staged(com.legend.sql.dialect.SqlDialect dialect) {
+        if (!casts.isEmpty()) {
+            // the stage's copy is one INSERT ... SELECT *: it casts nothing, so a cast would be dropped
+            throw new IllegalStateException("row load into " + table + ": a load with casts has no staged form");
+        }
         List<com.legend.sql.SqlDdl.Column> text = new ArrayList<>(width);
         for (int c = 0; c < width; c++) {
             text.add(new com.legend.sql.SqlDdl.Column("c" + c, false,

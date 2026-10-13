@@ -110,16 +110,21 @@ def relation_type(model: str, tree: Tree) -> tuple[Column, ...]:
     return _columns(_json.loads(_engine('/api/pure/v1/compilation/lambdaRelationType', '', _json.dumps(request))))
 
 
+def read_plan(answer: str) -> Plan:
+    """The planner's plan (``{"sql", "type"}``, the answer after its ``OK`` tag) as a Plan: the one reading of it, as
+    DataCube's planner reads it (lite-planner.ts ``readPlan``)."""
+    out = _json.loads(answer)
+    return Plan(out['sql'], _columns(out['type']))
+
+
 def plan(model: str, tree: Tree, runtime: str) -> Plan:
     """A relation query planned against ``model`` through ``runtime``: its SQL and its columns."""
-    out = _json.loads(_answer(library().call('lite_plan_json', model, _json.dumps(tree), runtime)))
-    return Plan(out['sql'], _columns(out['type']))
+    return read_plan(_answer(library().call('lite_plan_json', model, _json.dumps(tree), runtime)))
 
 
 def plan_text(model: str, text: str, runtime: str) -> Plan:
     """The same, from Pure text."""
-    out = _json.loads(_answer(library().call('lite_plan_text', model, text, runtime)))
-    return Plan(out['sql'], _columns(out['type']))
+    return read_plan(_answer(library().call('lite_plan_text', model, text, runtime)))
 
 
 class HeldModel:
@@ -137,10 +142,14 @@ class HeldModel:
             raise ValueError('this model was let go (closed): hold it again')
         return self._handle
 
+    @property
+    def handle(self) -> str:
+        """The library's handle of the model held: what a planner request of a held kind names (legend_lite._planner)."""
+        return self._held()
+
     def plan(self, tree: Tree, runtime: str) -> Plan:
         """A relation query planned against the model held, through ``runtime``: its SQL and its columns."""
-        out = _json.loads(_answer(library().call('lite_plan_json_held', self._held(), _json.dumps(tree), runtime)))
-        return Plan(out['sql'], _columns(out['type']))
+        return read_plan(_answer(library().call('lite_plan_json_held', self._held(), _json.dumps(tree), runtime)))
 
     def relation_type(self, tree: Tree) -> tuple[Column, ...]:
         """The columns a relation query returns, typed against the model held, compile-only."""

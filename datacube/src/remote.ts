@@ -106,14 +106,30 @@ export function viewStatement(source: RemoteSource): string {
 }
 
 /**
- * The statements that configure credentials.
+ * Where a source's keys apply: its own path, as a secret's SCOPE (a prefix of the URLs it is used for) -- the URL
+ * without an Iceberg mark, cut before a glob, and an Iceberg table's metadata folder its table's (its data files lie
+ * beside it).
+ */
+export function credentialScope(url: string): string {
+  let scope = url.replace(/#iceberg$/i, '');
+  const glob = scope.search(/[*?[]/);
+  if (glob >= 0) scope = scope.slice(0, glob);
+  return scope.replace(/\/metadata\/?$/i, '');
+}
+
+/**
+ * The statements that configure one source's credentials.
  *
  * `CREATE SECRET` rather than the `SET s3_*` globals: a secret is
  * scoped and replaceable, where the globals are process-wide and
- * leak between sources when a cube reads two buckets.
+ * leak between sources when a cube reads two buckets. One secret per
+ * source, named by it and scoped to its own path: where one database
+ * serves several pages (Python's), one page's keys never replace
+ * another's, nor reach another's files.
  */
 export function credentialStatements(
   creds: S3Credentials | undefined,
+  source: { readonly name: string; readonly url: string },
 ): string[] {
   if (!creds) return [];
   const parts: string[] = ['TYPE S3'];
@@ -131,7 +147,8 @@ export function credentialStatements(
     parts.push(`USE_SSL ${creds.useSsl ? 'true' : 'false'}`);
   }
   if (parts.length === 1) return [];
-  return [`CREATE OR REPLACE SECRET datacube_s3 (${parts.join(', ')})`];
+  parts.push(`SCOPE ${sqlLiteral(credentialScope(source.url))}`);
+  return [`CREATE OR REPLACE SECRET ${ident(`datacube_s3_${source.name}`)} (${parts.join(', ')})`];
 }
 
 /**
@@ -179,7 +196,7 @@ export function extensionStatements(
 export function mountStatements(options: RemoteOptions): string[] {
   return [
     ...extensionStatements(options.sources),
-    ...credentialStatements(options.s3),
+    ...options.sources.flatMap((source) => credentialStatements(options.s3, source)),
     ...options.sources.map(viewStatement),
   ];
 }

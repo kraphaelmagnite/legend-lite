@@ -251,6 +251,6 @@ public final class CsvSeed {
     /** A raw (H2-spelled) setup statement for the session's dialect. */
     public static String adaptRaw(String sql, com.legend.sql.dialect.SqlDialect dialect) {
         return dialect.rawH2IsNative() ? sql
-                : com.legend.sql.dialect.RawSqlBoundary.h2ToDuckDb(sql);
+                : com.legend.sql.dialect.RawSqlBoundary.h2ToDuckDb(sql, dialect.rawTarget());
     }
 }

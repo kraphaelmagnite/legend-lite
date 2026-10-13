@@ -36,6 +36,7 @@ import { familyOf, isNumeric } from '../../engine-client/src/types.ts';
 import type { Plan } from '../../engine-client/src/relation-type.ts';
 import { sourceColumns } from '../src/source-columns.ts';
 import { kindOf } from '../src/snapshot.ts';
+import { setUpSession } from '../src/services/browser.ts';
 
 export interface Outcome {
   readonly csv: string;
@@ -90,6 +91,8 @@ async function boot() {
   // written and swapped in as it is opened (`models`)
   const { planner, models, tables } = await plannerFor(chosenPlane(), '');
   if (!models) throw new Error('the chosen planner cannot take a file\'s model');
+  // set up as the tab's DuckDB is (services/browser.ts): the session the planner's SQL expects
+  await setUpSession(engine, tables);
   return { db, engine, planner, models, tables };
 }
 

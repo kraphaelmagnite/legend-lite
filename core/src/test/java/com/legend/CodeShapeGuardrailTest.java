@@ -94,6 +94,11 @@ class CodeShapeGuardrailTest {
             // GqlParser: the raw-text scanner cursor, same family as the
             // other parser cursors above
             "GqlParser.pos",
+            // the #SQL{...}# island's Postgres reader (2026-10-11, docs/LEGEND_SQL_STUDY_2026_10_11.md §3):
+            // SqlLexer's scanner cursor and its line/column tracking, SqlParser's token cursor -- the same
+            // parser-cursor family, scoped to one parse -- and SqlToPure's fresh-name counter, scoped to one
+            // translation (the StoreResolver.freshVarCounter shape)
+            "SqlLexer.at", "SqlLexer.line", "SqlLexer.column", "SqlParser.at", "SqlToPure.fresh",
             "MappingProtocolParser.pos",
             // ConnectionSectionGrammar.Cursor / RuntimeSectionGrammar
             // .SliceCursor: the re-lex feeds' parser cursors — same shape,
@@ -175,6 +180,11 @@ class CodeShapeGuardrailTest {
             // NormalizeRequired inline α-rename counter — same lifecycle as
             // UserCallInliner.fresh (fresh-name generation per compile)
             "AlphaRename.nrFresh",
+            // 2026-10-11 (cloud backends, docs/CLOUD_BACKENDS_PCT_2026_10_11.md §9): the Snowflake dialect's fresh
+            // names (its lambda parameters and FLATTEN aliases) and the select-list explosion pass's aliases
+            // (ExplosionMarkers, shared with BigQuery): unique within one statement, the same lifecycle as
+            // Lowerer.aliasCounter
+            "Snowflake.fresh", "ExplosionMarkers.next",
             // render mode toggle + import memo
             "AnsiSqlRenderer.inlineMode", "ModelOrchestrator.cachedImports",
             // normalizer emission frame: Pipeline IS the frame object; expr

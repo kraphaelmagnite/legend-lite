@@ -351,6 +351,56 @@ public final class Ddl {
         return new RowLoad(schema, def.name(), java.util.List.of(), def.columns().size(), rows);
     }
 
+    /** A store table's name in a SERVER engine's system database (exec.SystemDatabase): {@code schema_table}, one
+     *  name in the system session's own namespace, where its temporary tables live (a temporary table takes no
+     *  schema on most servers: Postgres keeps it in {@code pg_temp}, Databricks and BigQuery in the session). A query
+     *  reads it under this name through its table renames. */
+    public static String systemTable(String schema, String table) {
+        return schema + "_" + table;
+    }
+
+    /** One store table in a SERVER engine's system database, with its rows: a TEMPORARY table, the system session's
+     *  own (no other session sees it; it goes when the session closes, a crash included), named {@link #systemTable},
+     *  made by the dialect's {@code sessionTable} statements (a temporary table and its INSERT, or what the engine
+     *  reads instead). The session is new, so nothing is dropped first and no schema is made. It declares NO key (a
+     *  key column stays NOT NULL) and no length (a VARCHAR is the dialect's unbounded text): Databricks refuses a key
+     *  on a temporary table, MariaDB and MySQL one past 3,072 bytes (the store's VARCHAR(1024) keys in utf8mb4) and a
+     *  row whose declared lengths pass 65,535 bytes, Snowflake and BigQuery enforce no key (all measured 2026-10-11).
+     *  The table is read-only, its rows the ones the in-process engines load under their keys and lengths. */
+    public static java.util.List<String> metamodelTemporary(DatabaseDefinition.TableDefinition def, String schema,
+            java.util.List<java.util.List<String>> rows, com.legend.sql.dialect.SqlDialect dialect) {
+        java.util.List<com.legend.sql.SqlDdl.Column> columns = new java.util.ArrayList<>();
+        for (com.legend.sql.SqlDdl.Column c : createTable(def, null).columns()) {
+            com.legend.sql.SqlDdl.ColumnType type = c.type() instanceof com.legend.sql.SqlDdl.ColumnType.Sized z
+                    && z.kind().equalsIgnoreCase("VARCHAR")
+                    ? new com.legend.sql.SqlDdl.ColumnType.Plain(com.legend.sql.SqlDdl.ColumnType.Kind.VARCHAR)
+                    : c.type();
+            columns.add(new com.legend.sql.SqlDdl.Column(c.name(), c.declaredQuoted(), type,
+                    c.notNull() || c.primaryKey(), false));
+        }
+        return dialect.sessionTable(new com.legend.sql.SqlDdl.CreateTable(null, systemTable(schema, def.name()),
+                columns, true), rows.isEmpty() ? null : metamodelTemporaryRows(def, schema, rows).values());
+    }
+
+    /** The rows of {@link #metamodelTemporary}'s table, as {@link #metamodelRows}, each cell of a column that is not
+     *  text CAST to the column's type in the database: a server may take no text into it ({@link RowLoad#casts}). */
+    private static RowLoad metamodelTemporaryRows(DatabaseDefinition.TableDefinition def, String schema,
+            java.util.List<java.util.List<String>> rows) {
+        java.util.List<com.legend.sql.@com.legend.base.Nullable SqlType> casts = new java.util.ArrayList<>();
+        for (DatabaseDefinition.ColumnDefinition col : def.columns()) {
+            casts.add(switch (col.dataType()) {
+                case RelationalDataType.Varchar ignored -> null;
+                case RelationalDataType.Integer_ ignored -> com.legend.sql.SqlType.Scalar.INTEGER;
+                case RelationalDataType.Bit ignored -> com.legend.sql.SqlType.Scalar.BOOLEAN;
+                default -> throw new IllegalStateException("system table " + def.name() + "." + col.name()
+                        + ": no cast for its type " + col.dataType() + " (the store declares VARCHAR, INTEGER and"
+                        + " BIT)");
+            });
+        }
+        return new RowLoad(null, systemTable(schema, def.name()), java.util.List.of(), def.columns().size(), rows,
+                casts);
+    }
+
     /** The FLAVORED type spelling: the deltas from the H2 base are the
      * ONLY per-target lines — DuckDB where H2's type SEMANTICS differ
      * from its name (FLOAT is an 8-byte double, BIT a boolean — spelled

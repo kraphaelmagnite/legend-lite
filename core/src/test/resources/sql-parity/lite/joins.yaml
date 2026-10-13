@@ -1,0 +1,67 @@
+# legend-lite's own Postgres-judged cases over upstream's parity schema: joins, FROM subqueries, WITH, UNION.
+# Each answer is snapped from Postgres 16 with upstream's (postgres-answers.jsonl, key lite/joins/<id>).
+tests:
+  - id: inner_join_on
+    sql: "SELECT p.name, d.name AS dept FROM persons p JOIN departments d ON p.dept_id = d.id ORDER BY p.id"
+  - id: left_join_keeps_unmatched
+    sql: "SELECT p.name, d.name AS dept FROM persons p LEFT JOIN departments d ON p.dept_id = d.id ORDER BY p.id"
+  - id: right_join_keeps_unmatched
+    sql: "SELECT p.name, d.name AS dept FROM persons p RIGHT JOIN departments d ON p.dept_id = d.id ORDER BY d.id, p.id"
+  - id: full_join_both_sides
+    sql: "SELECT p.id AS pid, d.id AS did FROM persons p FULL JOIN departments d ON p.dept_id = d.id ORDER BY p.id NULLS LAST, d.id"
+  - id: cross_join_count
+    sql: "SELECT count(*) AS n FROM persons CROSS JOIN departments"
+  - id: comma_join_where
+    sql: "SELECT p.name, o.amount FROM persons p, orders o WHERE o.person_id = p.id AND o.amount > 300 ORDER BY o.id"
+  - id: using_merges_column
+    sql: "SELECT id, p.name, o.amount FROM persons p JOIN orders o USING (id) ORDER BY id"
+  - id: using_full_coalesces
+    sql: "SELECT id FROM (SELECT id FROM persons WHERE id <= 3) a FULL JOIN (SELECT id FROM departments WHERE id >= 2 AND id <= 5) b USING (id) ORDER BY id"
+  - id: natural_join_star
+    sql: "SELECT * FROM (SELECT id, name AS pname FROM persons) a NATURAL JOIN (SELECT id, budget FROM departments) b ORDER BY id"
+  - id: star_over_join_repeats_names
+    sql: "SELECT * FROM persons p JOIN departments d ON p.dept_id = d.id ORDER BY p.id"
+  - id: self_join
+    sql: "SELECT a.name, b.name AS other FROM persons a JOIN persons b ON a.dept_id = b.dept_id AND a.id < b.id ORDER BY a.id, b.id"
+  - id: three_way_join
+    sql: "SELECT p.name, d.name AS dept, o.amount FROM persons p JOIN departments d ON p.dept_id = d.id JOIN orders o ON o.person_id = p.id ORDER BY o.id"
+  - id: left_join_condition_filters_right_only
+    sql: "SELECT p.name, d.budget FROM persons p LEFT JOIN departments d ON p.dept_id = d.id AND d.budget > 600000 ORDER BY p.id"
+  - id: anti_join_through_left_join
+    sql: "SELECT p.name FROM persons p LEFT JOIN orders o ON o.person_id = p.id WHERE o.id IS NULL ORDER BY p.id"
+  - id: left_join_arithmetic_on_null_side
+    sql: "SELECT p.name, d.budget / 1000 AS k FROM persons p LEFT JOIN departments d ON p.dept_id = d.id ORDER BY p.id"
+  - id: join_group_by
+    sql: "SELECT d.name, count(p.id) AS n, sum(p.salary) AS total FROM departments d LEFT JOIN persons p ON p.dept_id = d.id GROUP BY d.name ORDER BY d.name"
+  - id: outer_join_count_star_vs_column
+    sql: "SELECT d.id, count(*) AS rows_n, count(p.id) AS people FROM departments d LEFT JOIN persons p ON p.dept_id = d.id GROUP BY d.id ORDER BY d.id"
+  - id: join_ambiguous_column
+    sql: "SELECT name FROM persons p JOIN departments d ON p.dept_id = d.id"
+  - id: join_on_sees_only_its_sides
+    sql: "SELECT p.name FROM persons p, departments d JOIN orders o ON o.person_id = p.id"
+  - id: subquery_in_from
+    sql: "SELECT s.dept_id, s.n FROM (SELECT dept_id, count(*) AS n FROM persons GROUP BY dept_id) s WHERE s.n > 2 ORDER BY 1"
+  - id: subquery_column_aliases
+    sql: "SELECT x, y FROM (SELECT id, name FROM persons) AS t(x, y) WHERE x < 3 ORDER BY x"
+  - id: subquery_joined_to_table
+    sql: "SELECT d.name, s.total FROM departments d JOIN (SELECT dept_id, sum(salary) AS total FROM persons GROUP BY dept_id) s ON s.dept_id = d.id ORDER BY d.id"
+  - id: cte_used_twice
+    sql: "WITH big AS (SELECT id, salary FROM persons WHERE salary > 60000) SELECT a.id, b.id AS other FROM big a JOIN big b ON a.salary < b.salary ORDER BY 1, 2"
+  - id: cte_chain
+    sql: "WITH a AS (SELECT id, dept_id FROM persons), b AS (SELECT dept_id, count(*) AS n FROM a GROUP BY dept_id) SELECT * FROM b ORDER BY dept_id NULLS FIRST"
+  - id: cte_column_names
+    sql: "WITH c(k, v) AS (SELECT id, name FROM departments) SELECT v FROM c WHERE k = 2"
+  - id: union_distinct
+    sql: "SELECT dept_id FROM persons UNION SELECT id FROM departments ORDER BY 1"
+  - id: union_all_keeps_duplicates
+    sql: "SELECT dept_id AS d FROM persons UNION ALL SELECT id FROM departments ORDER BY 1 NULLS FIRST"
+  - id: union_names_from_left
+    sql: "SELECT name AS label FROM departments WHERE id = 1 UNION ALL SELECT name FROM persons WHERE id = 1 ORDER BY label"
+  - id: union_order_limit
+    sql: "SELECT id FROM persons UNION SELECT id FROM orders ORDER BY id DESC LIMIT 3"
+  - id: union_type_mismatch
+    sql: "SELECT name FROM persons UNION SELECT id FROM persons"
+  - id: parenthesized_union_operands
+    sql: "(SELECT id FROM persons ORDER BY id LIMIT 2) UNION ALL (SELECT id FROM departments ORDER BY id DESC LIMIT 2) ORDER BY 1"
+  - id: union_of_three
+    sql: "SELECT 'p' AS src, count(*) AS n FROM persons UNION ALL SELECT 'd', count(*) FROM departments UNION ALL SELECT 'o', count(*) FROM orders ORDER BY 1"

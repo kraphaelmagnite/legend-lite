@@ -92,7 +92,8 @@ public final class EmbeddedPostgres {
                     + " jvm_flags = [\"-Dembedded.postgres.root=$(rlocationpath @embedded_postgres//:pg/PG_ROOT)\"]");
         }
         if ("root".equals(System.getProperty("user.name"))) {
-            throw new IllegalStateException("initdb refuses root: run the CI job as a non-root user");
+            throw new IllegalStateException("initdb refuses root: run as a non-root user (in a root container:"
+                    + " tools/postgres/as_unprivileged.sh, as the test's --run_under)");
         }
         String tmp = System.getenv("TEST_TMPDIR");
         if (tmp == null) {

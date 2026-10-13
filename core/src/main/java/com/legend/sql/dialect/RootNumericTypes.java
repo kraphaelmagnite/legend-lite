@@ -41,7 +41,7 @@ final class RootNumericTypes extends SqlRewriter {
                 u.branches().forEach(b -> bs.add(rewriteRoot(b)));
                 yield new SqlUnion(bs, u.all(), u.outputs());
             }
-            case SqlWith w -> SqlWith.prepend(w.ctes(), rewriteRoot(w.body()));
+            case SqlWith w -> SqlWith.prepend(w.ctes(), rewriteRoot(w.body()), w.recursive());
         };
     }
 
@@ -49,7 +49,7 @@ final class RootNumericTypes extends SqlRewriter {
         Map<String, SqlType> labels = new HashMap<>();
         s.outputs().forEach(o -> labels.put(o.name(), o.type()));
         List<SqlSelect.Projection> ps = new ArrayList<>();
-        boolean changed = false;
+        Map<SqlExpr, SqlExpr> cast = new HashMap<>();
         for (SqlSelect.Projection p : s.projections()) {
             String name = p.alias() != null ? p.alias() : p.outputName();
             SqlType label = name != null ? labels.get(name) : null;
@@ -58,13 +58,27 @@ final class RootNumericTypes extends SqlRewriter {
             if (t == null) {
                 ps.add(p);
             } else {
-                ps.add(new SqlSelect.Projection(new SqlExpr.Cast(p.expr(), t, false),
-                        name, p.out()));
-                changed = true;
+                SqlExpr c = new SqlExpr.Cast(p.expr(), t, false);
+                ps.add(new SqlSelect.Projection(c, name, p.out()));
+                cast.put(p.expr(), c);
             }
         }
-        return changed ? new SqlSelect(ps, s.distinct(), s.from(), s.where(), s.groupBy(), s.having(),
-                s.qualify(), s.orderBy(), s.limit(), s.offset(), s.outputs()) : s;
+        if (cast.isEmpty()) {
+            return s;
+        }
+        // a DISTINCT select orders by its select list's expressions only (Postgres: "for SELECT DISTINCT, ORDER BY
+        // expressions must appear in select list"): a key that was a cast column's expression is the cast one now.
+        // The cast changes no value, so no order either (found by the SQL front end's randomized check, 2026-10-12)
+        List<SqlSelect.SortKey> order = s.orderBy();
+        if (s.distinct()) {
+            order = new ArrayList<>();
+            for (SqlSelect.SortKey k : s.orderBy()) {
+                SqlExpr c = cast.get(k.expr());
+                order.add(c == null ? k : new SqlSelect.SortKey(c, k.ascending(), k.nullOrder(), k.outputName()));
+            }
+        }
+        return new SqlSelect(ps, s.distinct(), s.from(), s.where(), s.groupBy(), s.having(), s.qualify(), order,
+                s.limit(), s.offset(), s.outputs());
     }
 
     /** The type a root column is cast to: its label's DECIMAL(p,s) or HUGEINT, unless already cast to

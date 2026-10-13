@@ -5,6 +5,9 @@
 
 load("//tools/junit:defs.bzl", "junit_test")
 load("//tools/java:defs.bzl", "legend_java_library")
+load("//tools/mariadb:defs.bzl", "EMBEDDED_MARIADB_COMPATIBLE")
+load("//tools/mysql:defs.bzl", "EMBEDDED_MYSQL_COMPATIBLE")
+load("//tools/clickhouse:defs.bzl", "EMBEDDED_CLICKHOUSE_COMPATIBLE")
 load("//tools/postgres:defs.bzl", "EMBEDDED_POSTGRES_COMPATIBLE")
 load("@bazel_lib//lib:write_source_files.bzl", "write_source_files")
 load("//tools/generators:defs.bzl", "UPSTREAM_ROOTS", "UPSTREAM_TREES", "program_jvm_flags")
@@ -215,6 +218,192 @@ test_suite(
     tests = [":pct_postgres_" + s.lower() for s in _SUITES],
 )
 
+# THE SQLITE LANES — the five suites on SQLite (LEGENDLITE_PCT_BACKEND=sqlite), in-process and in memory through the
+# product's own driver (//core:drivers), with SQLite's OWN expected failures (Test_LegendLite_SQLite_*Functions_PCT),
+# as gate 7P's. Manual, in //gates:heavy (docs/CLOUD_BACKENDS_PCT_2026_10_11.md §12): a per-push lane is the user's
+# call.
+[junit_test(
+    name = "pct_sqlite_" + s.lower(),
+    memory_mb = 4096,
+    env = {"LEGENDLITE_PCT_BACKEND": "sqlite"},
+    select = ["--select-class=org.finos.legend.lite.pct.Test_LegendLite_SQLite_%sFunctions_PCT" % s],
+    tags = ["manual"],
+    runtime_deps = [
+        ":pct_tests_lib",
+        "//core:drivers",
+    ],
+) for s in _SUITES]
+
+test_suite(
+    name = "pct_sqlite",
+    tags = ["manual"],
+    tests = [":pct_sqlite_" + s.lower() for s in _SUITES],
+)
+
+# THE MARIADB LANES — the five suites on MariaDB 11.4 (LEGENDLITE_PCT_BACKEND=mariadb), on a real server this JVM
+# starts from the pinned server Bazel unpacked (@embedded_mariadb, //testing EmbeddedMariaDb): no Docker. Each suite
+# carries MariaDB's OWN expected failures (Test_LegendLite_MariaDB_*Functions_PCT). Manual, in //gates:heavy
+# (docs/CLOUD_BACKENDS_PCT_2026_10_11.md §13): a per-push lane is the user's call. Its driver, MariaDB Connector/J, is
+# this package's own (test-only).
+[junit_test(
+    name = "pct_mariadb_" + s.lower(),
+    memory_mb = 4096,
+    data = [
+        "@embedded_mariadb//:mariadb",
+        "@embedded_mariadb//:mariadb/MARIADB_ROOT",
+    ],
+    env = {"LEGENDLITE_PCT_BACKEND": "mariadb"},
+    jvm_flags = ["-Dembedded.mariadb.root=$(rlocationpath @embedded_mariadb//:mariadb/MARIADB_ROOT)"],
+    select = ["--select-class=org.finos.legend.lite.pct.Test_LegendLite_MariaDB_%sFunctions_PCT" % s],
+    tags = ["manual"],
+    target_compatible_with = EMBEDDED_MARIADB_COMPATIBLE,
+    runtime_deps = [
+        ":pct_tests_lib",
+        "//core:drivers",
+        "@mariadb_jdbc//jar",
+    ],
+) for s in _SUITES]
+
+test_suite(
+    name = "pct_mariadb",
+    tags = ["manual"],
+    tests = [":pct_mariadb_" + s.lower() for s in _SUITES],
+)
+
+# THE MYSQL LANES — the five suites on MySQL 8.4 (LEGENDLITE_PCT_BACKEND=mysql), on a real server this JVM starts from
+# the pinned server Bazel unpacked (@embedded_mysql, //testing EmbeddedMySql): no Docker. Each suite carries MySQL's
+# OWN expected failures (Test_LegendLite_MySQL_*Functions_PCT). Manual, in //gates:heavy
+# (docs/CLOUD_BACKENDS_PCT_2026_10_11.md §14). Its driver is the MariaDB lanes' (MariaDB Connector/J speaks to MySQL).
+[junit_test(
+    name = "pct_mysql_" + s.lower(),
+    memory_mb = 4096,
+    data = [
+        "@embedded_mysql//:mysql",
+        "@embedded_mysql//:mysql/MYSQL_ROOT",
+    ],
+    env = {"LEGENDLITE_PCT_BACKEND": "mysql"},
+    jvm_flags = ["-Dembedded.mysql.root=$(rlocationpath @embedded_mysql//:mysql/MYSQL_ROOT)"],
+    select = ["--select-class=org.finos.legend.lite.pct.Test_LegendLite_MySQL_%sFunctions_PCT" % s],
+    tags = ["manual"],
+    target_compatible_with = EMBEDDED_MYSQL_COMPATIBLE,
+    runtime_deps = [
+        ":pct_tests_lib",
+        "//core:drivers",
+        "@mariadb_jdbc//jar",
+    ],
+) for s in _SUITES]
+
+test_suite(
+    name = "pct_mysql",
+    tags = ["manual"],
+    tests = [":pct_mysql_" + s.lower() for s in _SUITES],
+)
+
+# THE TRINO LANES — the five suites on Trino 483 (LEGENDLITE_PCT_BACKEND=trino), on a real coordinator this JVM starts
+# from the pinned server Bazel unpacked (@embedded_trino, //testing EmbeddedTrino), its memory connector the catalog: no
+# Docker. Each suite carries Trino's OWN expected failures (Test_LegendLite_Trino_*Functions_PCT). Manual, in
+# //gates:heavy (docs/CLOUD_BACKENDS_PCT_2026_10_11.md §18). The test JVM's heap is its own; the coordinator's 2 GB is a
+# child process's.
+[junit_test(
+    name = "pct_trino_" + s.lower(),
+    memory_mb = 4096,
+    data = [
+        "@embedded_trino//:trino",
+        "@embedded_trino//:trino/TRINO_ROOT",
+    ],
+    env = {"LEGENDLITE_PCT_BACKEND": "trino"},
+    jvm_flags = ["-Dembedded.trino.root=$(rlocationpath @embedded_trino//:trino/TRINO_ROOT)"],
+    select = ["--select-class=org.finos.legend.lite.pct.Test_LegendLite_Trino_%sFunctions_PCT" % s],
+    tags = ["manual"],
+    runtime_deps = [
+        ":pct_tests_lib",
+        "//core:drivers",
+        "@trino_jdbc//jar",
+    ],
+) for s in _SUITES]
+
+test_suite(
+    name = "pct_trino",
+    tags = ["manual"],
+    tests = [":pct_trino_" + s.lower() for s in _SUITES],
+)
+
+# THE CLICKHOUSE LANES — the five suites on ClickHouse 25.8 (LEGENDLITE_PCT_BACKEND=clickhouse), on a real server this
+# JVM starts from the pinned static build Bazel unpacked (@embedded_clickhouse, //testing EmbeddedClickHouse): no Docker.
+# Each suite carries ClickHouse's OWN expected failures (Test_LegendLite_ClickHouse_*Functions_PCT). Manual, in
+# //gates:heavy (docs/CLOUD_BACKENDS_PCT_2026_10_11.md §19).
+[junit_test(
+    name = "pct_clickhouse_" + s.lower(),
+    memory_mb = 4096,
+    data = [
+        "@embedded_clickhouse//:clickhouse",
+        "@embedded_clickhouse//:clickhouse/CLICKHOUSE_ROOT",
+    ],
+    env = {"LEGENDLITE_PCT_BACKEND": "clickhouse"},
+    jvm_flags = ["-Dembedded.clickhouse.root=$(rlocationpath @embedded_clickhouse//:clickhouse/CLICKHOUSE_ROOT)"],
+    select = ["--select-class=org.finos.legend.lite.pct.Test_LegendLite_ClickHouse_%sFunctions_PCT" % s],
+    tags = ["manual"],
+    target_compatible_with = EMBEDDED_CLICKHOUSE_COMPATIBLE,
+    runtime_deps = [
+        ":pct_tests_lib",
+        "//core:drivers",
+        "@clickhouse_jdbc//jar",
+    ],
+) for s in _SUITES]
+
+test_suite(
+    name = "pct_clickhouse",
+    tags = ["manual"],
+    tests = [":pct_clickhouse_" + s.lower() for s in _SUITES],
+)
+
+# THE CLOUD LANES — the five suites on a real Databricks, Snowflake and BigQuery account
+# (docs/CLOUD_BACKENDS_PCT_2026_10_11.md; LEGENDLITE_PCT_BACKEND selects the cloud). Each suite carries the cloud's
+# OWN expected failures (Test_LegendLite_<Cloud>_*Functions_PCT), as gate 7P's. The account's coordinates and
+# credentials come from the properties file LEGENDLITE_PCT_CLOUD_PROPERTIES names, inherited from the caller's
+# environment and never written into the repository or an action's key. So every target is:
+#   manual    -- out of //... and //gates:local: it needs an account, and a run costs money;
+#   external  -- never cached: its verdict is the account's, today;
+#   local     -- no sandbox and no remote execution: it reads that file and reaches the warehouse.
+# Their drivers are product jars used by this package alone until the server opens these databases. Arrow (both
+# Databricks' and Snowflake's result format) reads direct buffers, which JDK 17+ opens only on request.
+_CLOUD_DRIVERS = {
+    "bigquery": "@bigquery_jdbc//jar",
+    "databricks": "@databricks_jdbc//jar",
+    "snowflake": "@snowflake_jdbc//jar",
+}
+
+_CLOUD_CLASSES = {
+    "bigquery": "BigQuery",
+    "databricks": "Databricks",
+    "snowflake": "Snowflake",
+}
+
+[junit_test(
+    name = "pct_%s_%s" % (cloud, s.lower()),
+    memory_mb = 4096,
+    env = {"LEGENDLITE_PCT_BACKEND": cloud},
+    env_inherit = ["LEGENDLITE_PCT_CLOUD_PROPERTIES"],
+    jvm_flags = ["--add-opens=java.base/java.nio=ALL-UNNAMED"],
+    select = ["--select-class=org.finos.legend.lite.pct.Test_LegendLite_%s_%sFunctions_PCT" % (_CLOUD_CLASSES[cloud], s)],
+    tags = [
+        "external",
+        "local",
+        "manual",
+    ],
+    runtime_deps = [
+        ":pct_tests_lib",
+        "//core:drivers",
+        driver,
+    ],
+) for cloud, driver in _CLOUD_DRIVERS.items() for s in _SUITES]
+
+[test_suite(
+    name = "pct_" + cloud,
+    tags = ["manual"],
+    tests = [":pct_%s_%s" % (cloud, s.lower()) for s in _SUITES],
+) for cloud in _CLOUD_DRIVERS]
+
 # GATE 9 — channel B: lite's own compiler runs the PCT sources straight from the
 # pinned legend-pure / legend-engine trees, and its verdicts are diffed against
 # channel A's ledgers and the engine's manifests.
@@ -249,6 +438,123 @@ test_suite(
     name = "pct_channel_b",
     tests = [":pct_channel_b_" + s.lower() for s in _SUITES],
 )
+
+# CHANNEL B ON EVERY LANE (2026-10-11, the user's ask): the same runner on each database a channel A lane runs on
+# (LEGENDLITE_PCT_BACKEND, PctBackend), diffed against THAT lane's channel A ledger and, where legend-engine publishes
+# one, its PCT manifest for the same database (none for SQLite, MariaDB, MySQL or BigQuery). Each lane is judged by its
+# own measured numbers (channelb.ChannelBLane). Each target carries what its channel A lane carries: the server Bazel
+# unpacked, the driver, the cloud's properties file. Manual, as their channel A lanes: the server lanes in
+# //gates:heavy, the cloud lanes outside every gate (a run needs the account and costs money).
+_LANE_MANIFEST = "@legend_engine_src//:legend-engine-xts-relationalStore/legend-engine-xt-relationalStore-dbExtension/legend-engine-xt-relationalStore-%s/legend-engine-xt-relationalStore-%s-PCT/src/main/resources/pct-manifests/relational-%s/%sFunctions_manifest.json"
+
+_CLOUD_TAGS = [
+    "external",
+    "local",
+    "manual",
+]
+
+# lane -> (its ledger classes' name, its suites, the engine's manifest directory or None, data, jvm_flags, deps, tags,
+# env_inherit, target_compatible_with)
+_CHANNEL_B_LANES = {
+    "h2": ("H2", ["Relation"], "h2", [], [], ["@h2_modern//jar"], ["manual"], [], []),
+    "postgres": ("Postgres", _SUITES, "postgres", _POSTGRES_DATA, _POSTGRES_FLAGS, ["//core:drivers"], ["manual"], [], EMBEDDED_POSTGRES_COMPATIBLE),
+    "sqlite": ("SQLite", _SUITES, None, [], [], ["//core:drivers"], ["manual"], [], []),
+    "mariadb": (
+        "MariaDB",
+        _SUITES,
+        None,
+        [
+            "@embedded_mariadb//:mariadb",
+            "@embedded_mariadb//:mariadb/MARIADB_ROOT",
+        ],
+        ["-Dembedded.mariadb.root=$(rlocationpath @embedded_mariadb//:mariadb/MARIADB_ROOT)"],
+        [
+            "//core:drivers",
+            "@mariadb_jdbc//jar",
+        ],
+        ["manual"],
+        [],
+        EMBEDDED_MARIADB_COMPATIBLE,
+    ),
+    "mysql": (
+        "MySQL",
+        _SUITES,
+        None,
+        [
+            "@embedded_mysql//:mysql",
+            "@embedded_mysql//:mysql/MYSQL_ROOT",
+        ],
+        ["-Dembedded.mysql.root=$(rlocationpath @embedded_mysql//:mysql/MYSQL_ROOT)"],
+        [
+            "//core:drivers",
+            "@mariadb_jdbc//jar",
+        ],
+        ["manual"],
+        [],
+        EMBEDDED_MYSQL_COMPATIBLE,
+    ),
+    "trino": (
+        "Trino",
+        _SUITES,
+        "trino",
+        [
+            "@embedded_trino//:trino",
+            "@embedded_trino//:trino/TRINO_ROOT",
+        ],
+        ["-Dembedded.trino.root=$(rlocationpath @embedded_trino//:trino/TRINO_ROOT)"],
+        [
+            "//core:drivers",
+            "@trino_jdbc//jar",
+        ],
+        ["manual"],
+        [],
+        [],
+    ),
+    "clickhouse": (
+        "ClickHouse",
+        _SUITES,
+        "clickhouse",
+        [
+            "@embedded_clickhouse//:clickhouse",
+            "@embedded_clickhouse//:clickhouse/CLICKHOUSE_ROOT",
+        ],
+        ["-Dembedded.clickhouse.root=$(rlocationpath @embedded_clickhouse//:clickhouse/CLICKHOUSE_ROOT)"],
+        [
+            "//core:drivers",
+            "@clickhouse_jdbc//jar",
+        ],
+        ["manual"],
+        [],
+        EMBEDDED_CLICKHOUSE_COMPATIBLE,
+    ),
+    "databricks": ("Databricks", _SUITES, "databricks", [], ["--add-opens=java.base/java.nio=ALL-UNNAMED"], ["//core:drivers", _CLOUD_DRIVERS["databricks"]], _CLOUD_TAGS, ["LEGENDLITE_PCT_CLOUD_PROPERTIES"], []),
+    "snowflake": ("Snowflake", _SUITES, "snowflake", [], ["--add-opens=java.base/java.nio=ALL-UNNAMED"], ["//core:drivers", _CLOUD_DRIVERS["snowflake"]], _CLOUD_TAGS, ["LEGENDLITE_PCT_CLOUD_PROPERTIES"], []),
+    "bigquery": ("BigQuery", _SUITES, None, [], ["--add-opens=java.base/java.nio=ALL-UNNAMED"], ["//core:drivers", _CLOUD_DRIVERS["bigquery"]], _CLOUD_TAGS, ["LEGENDLITE_PCT_CLOUD_PROPERTIES"], []),
+}
+
+_LANE_LEDGER = "src/test/java/org/finos/legend/lite/pct/Test_LegendLite_%s_%sFunctions_PCT.java"
+
+[junit_test(
+    name = "pct_channel_b_%s_%s" % (lane, s.lower()),
+    memory_mb = 2048,
+    data = [_LANE_LEDGER % (cls, s)] + [_LANE_MANIFEST % (d, d, d, s) for d in ([] if db == None else [db])] + data,
+    env = {"LEGENDLITE_PCT_BACKEND": lane},
+    env_inherit = inherit,
+    jvm_flags = [
+        "-Dpct.suite.%s=$(rlocationpath %s)" % (s, _LANE_LEDGER % (cls, s)),
+    ] + ["-Dpct.oracle.%s=$(rlocationpath %s)" % (s, _LANE_MANIFEST % (d, d, d, s)) for d in ([] if db == None else [db])] + flags,
+    select = ["--select-class=org.finos.legend.lite.pct.channelb.ChannelB%sTest" % s],
+    tags = tags,
+    target_compatible_with = compat,
+    upstream = True,
+    runtime_deps = [":pct_tests_lib"] + deps,
+) for lane, (cls, suites, db, data, flags, deps, tags, inherit, compat) in _CHANNEL_B_LANES.items() for s in suites]
+
+[test_suite(
+    name = "pct_channel_b_" + lane,
+    tags = ["manual"],
+    tests = [":pct_channel_b_%s_%s" % (lane, s.lower()) for s in suites],
+) for lane, (_, suites, _, _, _, _, _, _, _) in _CHANNEL_B_LANES.items()]
 
 # PCT'S MEASURED RATCHET VALUES (PctRatchets; Bazel workplan P2-16, D9): each Channel B suite's discovery count,
 # measured by running the suite into ratchets.tsv. Manual, at the suites' cost (the platform compiled per suite); the

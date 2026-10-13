@@ -58,8 +58,27 @@ view = grid.view()
 names = [c["name"] for c in view.columns]
 headless = {"groups": sorted([r[names.index("__tree")], r[names.index("qty")]] for r in view.rows),
             "bundle": __import__("legend_lite._headless", fromlist=["x"])._BUNDLE.as_posix()}
+# DuckDB's extensions the wheel carries: a page's remote file read through its own httpfs, from a server on this machine
+# (nothing downloaded)
+import functools, http.server, tempfile, threading
+import pyarrow.parquet as pq
+served = tempfile.mkdtemp()
+pq.write_table(pa.table({"desk": ["FX", "EQ"]}), served + "/remote.parquet")
+class Quiet(http.server.SimpleHTTPRequestHandler):
+    def log_message(self, *_):
+        pass
+files = http.server.ThreadingHTTPServer(("127.0.0.1", 0), functools.partial(Quiet, directory=served))
+threading.Thread(target=files.serve_forever, daemon=True).start()
+said = datacube._session.engine().answer("POST", "/remote.json", "", json.dumps(
+    {"url": "http://127.0.0.1:%d/remote.parquet" % files.server_address[1], "name": "wheel_remote"}))
+duck = datacube._session.frames.connection
+remote = {"status": said.status, "answer": said.body.decode()[:300],
+          "rows": duck.execute("SELECT count(*) FROM wheel_remote").fetchone()[0] if said.status == 200 else None,
+          "httpfs": duck.execute("SELECT install_path FROM duckdb_extensions() WHERE extension_name = 'httpfs'").fetchone()[0]}
+files.shutdown()
 print(json.dumps({"module": ll.__file__, "library": __import__("legend_lite._library", fromlist=["x"]).library().path.as_posix(),
-                  "page": page, "cube": sorted(cube_json), "rows": rows, "notebook": notebook, "headless": headless}))
+                  "page": page, "cube": sorted(cube_json), "rows": rows, "notebook": notebook, "headless": headless,
+                  "remote": remote}))
 '''
 
 
@@ -283,4 +302,7 @@ class Installed(unittest.TestCase):
         self.assertGreater(out['notebook']['answers'][0][1], 500_000, out['notebook'])
         # the datacube extra installed: a grid viewed by DataCube's own code, its bundle the wheel's
         self.assertEqual(out['headless']['groups'], [['EQ', 2.5], ['FX', 5.5]], out['headless'])
+        # a remote file read through the httpfs extension inside the wheel, none downloaded
+        self.assertEqual((out['remote']['status'], out['remote']['rows']), (200, 2), out['remote'])
+        self.assertTrue(Path(out['remote']['httpfs']).is_relative_to(venv), out['remote'])
         self.assertTrue(Path(out['headless']['bundle']).is_relative_to(venv), out['headless'])

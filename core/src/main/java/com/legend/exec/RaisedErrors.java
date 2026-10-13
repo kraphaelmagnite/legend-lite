@@ -39,6 +39,12 @@ public final class RaisedErrors {
      * read between a sentinel pair, so a native error can't fake it. */
     public static final char POSITION_SEP = '';
 
+    /** U+001D (group separator) -- a QUOTE inside the envelope, for a carrier that would re-quote one: SQLite raises a
+     *  message as a bad JSON path, and its error text quotes the path SQL-style ({@code '} doubled, measured
+     *  2026-10-11), so its dialect writes each quote of the message as this mark. Only ever read between a sentinel
+     *  pair. */
+    public static final char QUOTE_MARK = '';
+
     private RaisedErrors() {
     }
 
@@ -59,7 +65,7 @@ public final class RaisedErrors {
         if (first < 0 || last <= first) {
             return message;
         }
-        String inner = message.substring(first + 1, last);
+        String inner = message.substring(first + 1, last).replace(QUOTE_MARK, '\'');
         int sep = inner.indexOf(POSITION_SEP);
         return sep >= 0 ? inner.substring(sep + 1) : inner;
     }
@@ -87,6 +93,18 @@ public final class RaisedErrors {
         }
     }
 
+    /** {@link #unwrapped(java.sql.SQLException)}, or, for a failure whose text carries no raise, the raise the session
+     *  it failed on holds ({@link Sessions#raisedMessage}: a database whose errors cannot carry a raise's text keeps it
+     *  in the session), unwrapped. */
+    public static java.sql.SQLException unwrapped(java.sql.SQLException e, java.sql.Connection session) {
+        java.sql.SQLException un = unwrapped(e);
+        if (un != e) {
+            return un;
+        }
+        String held = Sessions.raisedMessage(session);
+        return held == null ? e : unwrapped(new java.sql.SQLException(held, e.getSQLState(), e));
+    }
+
     /** Funnel rethrow: a raised-message SQLException re-surfaces with
      * the clean text (state and cause preserved) — as {@link Positioned}
      * when the emission carried its source span; everything else
@@ -101,7 +119,7 @@ public final class RaisedErrors {
         if (first < 0 || last <= first) {
             return e;
         }
-        String inner = msg.substring(first + 1, last);
+        String inner = msg.substring(first + 1, last).replace(QUOTE_MARK, '\'');
         int sep = inner.indexOf(POSITION_SEP);
         if (sep < 0) {
             return new java.sql.SQLException(inner, e.getSQLState(), e);

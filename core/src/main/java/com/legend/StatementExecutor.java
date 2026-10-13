@@ -187,6 +187,28 @@ final class StatementExecutor {
                     protocolBody, frame, options, trace, verdictBatch, effectSink);
         }
 
+        /** The same environment over the system database's {@code route}:
+         * its session, and the store's tables as that session names them,
+         * added to the table renames (a conflicting rename throws — never a
+         * silent pick). */
+        ExecEnv withSystemRoute(com.legend.exec.SystemDatabase.Route route) {
+            ExecEnv on = withConnection(route.connection());
+            if (route.renames().isEmpty()) {
+                return on;
+            }
+            java.util.Map<String, String> renames = new java.util.LinkedHashMap<>(tableReplace);
+            route.renames().forEach((from, to) -> {
+                String had = renames.putIfAbsent(from, to);
+                if (had != null && !had.equals(to)) {
+                    throw new IllegalStateException("table '" + from + "' is renamed both '" + had + "' and '"
+                            + to + "'");
+                }
+            });
+            return new ExecEnv(ctx, runtimeFqn, dialect, on.connection, queryLets, renames,
+                    instanceIds, assertListener, replayOracle, planRows,
+                    protocolBody, frame, options, trace, verdictBatch, effectSink);
+        }
+
         /** The query's PROTOCOL statements (the source-shaped lets a
          * handle's rows are built from — the lineage scan walks the raw
          * query lambda). */
@@ -1980,7 +2002,9 @@ final class StatementExecutor {
     /** THE SYSTEM DATABASE ROUTE (user ruling 2026-09-02): a body reading
      * the metamodel store executes on the GRAPH's own system database —
      * separate from every user connection, written once per graph, never
-     * per execution ({@link com.legend.exec.SystemDatabase}). A body reading
+     * per execution ({@link com.legend.exec.SystemDatabase}); on a server
+     * engine, the host's system connection, its tables read through the
+     * route's renames (2026-10-11). A body reading
      * BOTH the store and a user store has no single session: LOUD (the
      * corpus census — none fired at this landing); a body reading no
      * store pays one tree walk and nothing else. */
@@ -2004,9 +2028,9 @@ final class StatementExecutor {
                 new IllegalStateException("the system metamodel store is"
                         + " not in the model — injection regressed"));
         ModelContext ctx = env.ctx();
-        return env.withConnection(com.legend.exec.SystemDatabase.of(ctx)
-                .connectionFor(Compiler.executesOn(ctx, env.runtimeFqn()).type(), env.dialect(), store,
-                        table -> MetamodelSeeds.rows(table, ctx)));
+        return env.withSystemRoute(com.legend.exec.SystemDatabase.of(ctx)
+                .routeFor(Compiler.executesOn(ctx, env.runtimeFqn()).type(), env.dialect(), store,
+                        table -> MetamodelSeeds.rows(table, ctx), env.options().systemConnections()));
     }
 
     private static void collectStores(TypedSpec n, java.util.Set<String> out) {

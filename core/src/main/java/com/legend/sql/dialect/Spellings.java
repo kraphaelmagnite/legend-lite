@@ -69,6 +69,177 @@ public record Spellings(Map<SqlFn, String> fnNames) {
         return m;
     }
 
+    /** Databricks SQL EXECUTION spellings (2026-10-11, docs/CLOUD_BACKENDS_PCT_2026_10_11.md), each measured on the
+     * account: ONLY a name that exists there with DuckDB's arguments and meaning. Never inherited: {@code concat}
+     * (NULL-propagating there), {@code split} and {@code regexp_extract} (a regex, and group 1 by default), the
+     * DuckDB-only names, and the trims ({@code rtrim(s, c)} reads its arguments the other way round there).
+     * Everything absent here is a coded arm or a wall in the {@code Databricks} dialect. */
+    public static final Spellings DATABRICKS = new Spellings(databricks());
+
+    private static Map<SqlFn, String> databricks() {
+        Map<SqlFn, String> m = new EnumMap<>(SqlFn.class);
+        for (SqlFn f : new SqlFn[] {SqlFn.ABS, SqlFn.ACOS, SqlFn.ASCII_CODE, SqlFn.ASIN, SqlFn.ATAN, SqlFn.ATAN2,
+                SqlFn.CBRT, SqlFn.CHR, SqlFn.COALESCE, SqlFn.COS, SqlFn.COSH, SqlFn.COT, SqlFn.DEGREES, SqlFn.EXP,
+                SqlFn.GREATEST, SqlFn.LEAST, SqlFn.LEFT, SqlFn.LENGTH, SqlFn.LEVENSHTEIN, SqlFn.LIST_FLATTEN, SqlFn.LN,
+                SqlFn.LOG10, SqlFn.LOWER, SqlFn.MAKE_DATE, SqlFn.MAP_KEYS, SqlFn.MAP_VALUES, SqlFn.MD5,
+                SqlFn.POW, SqlFn.RADIANS, SqlFn.REPEAT_STR, SqlFn.REPLACE, SqlFn.REVERSE_STRING, SqlFn.RIGHT,
+                SqlFn.SHA1, SqlFn.SIN, SqlFn.SINH, SqlFn.SPLIT_PART, SqlFn.SQRT, SqlFn.SUBSTRING,
+                SqlFn.TAN, SqlFn.TANH, SqlFn.UPPER}) {
+            m.put(f, DUCKDB.fnNames().get(f));
+        }
+        m.put(SqlFn.ERROR, "raise_error");
+        m.put(SqlFn.STARTS_WITH, "startswith");
+        m.put(SqlFn.ENDS_WITH, "endswith");
+        m.put(SqlFn.STRPOS, "instr");
+        m.put(SqlFn.MAP_FROM_LISTS, "map_from_arrays");
+        m.put(SqlFn.MAP_FROM_ENTRIES, "map_from_entries");
+        m.put(SqlFn.LIST_REVERSE, "reverse");
+        return m;
+    }
+
+    /** Trino EXECUTION spellings (2026-10-12, docs/CLOUD_BACKENDS_PCT_2026_10_11.md §18), each measured on Trino 483:
+     *  ONLY a name that exists there with DuckDB's arguments and meaning. Never inherited: {@code concat}
+     *  (NULL-propagating there), {@code left} and {@code right} and {@code cot} (absent), the hashes (they take and
+     *  answer binary), {@code split_part} (NULL past the end) and the DuckDB-only names. Everything absent here is a
+     *  coded arm or a wall in the {@code Trino} dialect. */
+    public static final Spellings TRINO = new Spellings(trino());
+
+    private static Map<SqlFn, String> trino() {
+        Map<SqlFn, String> m = new EnumMap<>(SqlFn.class);
+        for (SqlFn f : new SqlFn[] {SqlFn.ABS, SqlFn.ACOS, SqlFn.ASIN, SqlFn.ATAN, SqlFn.ATAN2, SqlFn.CBRT, SqlFn.CHR,
+                SqlFn.COALESCE, SqlFn.COS, SqlFn.COSH, SqlFn.DEGREES, SqlFn.EXP, SqlFn.GREATEST, SqlFn.LEAST,
+                SqlFn.LENGTH, SqlFn.LIST_FLATTEN, SqlFn.LN, SqlFn.LOG10, SqlFn.LOWER, SqlFn.MAP_KEYS, SqlFn.MAP_VALUES,
+                SqlFn.POW, SqlFn.RADIANS, SqlFn.REPLACE, SqlFn.REVERSE_STRING, SqlFn.SIN, SqlFn.SINH, SqlFn.SQRT,
+                SqlFn.SUBSTRING, SqlFn.TAN, SqlFn.TANH, SqlFn.UPPER, SqlFn.STARTS_WITH, SqlFn.STRPOS,
+                SqlFn.MAP_FROM_ENTRIES}) {
+            m.put(f, DUCKDB.fnNames().get(f));
+        }
+        m.put(SqlFn.LEVENSHTEIN, "levenshtein_distance");
+        m.put(SqlFn.LIST_REVERSE, "reverse");
+        return m;
+    }
+
+    /** ClickHouse EXECUTION spellings (2026-10-12, docs/CLOUD_BACKENDS_PCT_2026_10_11.md §19), each measured on
+     *  ClickHouse 25.8: ONLY a name that exists there with DuckDB's arguments and meaning. Never inherited: the string
+     *  functions that count bytes (length, lower, substring and the rest: their UTF-8 forms are coded arms), concat
+     *  (NULL-propagating there) and the DuckDB-only names. */
+    public static final Spellings CLICKHOUSE = new Spellings(clickhouse());
+
+    private static Map<SqlFn, String> clickhouse() {
+        Map<SqlFn, String> m = new EnumMap<>(SqlFn.class);
+        // (ABS is ClickHouse's own arm: an integer's abs is a UInt64 there)
+        for (SqlFn f : new SqlFn[] {SqlFn.ACOS, SqlFn.ASIN, SqlFn.ATAN, SqlFn.ATAN2, SqlFn.CBRT,
+                SqlFn.COALESCE, SqlFn.COS, SqlFn.COSH, SqlFn.DEGREES, SqlFn.EXP, SqlFn.GREATEST, SqlFn.LEAST, SqlFn.LN,
+                SqlFn.LOG10, SqlFn.RADIANS, SqlFn.SIN, SqlFn.SINH, SqlFn.SQRT, SqlFn.TAN, SqlFn.TANH}) {
+            m.put(f, DUCKDB.fnNames().get(f));
+        }
+        m.put(SqlFn.POW, "pow");
+        m.put(SqlFn.LEVENSHTEIN, "editDistanceUTF8");
+        m.put(SqlFn.LIST_FLATTEN, "arrayFlatten");
+        m.put(SqlFn.MAP_KEYS, "mapKeys");
+        m.put(SqlFn.MAP_VALUES, "mapValues");
+        m.put(SqlFn.STARTS_WITH, "startsWith");
+        m.put(SqlFn.ENDS_WITH, "endsWith");
+        m.put(SqlFn.LIST_REVERSE, "arrayReverse");
+        m.put(SqlFn.JARO_WINKLER, "jaroWinklerSimilarity");
+        m.put(SqlFn.CHR, "char");
+        return m;
+    }
+
+    /** BigQuery EXECUTION spellings (GoogleSQL; 2026-10-11): ONLY a name that exists on BigQuery with DuckDB's
+     *  arguments and meaning, each measured on the account. */
+    public static final Spellings BIGQUERY = new Spellings(bigquery());
+
+    private static Map<SqlFn, String> bigquery() {
+        Map<SqlFn, String> m = new EnumMap<>(SqlFn.class);
+        for (SqlFn f : new SqlFn[] {SqlFn.ABS, SqlFn.ACOS, SqlFn.ASIN, SqlFn.ATAN, SqlFn.ATAN2, SqlFn.CBRT, SqlFn.CHR,
+                SqlFn.COALESCE, SqlFn.COS, SqlFn.COSH, SqlFn.COT, SqlFn.SIN, SqlFn.SINH, SqlFn.TAN, SqlFn.TANH,
+                SqlFn.LOWER, SqlFn.UPPER, SqlFn.LTRIM, SqlFn.RTRIM, SqlFn.TRIM, SqlFn.REPLACE, SqlFn.STARTS_WITH,
+                SqlFn.ENDS_WITH, SqlFn.STRPOS, SqlFn.SPLIT}) {
+            m.put(f, f.name());
+        }
+        m.put(SqlFn.ERROR, "ERROR");
+        m.put(SqlFn.ASCII_CODE, "ASCII");
+        m.put(SqlFn.REVERSE_STRING, "REVERSE");
+        m.put(SqlFn.REPEAT_STR, "REPEAT");
+        m.put(SqlFn.LEVENSHTEIN, "EDIT_DISTANCE");
+        m.put(SqlFn.FLOOR_RAW, "FLOOR");
+        m.put(SqlFn.MATCHES, "REGEXP_CONTAINS");
+        m.put(SqlFn.SUBSTRING, "SUBSTR");
+        m.put(SqlFn.LIST_REVERSE, "ARRAY_REVERSE");
+        m.put(SqlFn.LIST_LENGTH, "ARRAY_LENGTH");
+        return m;
+    }
+
+    /** Snowflake EXECUTION spellings (2026-10-11): ONLY a name that exists on Snowflake with DuckDB's arguments and meaning, each
+     *  measured. Never inherited: concat (NULL-propagating here), greatest/least (NULL if any argument is: the
+     *  _IGNORE_NULLS forms are DuckDB's), log10 (no such function), strpos (CHARINDEX swaps the arguments). */
+    public static final Spellings SNOWFLAKE = new Spellings(snowflake());
+
+    private static Map<SqlFn, String> snowflake() {
+        Map<SqlFn, String> m = new EnumMap<>(SqlFn.class);
+        for (SqlFn f : new SqlFn[] {SqlFn.ABS, SqlFn.ATAN, SqlFn.ATAN2, SqlFn.CBRT, SqlFn.CHR, SqlFn.COALESCE,
+                SqlFn.COS, SqlFn.COSH, SqlFn.COT, SqlFn.DEGREES, SqlFn.EXP, SqlFn.FLOOR_RAW, SqlFn.LEFT, SqlFn.LENGTH,
+                SqlFn.LN, SqlFn.LOWER, SqlFn.LTRIM, SqlFn.MD5, SqlFn.RADIANS, SqlFn.REPEAT_STR, SqlFn.REPLACE,
+                SqlFn.REVERSE_STRING, SqlFn.RIGHT, SqlFn.RTRIM, SqlFn.SHA1, SqlFn.SIN, SqlFn.SINH, SqlFn.SPLIT_PART,
+                SqlFn.SQRT, SqlFn.SUBSTRING, SqlFn.TAN, SqlFn.TANH, SqlFn.TRIM, SqlFn.UPPER}) {
+            m.put(f, DUCKDB.fnNames().get(f));
+        }
+        m.put(SqlFn.ASCII_CODE, "ascii");
+        m.put(SqlFn.POW, "power");
+        m.put(SqlFn.GREATEST, "greatest_ignore_nulls");
+        m.put(SqlFn.LEAST, "least_ignore_nulls");
+        m.put(SqlFn.LEVENSHTEIN, "editdistance");
+        m.put(SqlFn.STARTS_WITH, "startswith");
+        m.put(SqlFn.ENDS_WITH, "endswith");
+        m.put(SqlFn.MAKE_DATE, "date_from_parts");
+        m.put(SqlFn.LIST_LENGTH, "array_size");
+        m.put(SqlFn.LIST_REVERSE, "array_reverse");
+        m.put(SqlFn.MAP_KEYS, "object_keys");
+        m.put(SqlFn.ENCODE_BASE64, "base64_encode");
+        m.put(SqlFn.DECODE_BASE64, "base64_decode_string");
+        m.put(SqlFn.JSON_ARRAY_LENGTH, "array_size");
+        return m;
+    }
+
+    /** SQLite EXECUTION spellings (3.47.1, the product's driver build, 2026-10-11): ONLY a name that exists there with
+     *  DuckDB's arguments and meaning, each measured -- the math functions, the driver's statistics extension
+     *  ({@code cot}, {@code reverse}) and the core text functions. */
+    public static final Spellings SQLITE = new Spellings(sqlite());
+
+    private static Map<SqlFn, String> sqlite() {
+        Map<SqlFn, String> m = new EnumMap<>(SqlFn.class);
+        for (SqlFn f : new SqlFn[] {SqlFn.ABS, SqlFn.ATAN, SqlFn.ATAN2, SqlFn.COS, SqlFn.COSH,
+                SqlFn.COT, SqlFn.SIN, SqlFn.SINH, SqlFn.TAN, SqlFn.TANH, SqlFn.DEGREES, SqlFn.RADIANS, SqlFn.EXP,
+                SqlFn.LN, SqlFn.LOG10, SqlFn.SQRT, SqlFn.LOWER, SqlFn.UPPER, SqlFn.LTRIM, SqlFn.RTRIM, SqlFn.TRIM,
+                SqlFn.REPLACE, SqlFn.REVERSE_STRING, SqlFn.FLOOR_RAW, SqlFn.SUBSTRING, SqlFn.JSON_ARRAY_LENGTH}) {
+            m.put(f, DUCKDB.fnNames().get(f));
+        }
+        m.put(SqlFn.POW, "pow");
+        m.put(SqlFn.CHR, "char");
+        m.put(SqlFn.STRPOS, "instr");
+        m.put(SqlFn.LIST_LENGTH, "json_array_length");
+        return m;
+    }
+
+    /** MariaDB EXECUTION spellings (11.4, 2026-10-11): ONLY a name that exists there with DuckDB's arguments and
+     *  meaning, each measured. */
+    public static final Spellings MARIADB = new Spellings(mariadb());
+
+    private static Map<SqlFn, String> mariadb() {
+        Map<SqlFn, String> m = new EnumMap<>(SqlFn.class);
+        for (SqlFn f : new SqlFn[] {SqlFn.ABS, SqlFn.ATAN, SqlFn.ATAN2, SqlFn.COS, SqlFn.COT, SqlFn.SIN, SqlFn.TAN,
+                SqlFn.DEGREES, SqlFn.RADIANS, SqlFn.EXP, SqlFn.LN, SqlFn.LOG10, SqlFn.SQRT, SqlFn.LOWER, SqlFn.UPPER,
+                SqlFn.REPLACE, SqlFn.REVERSE_STRING, SqlFn.FLOOR_RAW}) {
+            m.put(f, DUCKDB.fnNames().get(f));
+        }
+        m.put(SqlFn.POW, "POW");
+        m.put(SqlFn.STRPOS, "INSTR");
+        m.put(SqlFn.LIST_LENGTH, "JSON_LENGTH");
+        m.put(SqlFn.JSON_ARRAY_LENGTH, "JSON_LENGTH");
+        return m;
+    }
+
     private static Map<SqlFn, String> build() {
         Map<SqlFn, String> m = new EnumMap<>(SqlFn.class);
         m.put(SqlFn.ABS, "abs");

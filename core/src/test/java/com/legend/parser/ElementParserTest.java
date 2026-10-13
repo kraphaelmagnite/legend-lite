@@ -1360,12 +1360,13 @@ final class ElementParserTest {
                 RelationalDatabaseConnection store::X
                 {
                   store: store::S;
-                  type: MariaDB;
+                  type: Teradata;
                   specification: DuckDB {};
                   auth: Test;
                 }
                 """));
-        assertTrue(String.valueOf(ex.getMessage()).contains("MariaDB"),
+        // (MariaDB until 2026-10-11, when it became a lite database type: docs/SEMANTICS_REGISTER.md S48)
+        assertTrue(String.valueOf(ex.getMessage()).contains("Teradata"),
                 () -> "should name the unknown type, got: " + ex.getMessage());
     }
 

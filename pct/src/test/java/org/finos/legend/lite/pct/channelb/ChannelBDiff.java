@@ -12,8 +12,9 @@ import java.util.Set;
 /**
  * The per-suite channel diff (One-Platform Plan Phase 4): channel B's
  * outcomes against TWO oracles — channel A's own expectedFailures ledger
- * (the interpreted reference) and the engine's relational-DuckDB PCT
- * manifest (the pinned release's, read from @legend_engine_src). AGREE rows corroborate;
+ * (the interpreted reference) and the engine's relational PCT manifest
+ * for the same database (the pinned release's, read from
+ * @legend_engine_src; DuckDB's on the reference lane). AGREE rows corroborate;
  * WIRE-BUG rows split into ENGINE-FRONTIER (the reference relational
  * executor fails them too) and TRUE wire bugs — the number that burns.
  */
@@ -26,14 +27,16 @@ final class ChannelBDiff {
             int bFixesA, int declined, int frontier, int trueWireBug) {
     }
 
+    /** {@code engineManifest} is the engine's PCT manifest for the lane's database, or null where legend-engine
+     *  publishes none (SQLite, MariaDB, MySQL, BigQuery): then no wire bug is the engine's frontier. */
     static Counts report(String tag, List<ChannelB.Outcome> out,
-            Path channelASuite, Path duckDbManifest) throws IOException {
+            Path channelASuite, @com.legend.base.Nullable Path engineManifest) throws IOException {
         Set<String> aFail = scan(channelASuite,
                 "one\\(\"(meta::[a-zA-Z:_0-9]+)_Function",
                 "channel A ledger scan found nothing — the suite moved");
-        Set<String> engineExcluded = scan(duckDbManifest,
+        Set<String> engineExcluded = engineManifest == null ? Set.of() : scan(engineManifest,
                 "\"test\"\\s*:\\s*\"(meta::[a-zA-Z:_0-9]+?)_Function_",
-                "engine DuckDB manifest scan found nothing — the oracle"
+                "engine manifest scan found nothing — the oracle"
                         + " snapshot moved");
         int pass = 0;
         int agreePass = 0;
@@ -105,10 +108,13 @@ final class ChannelBDiff {
             names.add(m.group(1));
         }
         if (names.isEmpty()
-                && !src.contains("= Lists.mutable.empty()")) {
+                && !src.contains("= Lists.mutable.empty()")
+                && !java.util.regex.Pattern.compile("expectedFailures = Lists\\.mutable\\.with\\(\\s*\\)")
+                        .matcher(src).find()) {
             // a DECLARED-empty ledger (Standard: channel A expects zero
-            // failures) is legitimate; silence anywhere else means the
-            // file moved under the regex — loud
+            // failures; a lane's empty with(), as Snowflake's and
+            // BigQuery's Standard) is legitimate; silence anywhere else
+            // means the file moved under the regex — loud
             throw new IllegalStateException(emptyMsg);
         }
         return names;

@@ -422,17 +422,35 @@ export class AbortController {
 // ---- HTML's forgiving-base64 (https://infra.spec.whatwg.org/#forgiving-base64)
 
 const ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
-const VALUE = new Map([...ALPHABET].map((c, i) => [c, i]));
+const CODES = Uint8Array.from(ALPHABET, (c) => c.charCodeAt(0));
+/** Each character's value by its code (255: not of the alphabet). */
+const VALUE = (() => {
+  const values = new Uint8Array(128).fill(255);
+  CODES.forEach((code, i) => { values[code] = i; });
+  return values;
+})();
+const PAD = '='.charCodeAt(0);
+/** Characters made into a string at a time: a call's arguments stay well within what V8 takes. */
+const PIECE = 0x8000;
 
-/** Bytes as base64 (the host's own crossing of bytes, and `btoa`'s encoding). */
+/**
+ * Bytes as base64 (the host's own crossing of bytes, and `btoa`'s encoding). Written into character codes and made into
+ * strings a piece at a time, joined once: a file's bytes (a page's file read in Python) are tens of megabytes, which one
+ * concatenation per three bytes made a rope of millions of pieces.
+ */
 export function base64(bytes: Uint8Array): string {
-  let out = '';
+  const codes = new Uint8Array(Math.ceil(bytes.length / 3) * 4);
+  let o = 0;
   for (let i = 0; i < bytes.length; i += 3) {
     const n = (bytes[i]! << 16) | ((bytes[i + 1] ?? 0) << 8) | (bytes[i + 2] ?? 0);
-    out += ALPHABET[(n >> 18) & 63]! + ALPHABET[(n >> 12) & 63]!
-      + (i + 1 < bytes.length ? ALPHABET[(n >> 6) & 63]! : '=') + (i + 2 < bytes.length ? ALPHABET[n & 63]! : '=');
+    codes[o++] = CODES[(n >> 18) & 63]!;
+    codes[o++] = CODES[(n >> 12) & 63]!;
+    codes[o++] = i + 1 < bytes.length ? CODES[(n >> 6) & 63]! : PAD;
+    codes[o++] = i + 2 < bytes.length ? CODES[n & 63]! : PAD;
   }
-  return out;
+  const pieces: string[] = [];
+  for (let p = 0; p < codes.length; p += PIECE) pieces.push(String.fromCharCode(...codes.subarray(p, p + PIECE)));
+  return pieces.join('');
 }
 
 /** base64 as bytes, by the forgiving-base64 decode; a string it refuses throws InvalidCharacterError. */
@@ -446,8 +464,9 @@ export function fromBase64(text: string): Uint8Array {
   let o = 0;
   let buffer = 0;
   let bits = 0;
-  for (const c of s) {
-    buffer = (buffer << 6) | VALUE.get(c)!;
+  // by index and a table, not a Map per character: a file's bytes are tens of megabytes (the alphabet is checked above)
+  for (let i = 0; i < s.length; i++) {
+    buffer = ((buffer << 6) | VALUE[s.charCodeAt(i)]!) & 0xffffff;
     bits += 6;
     if (bits >= 8) {
       bits -= 8;

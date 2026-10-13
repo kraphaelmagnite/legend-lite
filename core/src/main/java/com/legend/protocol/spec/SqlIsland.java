@@ -8,9 +8,10 @@ import java.util.Objects;
  * of type {@code SQL} whose value is {@code {"sql": <content>}}; the span
  * covers the whole literal.
  *
- * <p>Carried for parse coverage — legend-lite's compiler refuses it loudly
- * (an inline SQL expression bypasses the typed lowering pipeline, which is
- * the #1 tenet's job).
+ * <p>The SQL is Postgres SQL. The typer translates it into the Pure Relation
+ * expression it means ({@code com.legend.protocol.sql.SqlToPure}) and types
+ * that, so the island runs through the same typed pipeline as any query
+ * ({@code compiler/spec/SqlIslands}).
  */
 public record SqlIsland(String sql,
         @com.legend.base.Nullable com.legend.protocol.SourceInfo pos)

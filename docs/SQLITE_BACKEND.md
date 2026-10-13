@@ -1,3 +1,6 @@
+> **Built, 2026-10-11:** the dialect is `core/.../sql/dialect/SQLite.java`, measured on the five PCT suites
+> (`docs/CLOUD_BACKENDS_PCT_2026_10_11.md` §12). The note below is the design's state when it was written.
+>
 > ## ⚠ NOT BUILT — status note, 2026-08-06
 >
 > This is a **feasibility design**. No such dialect exists in `core/`. The

@@ -1,41 +1,23 @@
-// DATACUBE ON AN ENGINE, IN A TAB: one cube over a Legend engine that RUNS its queries
-// (docs/DATACUBE_PYTHON_SHOW_DESIGN_2026_10_08.md) -- Python's engine, which serves this page beside its API
-// (`legend_lite.show`). The cube is engine-cube.ts's, in remote-run mode: nothing runs in this tab. So the page loads
-// neither DuckDB-WASM nor the compiler's module: its script is the grid and the remote client (budgeted,
-// test/bundle-budget.test.ts), and it needs no WebAssembly GC.
+// DATACUBE ON PYTHON, IN A TAB (docs/DATACUBE_ONE_APP_DESIGN_2026_10_11.md §3.3; step 2a): DataCube's app
+// (src/app/datacube-app.ts) over Python's services (src/services/python-host.ts) -- Python's engine serving this page
+// beside its API (`legend_lite.show`). Every grid's rows are Python's: nothing is planned or run in this tab, so the page
+// loads neither DuckDB-WASM nor the compiler's module (budgeted, test/bundle-budget.test.ts), and needs no WebAssembly GC.
 //
 // What the page is told, and how:
 //   - the engine: this page's own origin (one origin, no cross-origin call);
 //   - the engine's token: the link's fragment (`#token=...`), which a browser never sends to a server, as the
 //     warehouse's launch key is given; every call carries it;
-//   - the cube: `cube.json?table=<name>` (asked with the token; engine-cube.ts);
-//   - that the frame changed: `version.json?table=<name>`, asked about once a second (follow, below).
-//
-// Or A PAGE (`?page=<name>`, Python's `ll.Page`; docs/DATACUBE_PYTHON_PAGES_DESIGN_2026_10_09.md): engine-page.ts's, its
-// sheets, grids and charts, each grid over a frame. Fetched only then: one cube's tab loads none of the page's code.
+//   - what to show: a page (`?page=<key>`, Python's `ll.Page`) or one frame (`?table=<name>`, `ll.show(df)`: a page of
+//     one grid);
+//   - what Python's host offers beside its frames (`services.json`: whether it reads a page's file), asked once;
+//   - that Python changed it: its versions (`version.json`), asked about once a second while the tab is shown.
 
-import { EngineCube, type EngineLink } from './engine-cube.ts';
+import { openDataCube } from '../src/app/datacube-app.ts';
+import type { Versions } from '../src/app/services.ts';
+import { browserBasics, tabTitle } from '../src/services/browser-basics.ts';
+import { askedOffers, askedVersions, pythonServices, type PythonLink, type PythonShows } from '../src/services/python-host.ts';
 
-function refuse(message: string): never {
-  const host = document.getElementById('cube');
-  if (host) host.textContent = message;
-  throw new Error(message);
-}
-
-/** What the link says: the engine's token (its fragment) and the frame to show. It chooses nothing about who runs. */
-function linked(): EngineLink {
-  const token = new URLSearchParams(location.hash.slice(1)).get('token');
-  if (!token) refuse('this page opens from the link the engine gave (it carries the engine\'s token)');
-  // (a page's link names no table: `?page=`)
-  return {
-    baseUrl: location.origin,
-    fetch: (input, init) => fetch(input, init),
-    authorization: `Bearer ${token}`,
-    table: new URLSearchParams(location.search).get('table') ?? '',
-  };
-}
-
-/** How often the page asks whether its frame changed: a brief call on this machine, nothing held open (ms). */
+/** How often the page asks whether Python changed what it shows: a brief call on this machine, nothing held open (ms). */
 const ASK_EVERY = 1000;
 
 const pause = (ms: number): Promise<void> => new Promise((done) => { setTimeout(done, ms); });
@@ -46,67 +28,66 @@ const shown = (): Promise<void> => (document.hidden
   : Promise.resolve());
 
 /**
- * FOLLOWING THE FRAME: about once a second the page asks the engine its frame's version (`version.json`), which
- * Python moves after a notebook cell, a `cube.update`, a `cube.refresh`, a Live frame's new columns, or a close. A
- * brief call, nothing held open: cubes in many tabs never use up the browser's six connections to one origin (the
- * audit of show(), 2026-10-08). A new version re-reads the cube (EngineCube.reread). A frame closed in Python, or an
- * engine that stopped, leaves the page showing what it showed, saying it no longer follows.
+ * FOLLOWING PYTHON: about once a second the page asks the engine the versions of what it shows (`version.json`), which
+ * Python moves after a notebook cell, a `cube.update`, a page changed, a Live frame's new columns, or a close. A brief
+ * call, nothing held open: pages in many tabs never use up the browser's six connections to one origin (the audit of
+ * show(), 2026-10-08).
  */
-async function follow(link: EngineLink, cube: EngineCube): Promise<void> {
-  const stopped = (why: string): void => { document.title = `${cube.config.title} (not followed: ${why})`; };
-  for (;;) {
-    await pause(ASK_EVERY);
-    await shown();
-    const answer = await fetch(`version.json?table=${encodeURIComponent(link.table)}`,
-      { headers: { Authorization: link.authorization ?? '' } }).catch(() => undefined);
-    if (answer === undefined) return stopped('the engine stopped');
-    if (answer.status === 404) return stopped('the frame was closed');
-    if (!answer.ok) return stopped(`the engine answered ${answer.status}`);
-    const { version } = (await answer.json()) as { version: number };
-    if (version === cube.config.version) continue;
-    const why = await cube.reread();
-    if (why !== undefined) return stopped(why);
-    document.title = cube.config.title;
-  }
-}
-
-async function open(link: EngineLink): Promise<void> {
-  const page = new URLSearchParams(location.search).get('page');
-  if (page !== null) {
-    await openPage({ baseUrl: link.baseUrl, fetch: link.fetch, ...(link.authorization ? { authorization: link.authorization } : {}), page });
-    return;
-  }
-  const cube = await EngineCube.open(document.getElementById('cube')!, link);
-  document.title = cube.config.title;
-  await follow(link, cube);
-}
-
-/**
- * A PAGE ON THE ENGINE, followed as one cube is: about once a second its versions (`version.json?page=`), which Python
- * moves when it changes the page or a frame on it (EnginePage.follow).
- */
-async function openPage(link: import('./engine-page.ts').PageLink): Promise<void> {
-  const { EnginePage, askedVersions } = await import('./engine-page.ts');
-  const page = await EnginePage.open(document.getElementById('cube')!, link);
-  document.title = page.title;
-  const stopped = (why: string): void => {
-    page.stop();
-    document.title = `${page.title} (not followed: ${why})`;
+function polled(link: PythonLink, shows: PythonShows) {
+  return (moved: (now: Versions | string) => void): (() => void) => {
+    let stopped = false;
+    void (async () => {
+      for (;;) {
+        const now = await askedVersions(link, shows);
+        if (stopped) return;
+        moved(now);
+        if (typeof now === 'string') return;
+        await pause(ASK_EVERY);
+        await shown();
+        if (stopped) return;
+      }
+    })();
+    return () => { stopped = true; };
   };
-  for (;;) {
-    await pause(ASK_EVERY);
-    await shown();
-    const versions = await askedVersions(link);
-    if (typeof versions === 'string') return stopped(versions);
-    const why = await page.follow(versions);
-    if (why !== undefined) return stopped(why);
-    document.title = page.title;
+}
+
+/** The page, said wrong when it cannot open: on the page itself. */
+function refuse(host: HTMLElement, message: string): never {
+  host.textContent = message;
+  throw new Error(message);
+}
+
+async function start(): Promise<void> {
+  const host = document.getElementById('cube')!;
+  const token = new URLSearchParams(location.hash.slice(1)).get('token');
+  if (!token) refuse(host, 'this page opens from the link the engine gave (it carries the engine\'s token)');
+  const params = new URLSearchParams(location.search);
+  const page = params.get('page');
+  const shows: PythonShows = page !== null ? { page } : { frame: params.get('table') ?? '' };
+  const link: PythonLink = { baseUrl: location.origin, fetch: (input, init) => fetch(input, init), authorization: `Bearer ${token}` };
+  const status = document.createElement('span');
+  status.textContent = 'asking Python…';
+  const settled = { show: (_reason: string): void => {} };
+  try {
+    const offers = await askedOffers(link);
+    // where it plans, in its one word (the status bar's readout)
+    status.textContent = offers.plane.word;
+    await openDataCube({
+      services: pythonServices({ link, shows, offers, watch: polled(link, shows), browser: { ...browserBasics, title: tabTitle() } }),
+      host,
+      status,
+      windows: document.body,
+      start: 'page' in shows ? { kind: 'live' } : { kind: 'frame', name: shows.frame },
+      taken: [],
+      settled,
+    });
+  } catch (e) {
+    const why = `failed to start: ${e instanceof Error ? e.message : String(e)}`;
+    settled.show(why);
+    // no page to say it on: the tab says it
+    if (host.childElementCount === 0) host.textContent = why;
+    throw e;
   }
 }
 
-// a page that cannot open says why, on the page (the cube's own failures it shows in its status bar)
-open(linked()).catch((e: unknown) => {
-  const host = document.getElementById('cube');
-  if (host && host.childElementCount === 0) host.textContent = e instanceof Error ? e.message : String(e);
-  throw e;
-});
+void start();

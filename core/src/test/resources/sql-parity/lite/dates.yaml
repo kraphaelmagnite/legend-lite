@@ -1,0 +1,52 @@
+# legend-lite's own Postgres-judged cases over upstream's parity schema: date and timestamp arithmetic -- a date plus or
+# minus days, the days between dates, interval constants (months first, a day past a month's end its last day, then
+# days, then time), make_date, make_timestamp and date_trunc -- at month ends, leap days and NULLs.
+# Each answer is snapped from Postgres 16 with upstream's (postgres-answers.jsonl, key lite/dates/<id>).
+tests:
+  # a date plus or minus an integer is a date; a date minus a date the days between them
+  - id: date_plus_and_minus_days
+    sql: "SELECT id, d + 1 AS a, d - 30 AS b, 7 + d AS c, d + id AS e FROM dates ORDER BY id"
+  - id: days_between_dates
+    sql: "SELECT id, d - DATE '2000-01-01' AS a, DATE '2026-01-01' - d AS b, d - d AS c FROM dates ORDER BY id"
+  - id: date_minus_date_in_a_filter
+    sql: "SELECT id, name FROM persons WHERE DATE '2021-01-01' - hire_date > 1000 ORDER BY id"
+  # interval constants
+  - id: date_plus_an_interval_is_a_timestamp
+    sql: "SELECT id, d + INTERVAL '1 day' AS a, d + INTERVAL '1 month' AS b, d - INTERVAL '1 year' AS c, d + INTERVAL '2 hours' AS e FROM dates ORDER BY id"
+  - id: timestamp_plus_and_minus_intervals
+    sql: "SELECT id, ts + INTERVAL '1 month 2 days' AS a, ts - INTERVAL '90 minutes' AS b, ts + INTERVAL '3' DAY AS c, ts + '1 week'::interval AS e FROM dates ORDER BY id"
+  - id: month_end_clamps_to_the_last_day
+    sql: "SELECT DATE '2024-01-31' + INTERVAL '1 month' AS a, DATE '2023-01-31' + INTERVAL '1 month' AS b, TIMESTAMP '2024-02-29 10:00:00' + INTERVAL '1 year' AS c, DATE '2024-03-31' - INTERVAL '1 month' AS e FROM departments WHERE id = 1"
+  - id: months_then_days
+    sql: "SELECT DATE '2024-01-30' + INTERVAL '1 month 1 day' AS a, DATE '2024-01-30' + INTERVAL '1 day 1 month' AS b, DATE '2024-02-28' + INTERVAL '1 day' + INTERVAL '1 month' AS c FROM departments WHERE id = 1"
+  - id: interval_in_a_filter
+    sql: "SELECT id FROM orders WHERE order_date + INTERVAL '30 days' > TIMESTAMP '2023-06-01 00:00:00' ORDER BY id"
+  - id: interval_abbreviations_and_signs
+    sql: "SELECT ts + INTERVAL '2 mons -3 days' AS a, ts + INTERVAL '1 yr 1 hr' AS b, ts + INTERVAL '-1 weeks' AS c FROM dates WHERE id = 1"
+  - id: interval_with_a_fraction_is_refused
+    sql: "SELECT ts + INTERVAL '1.5 days' AS a FROM dates WHERE id = 1"
+  - id: interval_as_a_value_is_refused
+    sql: "SELECT INTERVAL '1 day' AS a FROM dates WHERE id = 1"
+  - id: timestamp_minus_timestamp_is_refused
+    sql: "SELECT ts - ts AS a FROM dates WHERE id = 1"
+  - id: timestamp_plus_an_integer_does_not_exist
+    sql: "SELECT ts + 1 AS a FROM dates WHERE id = 1"
+  # make_date, make_timestamp
+  - id: make_date_and_make_timestamp
+    sql: "SELECT id, make_date(2020 + id, id, id) AS a, make_timestamp(2024, 1, id, id, 30, 15) AS b FROM dates WHERE id <= 9 ORDER BY id"
+  - id: make_date_of_an_invalid_date_is_an_error
+    sql: "SELECT make_date(2023, 2, 30) AS a FROM departments WHERE id = 1"
+  # date_trunc of a timestamp
+  - id: date_trunc_of_a_timestamp
+    sql: "SELECT id, date_trunc('year', ts) AS a, date_trunc('quarter', ts) AS b, date_trunc('month', ts) AS c, date_trunc('week', ts) AS e, date_trunc('day', ts) AS f, date_trunc('hour', ts) AS g, date_trunc('minute', ts) AS h FROM dates ORDER BY id"
+  - id: date_trunc_in_a_group
+    sql: "SELECT date_trunc('month', order_date) AS m, count(*) AS n, sum(amount) AS s FROM orders GROUP BY date_trunc('month', order_date) ORDER BY 1"
+  - id: date_trunc_of_a_date_is_refused
+    sql: "SELECT date_trunc('month', d) AS a FROM dates WHERE id = 1"
+  # an interval's trailing field: Postgres keeps only that field's part of the text; a field named twice is an error
+  - id: interval_with_a_field_and_more_text_is_refused
+    sql: "SELECT DATE '2024-01-01' + INTERVAL '1 day 1' MONTH AS a FROM departments WHERE id = 1"
+  - id: interval_naming_a_field_twice_is_refused
+    sql: "SELECT DATE '2024-01-01' + INTERVAL '1 mon 1 month' AS a FROM departments WHERE id = 1"
+  - id: interval_week_and_days
+    sql: "SELECT DATE '2024-01-01' + INTERVAL '1 week 2 days' AS a, DATE '2024-01-01' + INTERVAL '-3' DAY AS b FROM departments WHERE id = 1"

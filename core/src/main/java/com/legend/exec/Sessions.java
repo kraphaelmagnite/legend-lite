@@ -49,6 +49,23 @@ public final class Sessions {
         Session open(Target target, com.legend.compiler.element.ModelContext ctx);
     }
 
+    /** Opens a session on a system connection: the HOST's to configure, apart from every runtime's (the platform holds
+     *  no server credential, C3b) -- a server engine's system database lives in it ({@link SystemDatabase}). */
+    @FunctionalInterface
+    public interface Opener {
+        Connection open() throws SQLException;
+    }
+
+    /** Does {@code type} have a private in-process instance ({@link #openPrivate})? A server engine has none: its
+     *  system database is on a system connection the host configures ({@link Opener}). */
+    public static boolean inProcess(DatabaseType type) {
+        return switch (type) {
+            case H2, DuckDB, SQLite -> true;
+            case Postgres, DB2, MemSQL, Sybase, SybaseIQ, Composite, SqlServer, Hive, Snowflake, Presto, Trino,
+                 BigQuery, Redshift, Databricks, Spanner, Athena, Oracle, ClickHouse, Aurora, MariaDB, MySQL -> false;
+        };
+    }
+
     /** A caller's own session: checked against the target's database, never closed here. */
     public static Source given(Connection connection) {
         return (target, ctx) -> {
@@ -74,11 +91,44 @@ public final class Sessions {
             case H2 -> "H2";
             case Postgres -> "PostgreSQL";
             case SQLite -> "SQLite";
-            case DB2, MemSQL, Sybase, SybaseIQ, Composite, SqlServer, Hive, Snowflake, Presto, Trino, BigQuery,
-                 Redshift, Databricks, Spanner, Athena, Oracle, ClickHouse, Aurora ->
+            // the Databricks JDBC driver reports Spark's name (measured, databricks-jdbc 3.4.3)
+            case Databricks -> "SparkSQL";
+            case Snowflake -> "Snowflake";
+            // Google's BigQuery JDBC driver (measured, google-cloud-bigquery-jdbc 1.6.0)
+            case BigQuery -> "Google BigQuery";
+            // MariaDB Connector/J names the server it reached (measured, 3.5.10 on MariaDB 11.4)
+            case MariaDB -> "MariaDB";
+            // ... and so does it on MySQL (measured, 3.5.10 on MySQL 8.4)
+            case MySQL -> "MySQL";
+            // the Trino JDBC driver (measured, trino-jdbc 483)
+            case Trino -> "Trino";
+            // the ClickHouse JDBC driver (measured, clickhouse-jdbc 0.10.0 on 25.8)
+            case ClickHouse -> "ClickHouse";
+            case DB2, MemSQL, Sybase, SybaseIQ, Composite, SqlServer, Hive, Presto,
+                 Redshift, Spanner, Athena, Oracle, Aurora ->
                     throw new com.legend.error.NotImplementedException(
                             "sessions on database type '" + type + "' are not implemented");
         };
+    }
+
+    /** The raise a MariaDB or MySQL session holds after a statement failed (docs/CLOUD_BACKENDS_PCT_2026_10_11.md §13): its
+     *  dialect keeps a raised message in the session variable {@code @legend_raise} before it fails, since a MariaDB
+     *  error cannot carry a raise's text. Read and cleared; null for any other session, or none held. */
+    public static @com.legend.base.Nullable String raisedMessage(Connection session) {
+        try {
+            String product = session.getMetaData().getDatabaseProductName();
+            if (!jdbcProduct(DatabaseType.MariaDB).equals(product) && !jdbcProduct(DatabaseType.MySQL).equals(product)) {
+                return null;
+            }
+            try (java.sql.Statement st = session.createStatement();
+                    java.sql.ResultSet rs = st.executeQuery("SELECT @legend_raise")) {
+                String held = rs.next() ? rs.getString(1) : null;
+                st.execute("SET @legend_raise = NULL");
+                return held;
+            }
+        } catch (SQLException unreadable) {
+            return null;
+        }
     }
 
     /** {@code session} is a session on {@code declared}: a session on another database is refused, never reinterpreted. */
@@ -180,6 +230,19 @@ public final class Sessions {
                 case ConnectionSpecification.Databricks x -> refused(def);
                 case ConnectionSpecification.BigQuery x -> refused(def);
             };
+            // MariaDB Connector/J opens both (measured on MariaDB 11.4 and MySQL 8.4): one driver, one URL
+            case MariaDB, MySQL -> switch (spec) {
+                case ConnectionSpecification.StaticDatasource(String host, int port, String database) ->
+                        new Opening.Url("jdbc:mariadb://" + host + ":" + port + "/" + database);
+                case ConnectionSpecification.InMemory x -> refused(def);
+                case ConnectionSpecification.LocalFile x -> refused(def);
+                case ConnectionSpecification.LocalH2 x -> refused(def);
+                case ConnectionSpecification.EmbeddedH2 x -> refused(def);
+                case ConnectionSpecification.Snowflake x -> refused(def);
+                case ConnectionSpecification.Spanner x -> refused(def);
+                case ConnectionSpecification.Databricks x -> refused(def);
+                case ConnectionSpecification.BigQuery x -> refused(def);
+            };
             case DB2, MemSQL, Sybase, SybaseIQ, Composite, SqlServer, Hive, Snowflake, Presto, Trino, BigQuery,
                  Redshift, Databricks, Spanner, Athena, Oracle, ClickHouse, Aurora ->
                     throw new com.legend.error.NotImplementedException("connections to database type '"
@@ -259,7 +322,7 @@ public final class Sessions {
             case DuckDB -> DriverManager.getConnection("jdbc:duckdb:");
             case SQLite -> DriverManager.getConnection("jdbc:sqlite::memory:");
             case Postgres, DB2, MemSQL, Sybase, SybaseIQ, Composite, SqlServer, Hive, Snowflake, Presto, Trino,
-                 BigQuery, Redshift, Databricks, Spanner, Athena, Oracle, ClickHouse, Aurora ->
+                 BigQuery, Redshift, Databricks, Spanner, Athena, Oracle, ClickHouse, Aurora, MariaDB, MySQL ->
                     throw new com.legend.error.NotImplementedException(
                             "no in-memory instance of database type '" + type + "'");
         };

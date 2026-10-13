@@ -103,7 +103,7 @@ public final class SqlPostProcessors {
             case SqlSelect s -> applySelect(s, map);
             case SqlUnion u -> new SqlUnion(u.branches().stream()
                     .map(b -> apply(b, map)).toList(), u.all(), u.outputs());
-            case com.legend.sql.SqlWith w -> new com.legend.sql.SqlWith(
+            case com.legend.sql.SqlWith w -> w.with(
                     w.ctes().stream().map(c -> new com.legend.sql.SqlWith.Cte(
                             c.name(), apply(c.query(), map), c.materialized())).toList(),
                     apply(w.body(), map));
@@ -134,7 +134,7 @@ public final class SqlPostProcessors {
             case com.legend.sql.SqlUnion u -> new com.legend.sql.SqlUnion(
                     u.branches().stream().map(SqlPostProcessors::nonExecutable).toList(),
                     u.all(), u.outputs());
-            case com.legend.sql.SqlWith w -> new com.legend.sql.SqlWith(
+            case com.legend.sql.SqlWith w -> w.with(
                     w.ctes().stream().map(c -> new com.legend.sql.SqlWith.Cte(
                             c.name(), nonExecutable(c.query()), c.materialized())).toList(),
                     nonExecutable(w.body()));

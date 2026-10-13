@@ -19,13 +19,13 @@
 // writes a page of two frames on two sheets with DataCube's own writers, for the harness to have Python serve it and a
 // tab open it (demo/engine.html?page=); `__readPythonPage` reads a page Python wrote with DataCube's own reader.
 
-import { startDuckDbInTab } from '../../../engine-client/src/duckdb-tab.ts';
-import type { DuckDbEngine } from '../../../engine-client/src/duckdb.ts';
+import { DuckDbEngine, type ArrowishConnection } from '../../../engine-client/src/duckdb.ts';
+import * as duckdb from '../../../engine-client/src/duckdb-wasm.ts';
 import { arrowResultTable, LegendEngineExecutor } from '../../../engine-client/src/engine-remote.ts';
 import { arrowIpcStream } from '../../../engine-client/src/pure-v1.ts';
 import type { ResultTable } from '../../../engine-client/src/result.ts';
 import type { Lambda } from '../../../pure-protocol/src/index.ts';
-import { PlanThenRun, RemoteRun } from '../../src/runner.ts';
+import { PlanThenRun, RemoteRun, type PlanAndRun } from '../../src/runner.ts';
 import type { CubeSnapshot } from '../../src/snapshot.ts';
 import { defaultChart } from '../../src/chart-spec.ts';
 import { DEFAULT_CONFIGURATION } from '../../src/config.ts';
@@ -35,6 +35,9 @@ import { sourceColumns } from '../../src/source-columns.ts';
 import { TreeState } from '../../src/tree.ts';
 import { LitePlanner } from '../../src/lite-planner.ts';
 import { CASES, queries } from '../wasm-differential/cases.ts';
+import { askedOffers, pythonDatabase, pythonRunner, type PythonLink } from '../../src/services/python-host.ts';
+import { ingestFile } from '../../src/upload.ts';
+import { setUpSession } from '../../src/services/browser.ts';
 
 /** What the harness hands the page: the engine, and the frame it serves. */
 interface Served {
@@ -157,11 +160,21 @@ async function run(): Promise<void> {
 
   // the tab: the same compiler in its worker, DuckDB-WASM over the same rows, in a table the frame's model reads
   window.__pythonEngineStage = 'starting the tab\'s DuckDB and the compiler';
-  const local: DuckDbEngine = (await startDuckDbInTab('vendor/')).engine;
+  // as startDuckDbInTab starts it, the database kept too: the tab reads a person's file into it (upload.ts)
+  const asset = (f: string): string => new URL(f, new URL('vendor/', location.href)).href;
+  const bundle = await duckdb.selectBundle({
+    mvp: { mainModule: asset('duckdb-mvp.wasm'), mainWorker: asset('duckdb-browser-mvp.worker.js') },
+    eh: { mainModule: asset('duckdb-eh.wasm'), mainWorker: asset('duckdb-browser-eh.worker.js') },
+  });
+  const db = new duckdb.AsyncDuckDB(new duckdb.ConsoleLogger(duckdb.LogLevel.WARNING), new Worker(bundle.mainWorker!));
+  await db.instantiate(bundle.mainModule, bundle.pthreadWorker);
+  const local = new DuckDbEngine((await db.connect()) as unknown as ArrowishConnection);
   await local.run(`CREATE TABLE trades (region VARCHAR, desk VARCHAR, book VARCHAR, year INTEGER, qtr VARCHAR,
     notional DOUBLE, pnl DOUBLE, qty INTEGER)`, 0);
   await local.run(`INSERT INTO trades VALUES ${served.rows.map((r) => `(${r.map(sqlValue).join(', ')})`).join(', ')}`, 0);
   const planner = new LitePlanner({ ...engine, workerUrl: new URL('planner-worker.js', location.href).href });
+  // set up as the tab sets its DuckDB up (services/browser.ts): this browser is in New York (python-engine.mjs)
+  await setUpSession(local, planner);
   const tab = new PlanThenRun(planner, local);
 
   await check('every cube case answers the same on Python\'s engine and in the tab', async () => {
@@ -181,6 +194,91 @@ async function run(): Promise<void> {
     }
     deepEqual(differ, [], 'Python\'s engine and the tab disagree:');
     equal(CASES.length > 0 && compared === CASES.length, true, `cases compared: ${compared} of ${CASES.length}`);
+  });
+
+  // PLANANDRUN ON PYTHON (docs/DATACUBE_ONE_APP_DESIGN_2026_10_11.md §15): the runner Python's pages use -- planned
+  // against the model Python holds, run on its DuckDB, in one call -- and the tab's, over the same rows: the same plan
+  // function, the same reading, so the same answers, SQL and all
+  await check('every cube case answers the same through PlanAndRun on Python and in the tab', async () => {
+    const python = pythonRunner({ baseUrl: location.origin, fetch: (i, init) => fetch(i, init), authorization: served.authorization },
+      served.model, served.runtime);
+    const differ: string[] = [];
+    let compared = 0;
+    for (const [i, { name, query }] of queries().entries()) {
+      const snapshot: CubeSnapshot = onTheFrame(CASES[i]!.snapshot, served.source);
+      const q: Lambda = onTheFrame(query, served.source);
+      const there = await python.run(q, snapshot, CASES[i]!.scope);
+      const here = await tab.run(q, snapshot, CASES[i]!.scope);
+      equal(there.sql, here.sql, `${name}: the SQL Python planned is the tab's plan:`);
+      const inOrder = ordered(here.sql);
+      const a = shape(there.rows, inOrder);
+      const b = shape(here.rows, inOrder);
+      if (a !== b) differ.push(`${name}\n  python: ${a.slice(0, 400)}\n  tab:    ${b.slice(0, 400)}`);
+      compared += 1;
+    }
+    deepEqual(differ, [], 'PlanAndRun on Python and the tab disagree:');
+    equal(CASES.length > 0 && compared === CASES.length, true, `cases compared: ${compared} of ${CASES.length}`);
+  });
+
+  // THE READER'S FILES (§15.6): each read by DataCube's own reader (upload.ts) into the tab's DuckDB and into Python's
+  // (the page hands Python the bytes the tab's DuckDB is given, fileBytes), then every row planned and run on each
+  // host -- the same columns, types and values. A text file is read as the tab has always read it: a byte-order mark
+  // dropped, CRLF lines, a Latin-1 byte the replacement character; and a file larger than one part.
+  await check('every reader file reads the same on Python\'s page and in the tab', async () => {
+    const link: PythonLink = { baseUrl: location.origin, fetch: (i, init) => fetch(i, init), authorization: served.authorization };
+    const python = pythonDatabase(link, await askedOffers(link));
+    if (python.ingestFile === undefined || python.forgetFile === undefined) throw new CheckFailed('Python\'s engine reads no page file');
+    const utf8 = (text: string): Uint8Array => new TextEncoder().encode(text);
+    const files: readonly (readonly [string, Uint8Array])[] = [
+      ['bom.csv', utf8('\uFEFFid,name\r\n1,a\r\n2,b\r\n')],
+      ['quoted.csv', utf8('id,name,amount\r\n1,"x, y",1.50\r\n2,z,\r\n3,"say ""hi""",-0.25\r\n')],
+      ['latin1.csv', new Uint8Array([...utf8('id,name\n1,caf'), 0xe9, ...utf8('\n2,plain\n')])],
+      ['dates.csv', utf8('day,at,flag\n2024-01-02,2024-01-02 03:04:05.123456,true\n0001-01-01,1970-01-01 00:00:00,false\n,,\n')],
+      ['lines.jsonl', utf8('{"id":1,"tags":["a","b"],"at":"2024-01-02T03:04:05.123456"}\n{"id":2,"tags":[],"at":null}\n')],
+      ['nested.json', utf8('\uFEFF[{"id":1,"customer":{"name":"A","tier":2},"amount":12.30},{"id":2,"customer":null,"amount":null}]')],
+      // over 4 MiB: sent to Python in two parts (upload.ts PART_BYTES)
+      ['parts.csv', utf8(`id,name\n${Array.from({ length: 400_000 }, (_, i) => `${i},José ${i}`).join('\n')}\n`)],
+    ];
+    // the runner reads only the snapshot's epoch
+    const snapshot = CASES[0]!.snapshot;
+    const all = (source: unknown): Lambda => ({ _type: 'lambda', parameters: [], body: [source] }) as unknown as Lambda;
+    const differ: string[] = [];
+    for (const [i, [name, bytes]] of files.entries()) {
+      const file = new File([bytes as BlobPart], name);
+      const table = `reader_${i + 1}`;
+      const here = await ingestFile(local, db, file, planner, { table });
+      const there = await python.ingestFile(file, { table });
+      const tabRows = await new PlanThenRun(planner.withModel(here.model, here.runtime), local).run(all(here.source), snapshot);
+      const pythonRows = await pythonRunner(link, there.model, there.runtime).run(all(there.source), snapshot);
+      const a = shape(pythonRows.rows, false);
+      const b = shape(tabRows.rows, false);
+      if (a !== b) differ.push(`${name}\n  python: ${a.slice(0, 400)}\n  tab:    ${b.slice(0, 400)}`);
+      if (there.rowCount !== here.rowCount) differ.push(`${name}: ${there.rowCount} rows on Python, ${here.rowCount} in the tab`);
+      // and right, not only alike: a nested value is its JSON, its numbers numbers
+      if (name === 'nested.json') {
+        const customer = pythonRows.rows.columns.find((c) => c.name === 'customer')?.values.find((v) => v !== null);
+        equal(customer, '{"name":"A","tier":2}', 'a nested value\'s JSON:');
+      }
+      await python.forgetFile(name, there.table);
+    }
+    deepEqual(differ, [], 'Python\'s page and the tab read a file differently:');
+  });
+
+  // THE SESSION'S ZONE: this browser is in New York, Python's process in UTC; the tab's DuckDB set up as Python's is, a
+  // query of the time now answers the same instant on both (planned `CAST(now() AS TIMESTAMP)`: the session's wall time)
+  await check('the time now answers alike on Python and in a tab in New York: both sessions in UTC', async () => {
+    equal(Intl.DateTimeFormat().resolvedOptions().timeZone, 'America/New_York', 'the browser\'s zone:');
+    const zone = await local.run("SELECT current_setting('TimeZone') AS zone", 0);
+    equal(zone.columns[0]!.values[0], 'UTC', 'the tab\'s session zone:');
+    const python = pythonRunner({ baseUrl: location.origin, fetch: (i, init) => fetch(i, init), authorization: served.authorization },
+      served.model, served.runtime);
+    const q = onTheFrame((await tab.parse('|#>{trades::DB.TRADES}#->limit(1)->extend(~[n: x|now()])->select(~[n])')) as Lambda,
+      served.source);
+    const snapshot = CASES[0]!.snapshot;
+    const at = async (r: PlanAndRun): Promise<number> =>
+      Date.parse(`${String((await r.run(q, snapshot)).rows.columns[0]!.values[0])}Z`);
+    const [here, there] = [await at(tab), await at(python)];
+    equal(Math.abs(here - there) < 60_000, true, `now() in the tab ${new Date(here).toISOString()}, on Python ${new Date(there).toISOString()}:`);
   });
 
   await check('a query\'s types, parse and print: the same compiler\'s answers', async () => {

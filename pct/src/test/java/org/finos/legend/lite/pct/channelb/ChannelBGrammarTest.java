@@ -58,6 +58,13 @@ class ChannelBGrammarTest {
         }
         System.out.println("[chB-gram] census=" + census
                 + " total=" + out.size());
+        // ANOTHER LANE (2026-10-11, the user's ask): channel B on a database other than DuckDB is judged against that
+        // lane's own channel A ledger and engine manifest, by its own measured numbers (ChannelBLane); the pins below
+        // are the reference lane's
+        if (!ChannelBLane.isReference()) {
+            ChannelBLane.judge("Grammar", "chB-gram", out);
+            return;
+        }
         ChannelBDiff.Counts c = ChannelBDiff.report("chB-gram", out,
                 com.legend.testing.Runfile.property("pct.suite.Grammar"),
                 com.legend.testing.Runfile.property("pct.oracle.Grammar"));

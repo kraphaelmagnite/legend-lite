@@ -18,7 +18,7 @@
 // This worker deliberately contains no planning logic of its own: it
 // forwards to the module's `holdModelOrError`, `releaseModel`, `planHeldOrError`,
 // `planJsonHeldOrError`, `relationTypeHeldOrError`, `tableModelOrError`,
-// `catalogColumnsSqlOrError`, `pureV1OrError` and `testDataSqlOrError` exports and
+// `catalogColumnsSqlOrError`, `pureV1OrError`, `testDataSqlOrError` and `sessionSetupOrError` exports and
 // returns what they say. A second planner is the one thing this whole
 // design exists to avoid. The models it holds (compiled once, planned
 // against many times: docs/DATACUBE_MODEL_DESIGN_2026_10_10.md §8) are
@@ -38,6 +38,7 @@ interface TeavmModule {
     // legend-engine's pure/v1, routed as legend-lite's server routes it: `OK\n<status>\n<type>\n<body>`
     pureV1OrError(path: string, rawQuery: string, body: string): string;
     testDataSqlOrError(model: string, database: string, tablesJson: string): string;
+    sessionSetupOrError(databaseType: string): string;
   };
 }
 
@@ -71,6 +72,7 @@ function answerOf(module: TeavmModule, msg: Request): string {
     case 'pureV1': return module.exports.pureV1OrError(msg.path, msg.query, msg.body);
     case 'testData': return module.exports.testDataSqlOrError(msg.model, msg.database, msg.tables);
     case 'plan': return module.exports.planHeldOrError(msg.handle, msg.query, msg.runtime);
+    case 'sessionSetup': return module.exports.sessionSetupOrError(msg.databaseType);
   }
 }
 

@@ -115,13 +115,33 @@ maven = use_extension("@rules_jvm_external//:extensions.bzl", "maven")
 # http_jar fetches each, pinned by sha256, with no Maven resolution (tools/deps/jars_table.bzl, the one table;
 # docs/BUILD_REBUILD_DESIGN_2026_10_05.md, section 5b).
 product_jars = use_extension("//tools/deps:jars.bzl", "product_jars")
-use_repo(product_jars, "duckdb_jdbc", "duckdb_jdbc_warehouse", "h2", "h2_modern", "postgresql", "sqlite_jdbc")
+use_repo(product_jars, "bigquery_jdbc", "clickhouse_jdbc", "databricks_jdbc", "duckdb_jdbc", "duckdb_jdbc_warehouse", "h2", "h2_modern", "mariadb_jdbc", "postgresql", "snowflake_jdbc", "sqlite_jdbc", "trino_jdbc")
 
 # THE POSTGRES the Postgres lanes run on (tools/postgres/postgres.bzl): pinned Postgres 16 binaries, one
 # repository per platform, unpacked by Bazel -- no Docker, no jar on a classpath -- and the hub
 # @embedded_postgres that selects this platform's (Bazel workplan P1-15).
 embedded_postgres = use_extension("//tools/postgres:extensions.bzl", "embedded_postgres")
 use_repo(embedded_postgres, "embedded_postgres")
+
+# THE MARIADB the MariaDB lanes run on (tools/mariadb/mariadb.bzl): MariaDB's own pinned server tarball, unpacked and
+# trimmed by Bazel -- no Docker -- and the hub @embedded_mariadb (Linux x86_64 only: MariaDB's one bintar platform).
+embedded_mariadb = use_extension("//tools/mariadb:extensions.bzl", "embedded_mariadb")
+use_repo(embedded_mariadb, "embedded_mariadb")
+
+# THE MYSQL the MySQL lanes run on (tools/mysql/mysql.bzl): Oracle's pinned minimal server tarball, unpacked and trimmed
+# by Bazel, with Debian's libaio and libnuma beside it -- no Docker -- and the hub @embedded_mysql (Linux x86_64 only).
+embedded_mysql = use_extension("//tools/mysql:extensions.bzl", "embedded_mysql")
+use_repo(embedded_mysql, "embedded_mysql")
+
+# THE TRINO the Trino lanes run on (tools/trino/trino.bzl): Trino's pinned server tarball, trimmed by Bazel to its jars
+# and the memory connector -- no Docker -- in @embedded_trino (every platform: the server is Java).
+embedded_trino = use_extension("//tools/trino:extensions.bzl", "embedded_trino")
+use_repo(embedded_trino, "embedded_trino")
+
+# THE CLICKHOUSE the ClickHouse lanes run on (tools/clickhouse/clickhouse.bzl): ClickHouse's pinned static build, its one
+# binary kept -- no Docker -- in @embedded_clickhouse (Linux x86_64 only: the build pinned).
+embedded_clickhouse = use_extension("//tools/clickhouse:extensions.bzl", "embedded_clickhouse")
+use_repo(embedded_clickhouse, "embedded_clickhouse")
 
 # test tooling, at legend-lite's own versions (root pom <junit.version>). JUnit's
 # BOM keeps the Jupiter and Platform jars in step. tools/junit/JUnitMain drives the
@@ -451,6 +471,24 @@ http_file = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_
     "linux_amd64": "sha256-4PYxpVNfFlRovIogUB+LwUkK28h304/N/y+NBVMeHls=",
     "linux_arm64": "sha256-WYSeikvgD6DsjE2w0mcHmZBh0QO5Ar8yMi+lzeH8OT0=",
     "windows_amd64": "sha256-ZbMfACxwrF+BLSk7hVK5d9HA5nUtChEnF2RUyBhO0AE=",
+}.items()]
+
+# DuckDB's httpfs extension for Python's DuckDB (1.5.5, as duckdb's Python wheel is pinned: tools/python/requirements.in;
+# it must match exactly), one per platform, pinned by content. Pinned 2026-10-12 on the user's ruling that day: httpfs
+# hermetic in the build (never downloaded where legend-lite runs, CI reading remote files offline), and Python reading
+# only remote URL schemes. A page on Python reads a remote file through it
+# (docs/DATACUBE_ONE_APP_DESIGN_2026_10_11.md, step 2b). The wheel carries it (//python:wheel_duckdb); nothing is
+# downloaded where it runs.
+[http_file(
+    name = "duckdb_httpfs_extension_" + platform,
+    integrity = sha,
+    urls = ["https://extensions.duckdb.org/v1.5.5/" + platform + "/httpfs.duckdb_extension.gz"],
+) for platform, sha in {
+    "osx_arm64": "sha256-dYrMCwxPvwlQbzh/9vUoJrEDi3toSd7TmSjS+ZKUUjA=",
+    "osx_amd64": "sha256-9EXCaS+GO/+CYJxwYebic6TZ/TtmleVqbrwYvVAu1GQ=",
+    "linux_amd64": "sha256-fN1SoxNTiHGIhKm3HjmHunIwAhIejp3jmcTtYZ2CSgU=",
+    "linux_arm64": "sha256-CCDgtbdO+qI2CMI53450SmiUMxjVMLSDpSnqzhnLVHU=",
+    "windows_amd64": "sha256-u0qfJyHENDkAbm53Y2SnSNJGn5Lf5eXr42XtEOK+Dng=",
 }.items()]
 
 # THE BROWSER the harnesses drive (Bazel workplan P1-14, spike S4): Playwright 1.63.0's

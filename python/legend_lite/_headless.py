@@ -4,8 +4,9 @@ library and querying Python's DuckDB, with no WebAssembly anywhere in the proces
 
 DataCube's planner talks to a worker (datacube/src/planner-protocol.ts); here the host is that worker, and it answers
 each request kind with the native library's function that delegates to the same ``Boundary`` function the tab's
-WebAssembly export does. ``KINDS`` is that table, the one place it is written: the engine answers by it, and checks by
-it, before anything runs, that the bundle sends no kind it lacks and that the library exports every function it names.
+WebAssembly export does. ``KINDS`` (legend_lite._planner) is that table, the one place it is written: the engine
+answers by it, and checks by it, before anything runs, that the bundle sends no kind it lacks and that the library
+exports every function it names.
 
 The engine runs on an event loop of its own, on its own thread: a caller's thread (a notebook's included, whose own
 loop is running) posts each call to it and waits, so the API is synchronous and never touches the caller's loop.
@@ -21,25 +22,13 @@ import io
 import json
 import tempfile
 import threading
-from collections.abc import Callable, Coroutine
+from collections.abc import Coroutine
 from pathlib import Path
 from typing import Any
 
 from ._library import Library, library
 
-# A request kind -> the native function answering it, and that function's arguments from the request. Each function
-# delegates to the Boundary function the tab's TabExports export of that kind delegates to.
-KINDS: dict[str, tuple[str, Callable[[dict[str, Any]], tuple[str, ...]]]] = {
-    'hold': ('lite_hold_model', lambda m: (m['model'],)),
-    'release': ('lite_release_model', lambda m: (str(m['handle']),)),
-    'plan': ('lite_plan_text_held', lambda m: (str(m['handle']), m['query'], m['runtime'])),
-    'relationType': ('lite_relation_type_text_held', lambda m: (str(m['handle']), m['query'])),
-    'tableModel': ('lite_table_model', lambda m: (m['table'],)),
-    'catalogColumnsSql': ('lite_catalog_columns_sql', lambda m: (m['schema'], m['table'])),
-    'planJson': ('lite_plan_json_held', lambda m: (str(m['handle']), m['lambda'], m['runtime'])),
-    'pureV1': ('lite_pure_v1', lambda m: (m['path'], m['query'], m['body'])),
-    'testData': ('lite_test_data_sql', lambda m: (m['model'], m['database'], m['tables'])),
-}
+from ._planner import KINDS, answer  # noqa: F401 -- the planner protocol's table, answered here and by the engine
 
 # WebCrypto's digests, by the names crypto.subtle.digest takes
 _DIGESTS = {'SHA-1': 'sha1', 'SHA-256': 'sha256', 'SHA-384': 'sha384', 'SHA-512': 'sha512'}
@@ -61,16 +50,6 @@ def check_interface(bundle_kinds: list[str], lib: Library) -> None:
             "DataCube's bundle and legend-lite's native library do not agree on the planner's requests: "
             f'the bundle sends {sorted(sent)}; this host answers {sorted(answered)}'
             + (f'; the library exports none of {[KINDS[k][0] for k in missing]}' if missing else ''))
-
-
-def answer(lib: Library, request: dict[str, Any]) -> dict[str, Any]:
-    """One planner request answered as planner-worker.ts answers it: the function's tagged answer (a refusal is one too),
-    or, when the call itself fails, the worker's failure."""
-    try:
-        name, args = KINDS[request['kind']]
-        return {'id': request['id'], 'ok': True, 'answer': lib.call(name, *args(request))}
-    except Exception as e:  # noqa: BLE001 -- the worker answers its own failure, as planner-worker.ts's catch does
-        return {'id': request.get('id'), 'ok': False, 'error': f'{type(e).__name__}: {e}'}
 
 
 class Headless:
@@ -109,6 +88,12 @@ class Headless:
         except BaseException:
             self.close()
             raise
+
+    @property
+    def folder(self) -> Path:
+        """The engine's own folder: where the files DataCube registers are written, and where its host writes a file
+        for DataCube's code to read (a page's file: the engine's file.json)."""
+        return self._folder
 
     # ---- the calls out of V8, each on the engine's loop
 
@@ -240,6 +225,16 @@ class Headless:
 
 # the product's bundle: beside this module in the wheel (the `datacube` extra, step 4), or where LEGEND_LITE_DATACUBE says
 _BUNDLE = Path(__file__).with_name('_datacube') / 'legend-lite-headless.js'
+
+
+def available() -> bool:
+    """Whether DataCube's own code can run headless here: mini-racer's V8 installed and DataCube's bundle where
+    ``bundle()`` reads it (the datacube extra, or LEGEND_LITE_DATACUBE)."""
+    import importlib.util
+    import os
+
+    bundled = Path(os.environ.get('LEGEND_LITE_DATACUBE') or _BUNDLE)
+    return importlib.util.find_spec('py_mini_racer') is not None and bundled.is_file()
 
 
 def bundle() -> str:

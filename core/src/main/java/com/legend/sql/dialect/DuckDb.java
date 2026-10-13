@@ -274,6 +274,10 @@ public final class DuckDb extends AnsiSqlRenderer {
         if (Boolean.getBoolean("legend.exec.engineScanOrder")) {
             ps.add(new StableScanOrder());
         }
+        // last of this dialect's passes (StoredReads follows), on the statement root only: a stored Variant
+        // column leaving through a star is read as JSON (docs/VARIANT_STORAGE_CENSUS_2026_09_27.md, the 2026-10-12
+        // addendum)
+        ps.add(new VariantEgress());
         return java.util.List.copyOf(ps);
     }
 
@@ -563,6 +567,14 @@ public final class DuckDb extends AnsiSqlRenderer {
                 && t.type() == com.legend.sql.SqlType.Scalar.JSON;
     }
 
+    /** The same fact of an OUTPUT column: born at the store, typed JSON (SEMISTRUCTURED as stored) -- what a
+     *  star delivers without a reference to read it through ({@link VariantEgress}). */
+    static boolean storedVariant(com.legend.sql.OutputCol o) {
+        return (o.origin() == com.legend.sql.OutputCol.Origin.PHYSICAL
+                        || o.origin() == com.legend.sql.OutputCol.Origin.PHYSICAL_QUOTED)
+                && o.type() == com.legend.sql.SqlType.Scalar.JSON;
+    }
+
     /** The operand of a navigation: a stored Variant column as it is. */
     private SqlWriter navigated(SqlWriter writer, SqlExpr e) {
         return storedVariant(e) ? writer.append(super.columnRef((SqlExpr.Column) e)) : writer.expr(e, 7);
@@ -582,15 +594,27 @@ public final class DuckDb extends AnsiSqlRenderer {
         return storedVariant(p.expr()) ? aliasIdent(((SqlExpr.Column) p.expr()).name()) : super.implicitLabel(p);
     }
 
+    /**
+     * A Variant's elements (toMany(@Variant)): an array's, a JSON null element kept as JSON's null -- a cast to JSON[]
+     * makes it SQL's NULL, which a list reads as no element (2026-10-12, the #SQL{}# line: jsonb_array_elements and
+     * an array's length disagreed with Postgres's); NULL for SQL's NULL or JSON's null; any other value is the error
+     * Pure's toMany raises (PCT testToManyFromNonArray), as the cast's was.
+     */
     @Override
     protected SqlWriter variantElements(SqlWriter writer, List<SqlExpr> args) {
-        writer.append("CAST(");
-        if (storedVariant(args.get(0))) {
-            navigated(writer, args.get(0));
-        } else {
-            writer.expr(args.get(0), 0);
-        }
-        return writer.append(" AS JSON[])");
+        SqlWriter.Piece json = w -> {
+            w.append("CAST(");
+            if (storedVariant(args.get(0))) {
+                navigated(w, args.get(0));
+            } else {
+                w.expr(args.get(0), 0);
+            }
+            w.append(" AS JSON)");
+        };
+        return writer.append("(CASE WHEN json_type(").piece(json).append(") = 'ARRAY' THEN json_extract(").piece(json)
+                .append(", '$[*]') WHEN ").piece(json).append(" IS NULL OR json_type(").piece(json)
+                .append(") = 'NULL' THEN NULL ELSE error('Expect variant that contains an ''ARRAY'', but got ''' ||")
+                .append(" json_type(").piece(json).append(") || '''') END)");
     }
 
     @Override

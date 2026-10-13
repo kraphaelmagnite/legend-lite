@@ -62,7 +62,7 @@ text                                                            [FRONTEND]
 | G½ | inline user calls | `compiler/spec/` | `UserCallInliner` | `TypedSpec` (β-inlined) |
 | H | resolve store | `resolver/` | `StoreResolver` | `TypedSpec` (class queries → relational pipelines) |
 | I | lower | `lowering/` | `Lowerer` | `sql.SqlQuery` IR (dialect-free) |
-| J | render SQL | `sql/dialect/` | `SqlDialect.render` (`:14`); `AnsiSqlRenderer`→`DuckDb`, `H2`→`H2Modern`, `EngineStyle*`. SQLite is `Lexicon.SQLITE`, not a class | SQL string |
+| J | render SQL | `sql/dialect/` | `SqlDialect.render` (`:14`); `AnsiSqlRenderer`→`DuckDb`, `Postgres`, `SQLite`, `MariaDb`→`MySql`, `Trino`, `ClickHouse`, `Snowflake`, `Databricks`, `BigQuery`; `H2`→`H2Modern`, `EngineStyle*` | SQL string |
 | K | execute | `exec/` | `Executor` | typed `ExecutionResult` |
 
 Wired by `com.legend.Compiler.compile(...)`.
@@ -435,6 +435,6 @@ Constructs that exist in upstream FINOS `legend-engine` but are **not implemente
 - [x] Phase G: SpecCompiler + compiler/spec (TypedSpec family) + checkers (G½: UserCallInliner)
 - [x] Phase H: StoreResolver + resolver/ (see `docs/RELATIONAL_CORPUS.md` for the coverage ledger)
 - [x] Phase I: Lowerer + lowering/ + sql/ data records
-- [x] Phase J: `SqlDialect.render(SqlQuery)` + `sql/dialect/` — `AnsiSqlRenderer`→`DuckDb`, `H2`→`H2Modern`, `EngineStyleH2`→`EngineStyleDB2`→`EngineStyleComposite`. SQLite is `Lexicon.SQLITE`, not a class.
+- [x] Phase J: `SqlDialect.render(SqlQuery)` + `sql/dialect/` — `AnsiSqlRenderer`→`DuckDb`, `H2`→`H2Modern`, `EngineStyleH2`→`EngineStyleDB2`→`EngineStyleComposite`. (SQLite became a class of its own on 2026-10-11.)
 - [x] Phase K: Executor + exec/
 - [x] Parity harness: PCT (pct module) + RelationalCorpusRunner (engine module, RUN-as-data)
