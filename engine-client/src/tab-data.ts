@@ -29,6 +29,11 @@ export interface TableState {
   readonly source: TableSource;
   /** How many rows it has; undefined when there is no table yet. */
   readonly rows: number | undefined;
+  /**
+   * The person's file for it that the model no longer takes (its columns changed, say): not in the database, which
+   * holds the model's own rows for it, and kept, to go in again when it fits -- why, in the database's words.
+   */
+  readonly refusedFile?: { readonly name: string; readonly why: string };
 }
 
 const key = (schema: string, table: string): string => `${schema}.${table}`;
@@ -61,6 +66,11 @@ export class TabTables {
   #filesChanged = 0;
   /** The database there now: its name, and the files' count it was made with. */
   #current: { readonly name: string; readonly files: number } | undefined;
+  /**
+   * The person's files the database there now does not hold, by `schema.table`, and why: the model no longer declares
+   * the table once, or the file no longer loads into it. Kept in `#files`, to go in again when it fits.
+   */
+  readonly #refused = new Map<string, string>();
   #uploads = 0;
 
   /**
@@ -89,6 +99,7 @@ export class TabTables {
     const { engine } = await this.#open(model);
     await this.#putFile(model, engine, schema, table, file);
     this.#files.set(key(schema, table), { schema, table, name: file.name, bytes: file.bytes });
+    this.#refused.delete(key(schema, table));
     // the database there holds it already: it is as the files are now
     this.#current = { name: this.#current!.name, files: ++this.#filesChanged };
   }
@@ -96,6 +107,7 @@ export class TabTables {
   /** `schema.table` back to the model's own rows (none: no table): the database made again without the file. */
   async reset(model: Model, schema: string, table: string): Promise<void> {
     if (this.#files.delete(key(schema, table))) this.#filesChanged++;
+    this.#refused.delete(key(schema, table));
     await this.#open(model);
   }
 
@@ -109,7 +121,8 @@ export class TabTables {
     })));
     const out: TableState[] = [];
     for (const [i, t] of declared.entries()) {
-      const file = this.#files.get(key(t.schema, t.table));
+      const refused = this.#refused.get(key(t.schema, t.table));
+      const file = refused === undefined ? this.#files.get(key(t.schema, t.table)) : undefined;
       const element = tests.get(key(t.schema, t.table));
       const source: TableSource = file !== undefined ? { kind: 'file', name: file.name } : element !== undefined ? { kind: 'test', element } : { kind: 'none' };
       let rows: number | undefined;
@@ -118,19 +131,30 @@ export class TabTables {
       } catch {
         rows = undefined;     // not made yet: nothing fills it
       }
-      out.push({ ...t, source, rows });
+      out.push({ ...t, source, rows,
+        ...(refused !== undefined ? { refusedFile: { name: this.#files.get(key(t.schema, t.table))!.name, why: refused } } : {}) });
     }
     return out;
   }
 
   /**
    * The workspace's database for `model` as it is now: the one there when nothing that fills it changed, else made
-   * from the model's Data rows and the person's files (they go in before any query reaches it), the screens pointed at
-   * it, and the one before dropped -- after, so a run the screens began on it finishes there.
+   * from the model's Data rows and the person's files (they go in before any query reaches it; a file the model no
+   * longer takes stays out, its table the model's own rows, and is said in `tables`), the screens pointed at it. When
+   * the model changed, the one before is dropped after, so a run the screens began on it finishes there; when only
+   * the files did (a reset), the same name is dropped first and made again, so a run on it then fails once.
    */
   async #open(model: Model): Promise<ProjectEngine> {
     const made = async (engine: QueryEngine): Promise<void> => {
-      for (const file of this.#files.values()) await this.#putFile(model, engine, file.schema, file.table, file);
+      this.#refused.clear();
+      for (const [k, file] of this.#files) {
+        try {
+          await this.#putFile(model, engine, file.schema, file.table, file);
+        } catch (e) {
+          // the person's own edit made it not fit (a table renamed, its columns changed): the rest of the workspace runs
+          this.#refused.set(k, e instanceof Error ? e.message : String(e));
+        }
+      }
     };
     const want = { own: true } as const;
     let project = await this.#projects.engineFor(model.text, this.#host, made, want);

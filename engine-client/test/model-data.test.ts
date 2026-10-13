@@ -316,6 +316,29 @@ describe("a table's rows from a person's file (plan A2)", () => {
     assert.deepEqual((await tabs.tables(a))[0]!.source, { kind: 'test', element: 'demo::party::PartyData' });
   });
 
+  it("keeps a file the model no longer takes out of the database, the rest of the workspace running (Studio's review)", async () => {
+    const withDesk = await version(V1, DESK);
+    const tabs = tables();
+    await tabs.load(withDesk);
+    await tabs.put(withDesk, 'PARTY', 'DESK', { name: 'desks.csv', bytes: enc('ID,NAME,COUNTRY\n6,Swaps Desk,GB\n') });
+    // DESK removed from the model: its file has no table to go into, and the rest runs
+    const v1 = await version(V1);
+    await tabs.load(v1);
+    assert.deepEqual((await tabs.tables(v1)).map((t) => [t.table, t.source.kind]), [['PARTY', 'test']]);
+    assert.deepEqual((await rows()).map((r) => r[0]), [1, 2]);
+    // DESK back: the file goes in again
+    await tabs.load(withDesk);
+    assert.deepEqual((await tabs.tables(withDesk)).find((t) => t.table === 'DESK')!.source, { kind: 'file', name: 'desks.csv' });
+    assert.deepEqual((await rowsOf('DESK', runner)).map((r) => r[1]), ['Swaps Desk']);
+    // a column the file lacks: it no longer loads; the table keeps the model's own rows, and says why
+    await tabs.put(withDesk, 'PARTY', 'PARTY', { name: 'parties.csv', bytes: enc('ID,NAME,COUNTRY\n7,Osprey Fund,NZ\n') });
+    const wider = await modelOf(partyText(V1, DESK, `${PARTY_COLUMNS}, RATING VARCHAR(4)`));
+    await tabs.load(wider);
+    const party = (await tabs.tables(wider)).find((t) => t.table === 'PARTY')!;
+    assert.deepEqual([party.source.kind, party.refusedFile?.name, party.rows], ['test', 'parties.csv', 2]);
+    assert.match(party.refusedFile!.why, /RATING/i);
+  });
+
   it('holds one database at a time: what fills it changed, the one before dropped; a class edited, the same one', async () => {
     const made = tabTables();
     runner = made.runner;
