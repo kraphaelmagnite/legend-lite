@@ -39,6 +39,32 @@ public interface HostOperations {
      */
     List<String> statements(HostOperation operation);
 
+    /**
+     * A planner's query counted (Snap's preflight; docs/ONE_PLATFORM_PROGRAM_2026_10_12.md D5b): one row, one column
+     * {@code n}. {@code plannedQuery} is a plan's SQL, written by the planner for this database -- never a host's text:
+     * no host operation carries SQL.
+     */
+    List<String> countOf(String plannedQuery);
+
+    /**
+     * A relation made by a copy (Snap's, an upload's or a frame's rebuild; D5b): {@code target} made from the planner's
+     * query or from a relation of this database, the one there replaced, each of the catalog's conversions
+     * ({@link CatalogModel.Database#conversions}) applied in its column's place.
+     */
+    List<String> copyOf(HostOperation.Kind kind, HostOperation.Name target, CopyFrom from,
+            List<CatalogModel.Conversion> conversions);
+
+    /** Where a copy reads its rows: a planner's query (a plan's SQL), or a relation of the database. */
+    sealed interface CopyFrom {
+        /** A plan's SQL, the planner's own. */
+        record PlannedQuery(String sql) implements CopyFrom {
+        }
+
+        /** A relation of the database. */
+        record Relation(HostOperation.Name name) implements CopyFrom {
+        }
+    }
+
     /** The host operations of {@code dialect}'s database: DuckDB's, Postgres's count (a warehouse's catalog), or each
      *  refused, naming the database. */
     static HostOperations of(SqlDialect dialect) {
@@ -53,7 +79,12 @@ public interface HostOperations {
 
     /** {@code operation} refused on {@code database}: not written for it. */
     static DialectCapability refusal(HostOperation operation, String database) {
-        return new DialectCapability("a host's " + operation.getClass().getSimpleName() + " on " + database
+        return refusal(operation.getClass().getSimpleName(), database);
+    }
+
+    /** The operation {@code what} refused on {@code database}: not written for it. */
+    static DialectCapability refusal(String what, String database) {
+        return new DialectCapability("a host's " + what + " on " + database
                 + " is not built (docs/ONE_PLATFORM_PROGRAM_2026_10_12.md D5)");
     }
 
@@ -78,6 +109,17 @@ public interface HostOperations {
         @Override
         public List<String> statements(HostOperation operation) {
             throw HostOperations.refusal(operation, database);
+        }
+
+        @Override
+        public List<String> countOf(String plannedQuery) {
+            throw HostOperations.refusal("Count", database);
+        }
+
+        @Override
+        public List<String> copyOf(HostOperation.Kind kind, HostOperation.Name target, CopyFrom from,
+                List<CatalogModel.Conversion> conversions) {
+            throw HostOperations.refusal("Copy", database);
         }
 
         private DialectCapability refused() {

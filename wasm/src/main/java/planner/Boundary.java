@@ -273,6 +273,10 @@ public final class Boundary {
      * {@code {"model", "runtime", "snapRuntime"?, "source" (protocol), "accessor" (its Pure text),
      * "conversions": [{"column","sql"}], "copySelectList", "excluded": [name], "bitColumns": [name]}} out.
      * {@code bitColumns}: the columns declared BIT (DuckDB's BOOLEAN), which legend-engine types TinyInt.
+     * {@code "rebuild": {"kind", "target", "from"}} in (names as a host operation's): {@code "rebuild": [statement]} out,
+     * the statements that make {@code target} from {@code from} with the table's conversions applied, none when no
+     * column converts -- an upload's rewrite, a Python frame's (docs/ONE_PLATFORM_PROGRAM_2026_10_12.md D5b: the host
+     * runs the planner's statement, never a select list it was given).
      */
     public static String tableModel(String tableJson) {
         com.legend.json.Json.Obj in = com.legend.json.Json.parseObject(tableJson);
@@ -304,7 +308,87 @@ public final class Boundary {
         out.put("copySelectList", db.copySelectList());
         out.put("excluded", db.excluded());
         out.put("bitColumns", bitColumns);
+        if (in.has("rebuild")) {
+            com.legend.json.Json.Obj r = jsonObject(in, "rebuild");
+            out.put("rebuild", db.conversions().isEmpty() ? java.util.List.of()
+                    : com.legend.sql.dialect.HostOperations.of(dialect).copyOf(relationKind(r.getString("kind")),
+                            HostOperationsJson.name(jsonObject(r, "target")),
+                            new com.legend.sql.dialect.HostOperations.CopyFrom.Relation(
+                                    HostOperationsJson.name(jsonObject(r, "from"))),
+                            db.conversions()));
+        }
         return com.legend.json.Json.toCompact(out);
+    }
+
+    /**
+     * A SNAP'S STATEMENTS (docs/ONE_PLATFORM_PROGRAM_2026_10_12.md D5b): the pull -- the cube's Pure, planned over the
+     * model held against its live runtime -- and every statement its copy takes, written here so that a host passes
+     * no SQL back: the count where the rows are, in the live database's SQL; the copy's schema made and its table there
+     * dropped, in the store's; the copy made with each of the source catalog's conversions in its column's place, from
+     * the pulled rows' landing (a pull from another database, its rows loaded there first) or from the pull itself
+     * (rows the store holds); and the landing dropped.
+     * {@code {"live", "store", "target", "landing"?, "catalog"?: {"databaseType", "columns": [catalog rows]}}} in, each
+     * name as a host operation's; {@code {"pull": {"sql","type"}, "count": [..], "converts", "prepare": [..],
+     * "copy": [..], "dropLanding": [..]}} out ({@code converts}: whether any column converts -- with none, a host that
+     * loads the pulled rows into a table may load them into the copy itself).
+     */
+    public static String snapHeld(int handle, String lambdaJson, String runtime, String copyJson) {
+        com.legend.json.Json.Obj in = com.legend.json.Json.parseObject(copyJson);
+        com.legend.sql.dialect.HostOperations live = com.legend.sql.dialect.HostOperations.of(dialectOf(in.getString("live")));
+        com.legend.sql.dialect.HostOperations store =
+                com.legend.sql.dialect.HostOperations.of(dialectOf(in.getString("store")));
+        com.legend.sql.dialect.HostOperation.Name target = HostOperationsJson.name(jsonObject(in, "target"));
+        com.legend.sql.dialect.HostOperation.Name landing = in.has("landing")
+                ? HostOperationsJson.name(jsonObject(in, "landing")) : null;
+        java.util.List<com.legend.sql.dialect.CatalogModel.Conversion> conversions = java.util.List.of();
+        if (in.has("catalog")) {
+            com.legend.json.Json.Obj catalog = jsonObject(in, "catalog");
+            // a source read in place (a warehouse's table): its copy converts what the store must hold converted
+            conversions = com.legend.sql.dialect.CatalogModel.database("snap::DB", target.schema(), target.name(),
+                    catalogColumns(catalog), dialectOf(catalog.getString("databaseType")), false).conversions();
+        }
+        java.util.List<com.legend.sql.dialect.CatalogModel.Conversion> converted = conversions;
+        return MODELS.with(handle, ctx -> {
+            com.legend.plan.QueryPlan pull = com.legend.Compiler.query(ctx,
+                    com.legend.protocol.ProtocolReader.lambda(lambdaJson)).plan(runtime);
+            java.util.List<String> prepare = new java.util.ArrayList<>();
+            if (target.schema() != null) {
+                prepare.addAll(store.statements(new com.legend.sql.dialect.HostOperation.MakeSchema(target.database(),
+                        target.schema())));
+            }
+            prepare.addAll(store.statements(new com.legend.sql.dialect.HostOperation.Drop(
+                    com.legend.sql.dialect.HostOperation.Kind.TABLE, target)));
+            java.util.Map<String, Object> out = new java.util.LinkedHashMap<>();
+            java.util.Map<String, Object> pulled = new java.util.LinkedHashMap<>();
+            pulled.put("sql", pull.sql());
+            pulled.put("type", com.legend.plan.UpstreamRelationType.of(pull.rootType()));
+            out.put("pull", pulled);
+            out.put("count", live.countOf(pull.sql()));
+            out.put("converts", !converted.isEmpty());
+            out.put("prepare", prepare);
+            out.put("copy", store.copyOf(com.legend.sql.dialect.HostOperation.Kind.TABLE, target, landing == null
+                    ? new com.legend.sql.dialect.HostOperations.CopyFrom.PlannedQuery(pull.sql())
+                    : new com.legend.sql.dialect.HostOperations.CopyFrom.Relation(landing), converted));
+            out.put("dropLanding", landing == null ? java.util.List.of()
+                    : store.statements(new com.legend.sql.dialect.HostOperation.Drop(
+                            com.legend.sql.dialect.HostOperation.Kind.TABLE, landing)));
+            return com.legend.json.Json.toCompact(out);
+        });
+    }
+
+    private static com.legend.json.Json.Obj jsonObject(com.legend.json.Json.Obj o, String field) {
+        if (!(o.get(field) instanceof com.legend.json.Json.Obj obj)) {
+            throw new IllegalArgumentException("'" + field + "' is an object");
+        }
+        return obj;
+    }
+
+    private static com.legend.sql.dialect.HostOperation.Kind relationKind(String kind) {
+        return switch (kind) {
+            case "table" -> com.legend.sql.dialect.HostOperation.Kind.TABLE;
+            case "view" -> com.legend.sql.dialect.HostOperation.Kind.VIEW;
+            default -> throw new IllegalArgumentException("a relation's kind is table or view, not " + kind);
+        };
     }
 
     /**

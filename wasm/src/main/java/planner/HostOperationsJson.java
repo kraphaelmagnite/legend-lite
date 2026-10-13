@@ -76,7 +76,8 @@ final class HostOperationsJson {
         };
     }
 
-    private static HostOperation.Name name(Json.Obj o) {
+    /** A relation's name, as an operation's JSON writes it (the snap question's names too: Boundary.snapHeld). */
+    static HostOperation.Name name(Json.Obj o) {
         return new HostOperation.Name(stringOrNull(o, "database"), stringOrNull(o, "schema"), string(o, "name"),
                 bool(o, "declared"));
     }

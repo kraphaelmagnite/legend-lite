@@ -40,4 +40,15 @@ final class PostgresHostOperations implements HostOperations {
         }
         throw HostOperations.refusal(operation, "Postgres");
     }
+
+    @Override
+    public List<String> countOf(String plannedQuery) {
+        return List.of("SELECT count(*) AS n FROM (" + plannedQuery + ") AS counted");
+    }
+
+    @Override
+    public List<String> copyOf(HostOperation.Kind kind, HostOperation.Name target, CopyFrom from,
+            List<CatalogModel.Conversion> conversions) {
+        throw HostOperations.refusal("Copy", "Postgres");
+    }
 }

@@ -29,7 +29,7 @@
 // because duckdb-wasm has it compiled in and registerFileBuffer
 // makes it no harder.
 
-import type { HostOperation } from '../../engine-client/src/host-operations.ts';
+import type { HostName, HostOperation } from '../../engine-client/src/host-operations.ts';
 import type { ValueSpecification } from '../../pure-protocol/src/index.ts';
 
 /** One column, as its database's catalog describes it (the catalog question's row). */
@@ -72,6 +72,8 @@ export interface InferredModel {
    * Database, through a connection of the copy's store's type. Present only when asked for.
    */
   readonly snapRuntime?: string;
+  /** The rebuild's statements (`InferOptions.rebuild`), when one was asked: none when no column converts. */
+  readonly rebuild?: readonly string[];
 }
 
 export interface InferOptions {
@@ -107,6 +109,12 @@ export interface InferOptions {
    * docs/DATACUBE_APP_PLAN_2026_10_02.md).
    */
   readonly snapDatabaseType?: string;
+  /**
+   * A rebuild to write (D5b): the statements that make `target` from `from` with the table's conversions applied --
+   * an upload's rewrite at ingest, a Python frame's -- answered as `rebuild`, none when no column converts. The host
+   * runs them as given, never a select list of its own.
+   */
+  readonly rebuild?: { readonly kind: 'table' | 'view'; readonly target: HostName; readonly from: HostName };
 }
 
 /**

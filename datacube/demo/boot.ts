@@ -236,7 +236,6 @@ export const SOURCE = accessor('trades::DB', 'TRADES');
 export const SNAP_TARGET: Omit<SnapTarget, 'planner' | 'host'> = {
   table: 'TRADES_SNAP',
   source: accessor('trades::DB', 'TRADES_SNAP'),
-  conversions: [],
 };
 export const RUNTIME = 'trades::RT';
 

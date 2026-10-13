@@ -323,14 +323,11 @@ export async function readFileInto(
   // nested STRUCT or LIST needs none: it is a Variant as stored
   // (docs/VARIANT_STORAGE_CENSUS_2026_09_27.md). An upload is ours to
   // rewrite, so it is rewritten here.
-  const inferred = await models.tableModel(await catalogColumns(engine, models, table),
-    { table, convertible: true, databaseType: engine.databaseType });
-  if (inferred.conversions.length > 0) {
-    // the writer's own select list: each conversion under its column's name (CatalogModel.copySelectList)
-    await runHostOperations(models, engine, [{
-      op: 'relation', kind: 'table', target, replace: true, selectList: inferred.copySelectList, from: { relation: target },
-    }]);
-  }
+  // the rewrite is the writer's own statement (D5b: the page runs it as given), none when nothing converts
+  const inferred = await models.tableModel(await catalogColumns(engine, models, table), {
+    table, convertible: true, databaseType: engine.databaseType, rebuild: { kind: 'table', target, from: target },
+  });
+  for (const sql of inferred.rebuild ?? []) await engine.run(sql, 0);
 
   const [count] = await models.hostOperations(engine.databaseType, [{ op: 'count', from: { relation: target } }]);
   const counted = await engine.run(count![0]!, 0);

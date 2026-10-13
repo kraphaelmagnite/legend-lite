@@ -23,6 +23,7 @@ export const REQUEST_KINDS = [
   'sessionSetup',
   'projectData',
   'hostOperations',
+  'snap',
   'warm',
 ] as const;
 
@@ -56,6 +57,9 @@ export type RequestBody =
   | { readonly kind: 'projectData'; readonly model: string; readonly databaseType: string }
   // a host's named operations on its own database of that type (D5): a JSON array of them, each answered its statements
   | { readonly kind: 'hostOperations'; readonly databaseType: string; readonly operations: string }
+  // a snap's statements (D5b): its pull, a query's protocol JSON planned against a model held, and its count's and its
+  // copy's, the copy as JSON (where the rows are and go, the copy's name, the source's catalog)
+  | { readonly kind: 'snap'; readonly handle: number; readonly lambda: string; readonly runtime: string; readonly copy: string }
   // the planner's boot layer built for a model now, before a person waits on it
   | { readonly kind: 'warm'; readonly model: string };
 

@@ -9,6 +9,7 @@ import { JSDOM } from 'jsdom';
 import { CubeApp } from '../src/app.ts';
 import type { Planner } from '../src/cube.ts';
 import type { Plan, PlanColumn } from '../../engine-client/src/relation-type.ts';
+import type { SnapStatements } from '../../engine-client/src/snap.ts';
 import type { ResultTable } from '../../engine-client/src/result.ts';
 import { DEFAULT_CONFIGURATION } from '../src/config.ts';
 import type { CubeSnapshot } from '../src/snapshot.ts';
@@ -98,6 +99,14 @@ class StubPlanner implements Planner {
   async plan(query: Lambda): Promise<Plan> {
     this.queries.push(query);
     return { sql: 'SELECT 1', columns: [] };
+  }
+  /** A snap's statements, as a planner answers them (Boundary.snapHeld): the stand-in's own, for the screen's tests. */
+  async snap(pull: Lambda): Promise<SnapStatements> {
+    this.queries.push(pull);
+    return {
+      pull: { sql: 'SELECT 1' }, count: ['SELECT count(*) AS n FROM (SELECT 1)'], converts: false, prepare: [],
+      copy: ['CREATE OR REPLACE TABLE "TRADES_SNAP" AS SELECT * FROM (SELECT 1)'], dropLanding: [],
+    };
   }
   async relationType(): Promise<PlanColumn[]> {
     return [];
@@ -1205,7 +1214,7 @@ describe('the bar says what you are looking at, and nothing else', () => {
     const app = new CubeApp(root, SNAPSHOT, {
       engine: new CountingEngine(),
       planner: new StubPlanner(),
-      snapTarget: { table: 'TRADES_SNAP', source: element('TRADES_SNAP'), conversions: [], planner: new StubPlanner(), host: copies },
+      snapTarget: { table: 'TRADES_SNAP', source: element('TRADES_SNAP'), planner: new StubPlanner(), host: copies },
     });
     await app.open();
     const toggle = root.querySelector('.dc-titlebar-toggle') as HTMLButtonElement;
@@ -1229,7 +1238,7 @@ describe('the bar says what you are looking at, and nothing else', () => {
     const app = new CubeApp(root, SNAPSHOT, {
       engine,
       planner: new StubPlanner(),
-      snapTarget: { table: 'TRADES_SNAP', source: element('TRADES_SNAP'), conversions: [], planner: new StubPlanner(), host: copies },
+      snapTarget: { table: 'TRADES_SNAP', source: element('TRADES_SNAP'), planner: new StubPlanner(), host: copies },
       heldCopy: { label: 'trades.csv', takenAt: new Date(2026, 8, 29, 9, 30), rowCount: 1234 },
     });
     await app.open();
@@ -1258,7 +1267,7 @@ describe('the bar says what you are looking at, and nothing else', () => {
     const app = new CubeApp(root, SNAPSHOT, {
       engine: new SigningEngine(),
       planner: new StubPlanner(),
-      snapTarget: { table: 'TRADES_SNAP', source: element('TRADES_SNAP'), conversions: [], planner: new StubPlanner(), host: copies },
+      snapTarget: { table: 'TRADES_SNAP', source: element('TRADES_SNAP'), planner: new StubPlanner(), host: copies },
     });
     await app.open();
     const chip = () => root.querySelector('.dc-status-receipt') as HTMLButtonElement;

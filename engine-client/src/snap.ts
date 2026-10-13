@@ -99,16 +99,51 @@ export interface SnapTable {
   readonly table: string;
   readonly source: ValueSpecification;
   /**
-   * What the COPY applies so it holds the model's declared types (the catalog model's
-   * `conversions`, CatalogModel.database): a zoned timestamp read in place under the source's
-   * UTC session is copied as its UTC wall time, so the tab's store, in whatever zone, reads the
-   * same values (docs/DATACUBE_APP_PLAN_2026_10_02.md, leg B). SQL in the catalog's own terms --
-   * DuckDB's, whose catalog describes every column (the catalog question) -- so it is applied by the
-   * store the copy is written to, after the pull: the pull runs where the rows are, in that
-   * database's SQL (a Postgres catalog's is Postgres), and a rewrite there would have to be
-   * spelled in it.
+   * The source table's catalog, when the copy must convert what it holds (a warehouse table): the planner reads it
+   * as the table's model was read, and the copy applies each conversion it finds (CatalogModel.database) -- a zoned
+   * timestamp read in place under the source's UTC session copied as its UTC wall time, so the tab's store, in whatever
+   * zone, reads the same values (docs/DATACUBE_APP_PLAN_2026_10_02.md, leg B). Data, never SQL: the planner writes the
+   * copy (docs/ONE_PLATFORM_PROGRAM_2026_10_12.md D5b).
    */
-  readonly conversions: readonly { readonly column: string; readonly sql: string }[];
+  readonly catalog?: SnapCatalog;
+}
+
+/** A source table's catalog: its database's type and its catalog rows, as the table model reads them. */
+export interface SnapCatalog {
+  readonly databaseType: string;
+  readonly columns: readonly object[];
+}
+
+/**
+ * What a snap's statements are written for (D5b): where the rows are (`live`, the count's database) and go (`store`),
+ * the copy's name, where pulled rows land first when they come from another database, and the source's catalog.
+ */
+export interface SnapCopy {
+  readonly live: string;
+  readonly store: string;
+  readonly target: HostName;
+  readonly landing?: HostName;
+  readonly catalog?: SnapCatalog;
+}
+
+/**
+ * A snap's statements, the planner's (Boundary.snapHeld): the pull (the live plan's SQL), the count where the rows
+ * are, the copy's schema made and its tables there dropped, the copy made (from the landing, or from the pull when the
+ * rows are the store's own), and the landing dropped. `converts`: whether any column converts -- with none, pulled
+ * rows load into the copy itself.
+ */
+export interface SnapStatements {
+  readonly pull: { readonly sql: string };
+  readonly count: readonly string[];
+  readonly converts: boolean;
+  readonly prepare: readonly string[];
+  readonly copy: readonly string[];
+  readonly dropLanding: readonly string[];
+}
+
+/** What writes a snap's statements: the cube's live planner, over its model (DataCube's LitePlanner). */
+export interface SnapPlanner {
+  snap(pull: Lambda, copy: SnapCopy): Promise<SnapStatements>;
 }
 
 export type PlaneState =
@@ -220,14 +255,12 @@ export class SnapManager implements Snaps {
 
   /**
    * Check size before materialising anything, so the user is told
-   * "this is 40 million rows" instead of watching a tab die.
+   * "this is 40 million rows" instead of watching a tab die. Counted where the rows are (the remote live plane when
+   * there is one), by the planner's count in that database's own SQL (a warehouse catalog that is Postgres, Postgres's).
    */
-  async preflight(sourceSql: string, epoch: number): Promise<PreflightEstimate> {
-    // counted where the rows are: the remote live plane when there is one, by its own database's statement (a
-    // warehouse catalog that is Postgres, Postgres's: D5)
-    const engine = this.#remote ?? this.#localStore();
-    const [count] = await this.#statements(engine.databaseType, [{ op: 'count', from: { query: sourceSql } }]);
-    const r = await engine.run(count!, epoch);
+  async #preflight(engine: { run(sql: string, epoch: number): ReturnType<QueryEngine['run']> },
+    count: readonly string[], epoch: number): Promise<PreflightEstimate> {
+    const r = await engine.run(count[0]!, epoch);
     const raw = r.columns[0]?.values[0] ?? 0;
     const rowCount = typeof raw === 'number' ? raw : Number(raw);
 
@@ -245,12 +278,13 @@ export class SnapManager implements Snaps {
   }
 
   /**
-   * Freeze `sourceSql` into a local table and switch to snapped. A
-   * pivot's values are found by the cube's own query (plan.ts) on every
-   * refresh, snapped or not, so nothing about them is captured here.
+   * Freeze `pull` (the live source's every column, as Pure) into a local table and switch to snapped, every statement
+   * the planner's (`planner.snap`: the page passes it no SQL, D5b). A pivot's values are found by the cube's own query
+   * (plan.ts) on every refresh, snapped or not, so nothing about them is captured here.
    */
   async snap(
-    sourceSql: string,
+    planner: SnapPlanner,
+    pull: Lambda,
     epoch: number,
     options: {
       readonly label?: string;
@@ -262,20 +296,23 @@ export class SnapManager implements Snaps {
       readonly target: SnapTable;
     },
   ): Promise<SnapInfo> {
-    const estimate = await this.preflight(sourceSql, epoch);
+    const engine = this.#localStore();
+    const schema = options.target.schema;
+    const bare = options.target.table;
+    // pulled from another database, the rows land beside the copy's name first, when a column converts
+    const landingName = `${bare}__pulled`;
+    const statements = await planner.snap(pull, {
+      live: (this.#remote ?? engine).databaseType, store: engine.databaseType, target: named(schema, bare),
+      ...(this.#remote ? { landing: named(schema, landingName) } : {}),
+      ...(options.target.catalog ? { catalog: options.target.catalog } : {}),
+    });
+    const estimate = await this.#preflight(this.#remote ?? engine, statements.count, epoch);
     if (!estimate.withinLimit) {
       throw new SnapRefusal(estimate.refusal ?? 'snap refused');
     }
 
     this.#counter += 1;
     let pulledBy: Receipt | undefined;
-    const schema = options.target.schema;
-    const bare = options.target.table;
-    const table = named(schema, bare);
-    const engine = this.#localStore();
-    // the copy's conversions, applied by the store the copy is written to (SnapTarget.conversions): the same rewrite an
-    // upload applies at ingest (upload.ts), each column replaced by the planner's expression for it
-    const replacing = options.target.conversions.map((c) => ({ column: c.column, sql: c.sql }));
     if (this.#remote) {
       // The rows live on the server: the live plan runs there, and its Arrow
       // chunks stream into a local table of the same name, so the model -- and
@@ -286,30 +323,19 @@ export class SnapManager implements Snaps {
       if (typeof loader.loadArrow !== 'function') {
         throw new SnapRefusal('the local store cannot load Arrow data, so a remote live plane cannot be snapped');
       }
-      const landing = replacing.length === 0 ? bare : `${bare}__pulled`;
-      const pulled = named(schema, landing);
-      // its schema made and the table there before dropped, by the planner's statements, before the rows load
-      const prepare = await this.#statements(engine.databaseType, [
-        ...(schema ? [{ op: 'schema' as const, name: schema }] : []),
-        { op: 'drop', kind: 'table', target: pulled },
-      ]);
+      const landing = statements.converts ? landingName : bare;
+      // its schema made and the tables there before dropped, by the planner's statements, before the rows load
       await loader.loadArrow({ ...(schema ? { schema } : {}), table: landing },
-        this.#remote.arrowChunks(sourceSql, undefined, (r) => { pulledBy = r; }), prepare);
-      if (landing !== bare) {
-        const [copy, drop] = await this.#host!.hostOperations(engine.databaseType, [
-          { op: 'relation', kind: 'table', target: table, replace: true, replacing, from: { relation: pulled } },
-          { op: 'drop', kind: 'table', target: pulled },
-        ]);
+        this.#remote.arrowChunks(statements.pull.sql, undefined, (r) => { pulledBy = r; }), statements.prepare);
+      if (statements.converts) {
         try {
-          for (const sql of copy!) await engine.run(sql, epoch);
+          for (const sql of statements.copy) await engine.run(sql, epoch);
         } finally {
-          for (const sql of drop!) await engine.run(sql, epoch);
+          for (const sql of statements.dropLanding) await engine.run(sql, epoch);
         }
       }
     } else {
-      for (const sql of await this.#statements(engine.databaseType, [
-        { op: 'relation', kind: 'table', target: table, replace: true, replacing, from: { query: sourceSql } },
-      ])) await engine.run(sql, epoch);
+      for (const sql of [...statements.prepare, ...statements.copy]) await engine.run(sql, epoch);
     }
 
     const takenAt = new Date();

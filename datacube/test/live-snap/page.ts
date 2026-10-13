@@ -174,9 +174,9 @@ async function run(): Promise<void> {
       }
     }
     // SNAP: exactly the rows the reader may read, through the real SnapManager
-    const sourceSql = (await planner.plan(from(SOURCE).select(COLUMNS).lambda())).sql;
+    // the pull as Pure, every statement the planner's (D5b)
     const snaps = new SnapManager(local, live, planner);
-    const info = await snaps.snap(sourceSql, 0, { target: { table: 'TRADES', source: SOURCE, conversions: [] } });
+    const info = await snaps.snap(planner, from(SOURCE).select(COLUMNS).lambda(), 0, { target: { table: 'TRADES', source: SOURCE } });
     equal(info.rowCount, 10, 'the snap holds every row the reader may read:');
     const refused: string[] = [];
     const differ: string[] = [];
@@ -216,8 +216,10 @@ async function run(): Promise<void> {
     const pure = levelLambda(snapshot, { level: 1, parent: [] });
     const liveOut = await new PlanThenRun(own, live).run(pure, snapshot);
     const snaps = new SnapManager(local, live, planner);
-    await snaps.snap((await own.plan(from(m.source).select(COLUMNS).lambda())).sql, 0,
-      { target: { schema: trades.schema, table: trades.name, source: m.source, conversions: m.conversions } });
+    await snaps.snap(own, from(m.source).select(COLUMNS).lambda(), 0, { target: {
+      schema: trades.schema, table: trades.name, source: m.source,
+      catalog: { databaseType: 'DuckDB', columns: trades.columns.map((c) => ({ ...c, dataType: c.type })) },
+    } });
     const localOut = await new PlanThenRun(own, local).run(pure, snapshot);
     equal(shape(localOut.rows, true), shape(liveOut.rows, true), 'live and snapped:');
     equal(liveOut.rows.rowCount, 4, 'groups:');
@@ -241,9 +243,9 @@ async function run(): Promise<void> {
     match(await r.check!(), new RegExp(`^On the warehouse's record for rita: statement ${r.statementId}, succeeded`));
     // an id the server never issued is not on its record
     match(await live.check('00000000-0000-0000-0000-000000000000'), /^Not on the warehouse's record for rita/);
-    const sourceSql = (await planner.plan(from(SOURCE).select(COLUMNS).lambda())).sql;
+    // the pull as Pure, every statement the planner's (D5b)
     const snaps = new SnapManager(local, live, planner);
-    const info = await snaps.snap(sourceSql, 0, { target: { table: 'TRADES', source: SOURCE, conversions: [] } });
+    const info = await snaps.snap(planner, from(SOURCE).select(COLUMNS).lambda(), 0, { target: { table: 'TRADES', source: SOURCE } });
     equal(info.pulledBy?.as, 'rita');
     match(await info.pulledBy!.check!(), /^On the warehouse's record for rita/);
     // snapped, the tab's own engine answers, and its receipt says so
