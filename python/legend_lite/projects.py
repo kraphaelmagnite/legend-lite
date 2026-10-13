@@ -23,20 +23,33 @@ from . import compiler
 class _Open:
     statements: dict[str, Any]
     cursor: Any
+    # the project's model, held: what its queries are planned against (a page's planner requests, plan-and-run.json)
+    held: compiler.HeldModel
     busy: int = 0
     used: float = field(default_factory=time.monotonic)
     idle: threading.Timer | None = None
+
+
+@dataclass(frozen=True)
+class Project:
+    """A project's database in use: a cursor pointed at it, and its model held."""
+
+    cursor: Any
+    held: compiler.HeldModel
 
 
 class ProjectDatabases:
     """The project databases on one DuckDB connection (an engine's Frames'): ``using`` a model's, made the first time."""
 
     def __init__(self, connection: Any, database_type: str = 'DuckDB', idle_seconds: float = 15 * 60,
-                 most: int = 8, guard: Callable[[], AbstractContextManager[Any]] = nullcontext) -> None:
+                 most: int = 8, guard: Callable[[], AbstractContextManager[Any]] = nullcontext,
+                 on_library_thread: Callable[[Callable[[], Any]], Any] = lambda call: call()) -> None:
         """``guard``: what every use of ``connection`` from another thread holds (an engine's Frames' lock): a
-        database dropped when idle is dropped under it, never beside a query running."""
+        database dropped when idle is dropped under it, never beside a query running. ``on_library_thread``: where a
+        call of the native library is made (an engine's compiler threads): an idle drop lets its model go there."""
         self._connection = connection
         self._guard = guard
+        self._on_library_thread = on_library_thread
         self._type = database_type
         self._idle = idle_seconds
         self._most = most
@@ -51,16 +64,21 @@ class ProjectDatabases:
 
     @contextmanager
     def using(self, model: str, identity: str = '') -> Iterator[Any]:
-        """A cursor on ``model``'s project database (kept by ``identity``; ``''`` for the model's text), made and filled
-        the first time, in use until the block ends; None when the model has no Data rows."""
-        statements = compiler.project_data(model, identity, self._type)
-        if not statements['fill']:
+        """``model``'s project database (kept by ``identity``; ``''`` for the model's text) -- a cursor on it and the
+        model held -- made and filled the first time, in use until the block ends; None when the model has no Data
+        rows. Made and dropped under ``guard``: the statements on the host's own connection never beside its queries."""
+        try:
+            statements = compiler.project_data(model, identity, self._type)
+        except compiler.LegendError:
+            # no model at all (it does not compile): no project's either, refused where a model is refused
+            statements = None
+        if statements is None or not statements['fill']:
             yield None
             return
-        with self._lock:
+        with self._guard(), self._lock:
             opened = self._open.get(statements['name'])
             if opened is None:
-                opened = self._make(statements)
+                opened = self._make(model, statements)
                 self._open[statements['name']] = opened
             opened.busy += 1
             opened.used = time.monotonic()
@@ -69,7 +87,7 @@ class ProjectDatabases:
                 opened.idle = None
             self._trim(statements['name'])
         try:
-            yield opened.cursor
+            yield Project(opened.cursor, opened.held)
         finally:
             with self._lock:
                 opened.busy -= 1
@@ -81,7 +99,7 @@ class ProjectDatabases:
 
     def drop(self, name: str) -> None:
         """``name`` dropped now, if it is open and none uses it."""
-        with self._lock:
+        with self._guard(), self._lock:
             opened = self._open.get(name)
             if opened is None or opened.busy > 0:
                 return
@@ -90,11 +108,12 @@ class ProjectDatabases:
 
     def drop_all(self) -> None:
         """Every project database dropped (the engine closes)."""
-        with self._lock:
+        with self._guard(), self._lock:
             for name in list(self._open):
                 self.drop(name)
 
-    def _make(self, statements: dict[str, Any]) -> _Open:
+    def _make(self, model: str, statements: dict[str, Any]) -> _Open:
+        held = compiler.HeldModel(model)
         for sql in statements['open']:
             self._connection.execute(sql)
         cursor = self._connection.cursor()
@@ -107,8 +126,9 @@ class ProjectDatabases:
             cursor.close()
             for sql in statements['close']:
                 self._connection.execute(sql)
+            held.close()
             raise
-        return _Open(statements, cursor)
+        return _Open(statements, cursor, held)
 
     def _close(self, opened: _Open) -> None:
         if opened.idle is not None:
@@ -116,11 +136,14 @@ class ProjectDatabases:
         opened.cursor.close()
         for sql in opened.statements['close']:
             self._connection.execute(sql)
+        opened.held.close()
 
     def _idled(self, name: str, opened: _Open) -> None:
-        with self._guard(), self._lock:
-            if self._open.get(name) is opened and opened.busy == 0:
-                self.drop(name)
+        def idle_drop() -> None:
+            with self._guard(), self._lock:
+                if self._open.get(name) is opened and opened.busy == 0:
+                    self.drop(name)
+        self._on_library_thread(idle_drop)
 
     def _trim(self, keep: str) -> None:
         idle = sorted((o.used, n) for n, o in self._open.items() if n != keep and o.busy == 0)

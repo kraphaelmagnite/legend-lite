@@ -10,8 +10,8 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 /**
- * A project's query on legend-lite's server answers its own Data rows (PARK-35, docs/ONE_PLATFORM_PROGRAM_2026_10_12.md
- * C5): the in-memory database the server keeps for the project's connection is made holding them, as a tab's and
+ * A project's query on legend-lite's server answers its own Data rows (docs/ONE_PLATFORM_PROGRAM_2026_10_12.md C5):
+ * the in-memory database the server keeps for the project's connection is made holding them, as a tab's and
  * Python's project database are -- so Query and Studio on the server show the rows a tab shows -- and an edited row is
  * a fresh database, never the earlier rows.
  */

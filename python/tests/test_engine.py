@@ -220,7 +220,7 @@ PARTY_QUERY = ('|demo::party::Party.all()->project(~[name: p|$p.name])->sort(~na
 
 
 class ProjectQueries(Served):
-    """A project's query run on Python (PARK-35, docs/ONE_PLATFORM_PROGRAM_2026_10_12.md C5): Query or Studio served
+    """A project's query run on Python (docs/ONE_PLATFORM_PROGRAM_2026_10_12.md C5): Query or Studio served
     here sends a model none of the frames wrote, with its own Data rows; Python makes that project's database inside its
     DuckDB (the native library's statements), runs the query there on a cursor of its own, and the frames stay as they
     were."""
@@ -256,6 +256,20 @@ class ProjectQueries(Served):
             self.assertEqual(status, 200, body)
             self.assertEqual([r['values'] for r in json.loads(body)['result']['rows']], want)
         self.assertEqual(len(self.server.engine.projects.names), 2)
+
+    def test_a_page_plans_and_runs_a_projects_query_on_its_own_rows(self):
+        # a saved query opened on Python's page (C5): planned over the project's model held beside its database, its
+        # mapping in the query, and run there -- and the page's planner requests answered over that model too
+        status, headers, body = self.post('/plan-and-run.json', json.dumps({
+            'lambda': json.dumps(ll.parse(PARTY_QUERY)), 'model': PARTY, 'runtime': 'demo::party::Runtime'}))
+        self.assertEqual((status, headers['Content-Type']), (200, 'application/vnd.apache.arrow.stream'), body[:300])
+        rows = pyarrow.ipc.open_stream(pa.py_buffer(body)).read_all()
+        self.assertEqual(rows.column('name').to_pylist(), ['Halberd Securities', 'Meridian Capital'])
+        status, _, body = self.post('/planner.json', json.dumps({
+            'kind': 'relationType', 'model': PARTY, 'query': PARTY_QUERY}))
+        said = json.loads(body)
+        self.assertTrue(said['ok'] and said['answer'].startswith('OK\n'), said)
+        self.assertEqual(len(self.server.engine.projects.names), 1)
 
     def test_dropped_when_idle_and_made_again(self):
         projects = self.server.engine.projects

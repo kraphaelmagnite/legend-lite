@@ -502,9 +502,10 @@ class Engine:
         # the binding's calls on the compiler's threads, never a connection's (warehouse.set_library_thread)
         warehouse.set_library_thread(_on_compiler_threads)
         self.planner = planner if planner is not None else NativePlanner()
-        # a project's own rows, when Query or Studio served here runs one of its queries (PARK-35, C5): each project
+        # a project's own rows, when Query or Studio served here runs one of its queries (C5): each project
         # version in a database of its own inside the frames' DuckDB, made by the native library's statements
-        self.projects = ProjectDatabases(frames.connection, guard=frames.holding)
+        self.projects = ProjectDatabases(frames.connection, guard=frames.holding,
+                                         on_library_thread=lambda call: _workers().submit(call).result())
         self._pages_folder = Path(pages) if pages is not None else None
         self.site = Path(site).resolve() if site is not None else None
         if self.site is not None and not self.site.is_dir():
@@ -1175,7 +1176,12 @@ class Engine:
         if not (isinstance(asked, dict) and all(isinstance(asked.get(k), str) for k in ('lambda', 'model', 'runtime'))):
             return _said(400, 'a plan-and-run is {"lambda", "model", "runtime"}, each a string')
         refused = self.planner.refused_plan('this engine plans only over the tables it serves: a page\'s frames and '
-                                            'files, and a model that reads only them (its project\'s)')
+                                            'files, a model that reads only them, and a project\'s model with Data rows')
+        with self.frames.serving() as models:
+            self._noted(models)
+            served = self.frames.model_for(asked['model']) is not None
+        if not served:
+            return self._project_plan_and_run(asked, refused)
         local = self.planner.plane == 'local'
         planned = None
         if not local:
@@ -1206,6 +1212,25 @@ class Engine:
                 return _planned({'plan': planned, 'error': f'{type(refused).__name__}: {refused}'}, 422)
         return _arrow_rows(rows, planned)
 
+    def _project_plan_and_run(self, asked: dict[str, str], refused: str) -> Answer:
+        """A plan-and-run over a project's model (a saved query opened on Python's page: C5): planned against
+        the model held beside the project's own database, by the planner chosen, and run there on its cursor -- the
+        page sent Pure; the rows are the project's Data rows. A model with none is refused, as one Python serves no
+        table of is."""
+        with self.projects.using(asked['model']) as project:
+            if project is None:
+                return _planned({'plan': refused})
+            planned = self.planner.plan(asked['lambda'], project.held, asked['runtime'])
+            try:
+                plan = self.planner.read(planned)
+            except LegendError:
+                return _planned({'plan': planned})
+            try:
+                rows = typed_by_plan(project.cursor.execute(plan.sql).to_arrow_table(), plan)
+            except (duckdb.Error, UntypedColumn) as failure:
+                return _planned({'plan': planned, 'error': f'{type(failure).__name__}: {failure}'}, 422)
+        return _arrow_rows(rows, planned)
+
     def _planner(self, body: str) -> Answer:
         """The planner protocol's requests (engine-client/src/legend/planner-protocol.ts) a page on Python sends,
         answered by the native library as the tab's worker answers them (legend_lite._planner): a held kind names its
@@ -1229,10 +1254,15 @@ class Engine:
                     with self._warehouse_lock:
                         table = self._warehouse_tables.get(model)
                     held = table.held if table is not None else None
-                if held is None:
-                    said = {'ok': True, 'answer': 'ERR\nMODEL\nthis engine serves no source of that model'}
-                else:
+                if held is not None:
                     said = _planner.answer(library(), {**asked, 'handle': held.handle})
+                elif isinstance(model, str):
+                    # a project's model with Data rows (a saved query on Python's page: C5), held beside its database
+                    with self.projects.using(model) as project:
+                        said = (_planner.answer(library(), {**asked, 'handle': project.held.handle}) if project is not None
+                                else {'ok': True, 'answer': 'ERR\nMODEL\nthis engine serves no source of that model'})
+                else:
+                    said = {'ok': True, 'answer': 'ERR\nMODEL\nthis engine serves no source of that model'}
         else:
             said = _planner.answer(library(), asked)
         said.pop('id', None)
@@ -1273,18 +1303,18 @@ class Engine:
     @contextlib.contextmanager
     def _project_of(self, body: str, models: dict[str, str]) -> Iterator[tuple[list[str], Any]]:
         """Where an execute runs: over the frames' models, on the frames' connection -- or, for a project's model with
-        Data rows (Query's or Studio's, served here: PARK-35), over that model alone, on a cursor of its project's own
+        Data rows (Query's or Studio's, served here: C5), over that model alone, on a cursor of its project's own
         database (C5). A model neither is stays refused by the compiler, as before (a frame's that changed, say)."""
         served = list(models.values())
         model = _request_model(body)
         if model is None or model in served:
             yield served, self.frames.connection
             return
-        with self.projects.using(model) as cursor:
-            if cursor is None:
+        with self.projects.using(model) as project:
+            if project is None:
                 yield served, self.frames.connection
             else:
-                yield [model], cursor
+                yield [model], project.cursor
 
     def _cube(self, query: str) -> Answer:
         """The cube a page shows (DataCube's demo/engine.html, or a notebook's widget): ``table`` (a frame's name), its

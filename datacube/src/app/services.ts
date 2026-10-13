@@ -96,11 +96,22 @@ export interface ModelWriting {
   rows(model: string, runtime: string): PlanAndRun;
 }
 
+/**
+ * WHAT A SAVED QUERY IS READ BY on any host (C5): its text, and its project's model's elements (its data spaces,
+ * enumerations), as the compiler reads them -- the tab's own planner, Python's native library.
+ */
+export interface QueryReading {
+  parse(text: string): Promise<Lambda>;
+  elements(text: string): Promise<unknown[]>;
+}
+
 /** Where queries are planned and run, and where data comes in. */
 export interface EngineService {
   readonly plane: PlaneService;
   /** What the status bar says of the planner, in one word. */
   readonly label: string;
+  /** What a saved query's text and its project's model are read by. */
+  readonly reading: QueryReading;
   /** A grid's rows over a source's model (§4.5): its own (a page's grids share no model), in the host's shape. */
   rows(model: string, runtime: string, how?: ModelOptions): GridRows;
   /** Where data comes in. */

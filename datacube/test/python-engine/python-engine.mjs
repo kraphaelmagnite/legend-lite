@@ -256,7 +256,7 @@ try {
     failed = true;
   }
 
-  // A PROJECT'S QUERY ON PYTHON (PARK-35, docs/ONE_PLATFORM_PROGRAM_2026_10_12.md C5): Studio's demo projects loaded
+  // A PROJECT'S QUERY ON PYTHON (docs/ONE_PLATFORM_PROGRAM_2026_10_12.md C5): Studio's demo projects loaded
   // into Python's repository (Studio served by Python), then Query served by Python opens the party project by name
   // and runs a query over it -- its rows the project's own Data rows, in the project's database inside Python's
   // DuckDB, as a tab's Query answers them (site/verify.mjs: 5 parties, Banque Lumière among them)
@@ -283,12 +283,59 @@ try {
     const refused = await q.$('.q-error-box');
     partyRows = refused ? `refused: ${await refused.textContent()}`
       : `${await q.locator('.q-results-bar').textContent()} | ${(await q.$$eval('.q-grid tbody tr', (trs) => trs.map((tr) => tr.textContent ?? ''))).join(' | ')}`;
+    if (!refused) {
+      // saved into Python's saved queries (ll.home()/queries), for Python's own page below (C5)
+      await q.click('button[title="Save (Ctrl+S)"]');
+      await q.fill('.q-dialog input.q-input', 'Parties');
+      await q.click('.q-dialog button.primary');
+      await q.waitForFunction(() => location.hash.startsWith('#/edit/'), undefined, { timeout: 60_000 }).catch(() => undefined);
+    }
     await q.close();
   }
   const ranOnPython = /(^|\D)5 rows? in/.test(partyRows) && partyRows.includes('Banque Lumière');
   console.log(`${ranOnPython ? 'ok  ' : 'FAIL'} a project loaded in Studio on Python runs in Query on Python, on its own rows (5 parties)`);
   if (!ranOnPython) {
     console.log(`  published: ${published}; Query showed: ${partyRows.slice(0, 400)}`);
+    failed = true;
+  }
+
+  // A SAVED QUERY OPENED ON PYTHON'S PAGE (C5): the query Query on Python saved, listed in Saved queries on a
+  // DataCube page Python serves, read by Python's compiler and opened as a grid -- planned over its project's mapping
+  // and run by Python in the project's own database: the 5 parties Query showed
+  let openedSaved = '';
+  if (ranOnPython) {
+    const dc = await browser.newPage();
+    dc.on('pageerror', (e) => { console.log(`page error: ${e.message}`); failed = true; });
+    await dc.goto(served.link);
+    await dc.locator('.dc-row').first().waitFor({ timeout: 60_000 });
+    const tiles = await dc.locator('[data-tile^="grid-"]').count();
+    await dc.click('.dc-titlebar-menu');
+    await dc.locator('.dc-menu .dc-menu-item', { has: dc.locator(':scope > .dc-menu-label:text-is("New")') }).hover();
+    await dc.locator('.dc-menu .dc-menu-item', { has: dc.locator(':scope > .dc-menu-label:text-is("Data Source\u2026")') }).click();
+    await dc.locator('.dc-picker').waitFor({ timeout: 5000 });
+    await dc.locator('.dc-picker-tab[data-section="saved"]').click();
+    const row = dc.locator('.dc-picker-row[data-query]', { hasText: 'Parties' });
+    if (await row.waitFor({ timeout: 30_000 }).then(() => true, () => false)) {
+      await row.click();
+      const opened = await dc.locator('.dc-picker').waitFor({ state: 'detached', timeout: 60_000 }).then(() => true, async () => {
+        openedSaved = `the picker said: ${(await dc.textContent('.dc-picker-status').catch(() => '')) ?? ''}`;
+        return false;
+      });
+      if (opened) {
+        const tile = dc.locator('[data-tile^="grid-"]').nth(tiles);
+        await tile.locator('.dc-row').first().waitFor({ timeout: 60_000 }).catch(() => undefined);
+        const cells = await tile.locator('.dc-row').evaluateAll((rs) => rs.map((r) => r.textContent ?? ''));
+        openedSaved = `${(await tile.locator('.dc-tile-cube').textContent()) ?? ''}: ${cells.length} rows | ${cells.join(' | ')}`;
+      }
+    } else {
+      openedSaved = `Saved queries listed: ${(await dc.$$eval('.dc-picker-row[data-query]', (els) => els.map((e) => e.textContent ?? ''))).join(', ')}`;
+    }
+    await dc.close();
+  }
+  const savedOnPython = /Parties/.test(openedSaved) && /: 5 rows/.test(openedSaved) && openedSaved.includes('Banque Lumière');
+  console.log(`${savedOnPython ? 'ok  ' : 'FAIL'} a query saved in Query on Python opens from Saved queries on Python's page, its rows the project's (5 parties)`);
+  if (!savedOnPython) {
+    console.log(`  ${openedSaved.slice(0, 500)}`);
     failed = true;
   }
   if (classShown) {

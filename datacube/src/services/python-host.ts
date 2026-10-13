@@ -20,11 +20,12 @@
 // - ITS MODEL HOME (docs/ONE_PLATFORM_PROGRAM_2026_10_12.md B3): the SDLC and the Depot Python serves (`/sdlc/api`,
 //   `/depot/api`), the same rules the browser's in-page SDLC runs, over a git repository in this user's folder; the
 //   model actions write through Python's native library (ModelWriting), so Create a Class… and the rest are offered.
+// - ITS SAVED QUERIES (docs/ONE_PLATFORM_PROGRAM_2026_10_12.md C5): the store Python keeps (`/api/pure/v1/query`, B5),
+//   a query read by Python's native library and opened as a grid planned over its project's mapping, its rows the
+//   project's own Data rows in that project's database inside Python's DuckDB.
 //
 // What Python does not answer yet is a service it does not give, and the app does not offer what reads it (§3.4): the
-// other planes (2c), saved queries (Python serves their store, `/api/pure/v1/query`, B5; but a saved query opens with
-// the page's own compiler and database: PARK-33), a warehouse (C3), Studio (E). A share link needs an address others
-// can open; Python's is this machine's loopback.
+// other planes (2c). A share link needs an address others can open; Python's is this machine's loopback.
 
 import { arrowIpcAnswer } from '../../../engine-client/src/arrow-ipc.ts';
 import { toRawTable } from '../../../engine-client/src/duckdb.ts';
@@ -46,9 +47,10 @@ import type { S3Credentials } from '../remote.ts';
 import { fileParts, type UploadResult } from '../upload.ts';
 import type {
   BrowserService, DatabaseService, FrameModel, LivePage, ModelHomeService, PageService, Plane, PlaneService, PlaneWord,
-  Services, Versions, WarehouseService,
+  QueryService, Services, Versions, WarehouseService,
 } from '../app/services.ts';
 import type { CatalogObject, WarehouseSession } from '../../../engine-client/src/warehouse.ts';
+import type { QueryReader } from '../../../query-store/src/index.ts';
 import { SessionExpired } from '../../../engine-client/src/warehouse-session.ts';
 
 /** How the page reaches Python's engine. */
@@ -300,7 +302,12 @@ function planning(link: PythonLink, model: string, runtime: string, plane: Plane
   readonly read: (answer: string, query: Lambda) => Plan;
 } {
   if (plane === 'local') {
-    const planner = new LitePlanner({ model, runtime, worker: () => pythonWorker(link) });
+    // over a mapping (a saved query's project, C5), the query is planned as `->from(mapping, runtime)`, as Query sends it
+    const planner = new LitePlanner({
+      model, runtime, worker: () => pythonWorker(link),
+      ...(how.mapping === undefined ? {} : { mapping: how.mapping }),
+      ...(how.enumerations === undefined ? {} : { enumerations: how.enumerations }),
+    });
     return { planner, request: (query) => planner.planRequest(query), read: (answer, query) => planner.readPlan(answer, query) };
   }
   const planner = new UpstreamPlanner({
@@ -493,6 +500,22 @@ function pythonPages(link: PythonLink, offers: PythonOffers): PageService {
   };
 }
 
+/**
+ * Saved queries on Python's page (C5): the store Python keeps (`ll.home()/queries`, its `/api/pure/v1/query`, B5),
+ * read as the tab reads its own -- its code fetched the first time it is asked for. A query's project opens by name
+ * from Python's Depot; Python has no deployment projects of its own.
+ */
+function pythonQueries(link: PythonLink, offers: PythonOffers): QueryService {
+  let store: Promise<QueryReader> | undefined;
+  return {
+    store: () => (store ??= import('../../../query-store/src/index.ts')
+      .then((m) => new m.QueryStoreClient(`${link.baseUrl}/api`, tokened(link)))),
+    where: `in ${offers.pages.where}`,
+    projects: [],
+    fetchText: (url) => Promise.reject(new Error(`${url}: a page on Python reads no deployment's files`)),
+  };
+}
+
 /** The page Python serves (`page.json`), as the protocol's exact JSON reads it: a calculated column's `12.30` stays. */
 function livePage(link: PythonLink, key: string): LivePage {
   const at = `page.json?page=${encodeURIComponent(key)}`;
@@ -531,6 +554,9 @@ export async function askedVersions(link: PythonLink, shows: PythonShows): Promi
 /** Python's services, over its link. */
 export function pythonServices(o: PythonServicesOptions): Services {
   const { link } = o;
+  // Python's native library over the planner protocol (planner.json): it writes a model, and reads a query's text and
+  // a model's elements
+  const compiler = new LitePlanner({ model: '', runtime: '', worker: () => pythonWorker(link) });
   return {
     engine: {
       plane: pythonPlanes(o.offers),
@@ -539,8 +565,10 @@ export function pythonServices(o: PythonServicesOptions): Services {
       // change the plan, and Python plans over the model it wrote: refused rather than dropped. Bit columns are a
       // reading of legend-engine's types (relation-type.ts, S23), not of legend-lite's, which Python plans with
       rows: (model, runtime, how) => {
-        if (how?.mapping !== undefined || (how?.enumerations?.length ?? 0) > 0) {
-          throw new Error('Python plans a source over the model it wrote: it takes no mapping or enumerations from the page');
+        // a mapping is a project's (a saved query's, C5): Python plans over a model it wrote, or a project's model
+        // with Data rows in that project's own database (C5), and refuses any other; a server's planner takes none yet
+        if (how?.mapping !== undefined && o.offers.plane.word !== 'local') {
+          throw new Error(`a saved query opens on Python with Python's own planner: the ${o.offers.plane.word} planner takes no mapping from the page here`);
         }
         // PlanAndRun on Python (§15): planned against the model Python holds, by the planner Python chose (its own,
         // or a server's), and run on its DuckDB, in one call
@@ -550,11 +578,14 @@ export function pythonServices(o: PythonServicesOptions): Services {
       // the model actions: Python's native library writes, a project's facts planned and run in Python (PlanAndRun)
       modelWriting: {
         place: 'Python',
-        writer: new LitePlanner({ model: '', runtime: '', worker: () => pythonWorker(link) }),
+        writer: compiler,
         rows: (model, runtime) => pythonRunner(link, model, runtime),
       },
+      // Python's native library reads a saved query and its project's model (C5)
+      reading: { parse: (text) => compiler.parse(text), elements: (text) => compiler.modelElements(text) },
     },
     pages: Promise.resolve(pythonPages(link, o.offers)),
+    queries: pythonQueries(link, o.offers),
     ...(o.offers.modelHome ? { modelHome: pythonModelHome(link, o.offers.modelHome.where, o.offers.apps ?? []) } : {}),
     ...(o.offers.warehouse ? { warehouse: pythonWarehouse(link) } : {}),
     live: {

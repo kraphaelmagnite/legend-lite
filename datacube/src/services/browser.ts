@@ -89,6 +89,8 @@ export async function browserServices(o: BrowserServicesOptions): Promise<Servic
     engine: {
       plane: o.plane,
       label: o.planner.label,
+      // the page's own planner reads a saved query and its project's model
+      reading: { parse: (text) => o.planner.planner.parse(text), elements: (text) => o.planner.models.elements(text) },
       // planned here and run here: a planner over the source's own model, on this tab's DuckDB
       rows: (model, runtime, how) => ({ planner: o.planner.models.another(model, runtime, how), engine: o.duckdb.engine }),
       database: tabDatabase(o.duckdb, o.planner.tables),

@@ -107,8 +107,8 @@ export type OpenedQuery = {
   readonly how: ModelOptions;
   readonly source: ValueSpecification;
   readonly columns: CubeSnapshot['columns'];
-  /** A planner over its model, the one that typed it. */
-  readonly planner: Planner;
+  /** Its rows over its model, in the host's shape (§4.5): the tab's planner, or the host's runner (Python's). */
+  readonly rows: GridRows;
   /** The cube's source, as Save and Share write it down: the query itself (cube-document.ts). */
   readonly cubeSource: QuerySource;
   /** A project opened by name: its version's own database in the host's (C5, engine-client's project-data.ts). */
@@ -307,8 +307,8 @@ export function pageSources(d: SourcesOf): PageSources {
   /** Who reads a remote file: the page's own database (the tab's, which the file's server must let this page read), or
    *  its host's (Python's). */
   const remoteReader: 'page' | 'host' = local ? 'page' : 'host';
-  /** Saved queries are read by the page's own compiler and their test data made in its database: offered where both. */
-  const queries = local ? services.queries : undefined; // PARK-33
+  /** Saved queries, offered on every host: read by its compiler, run where its rows are (C5). */
+  const queries = services.queries;
   /** A grid's place from its rows: a planner and the engine it runs on, or the host's runner. */
   const rowsPlace = (rows: GridRows): Pick<GridPlace, 'planner' | 'engine' | 'runner'> =>
     (rows.runner ? { runner: rows.runner } : { planner: rows.planner, engine: rows.engine });
@@ -821,52 +821,56 @@ export function pageSources(d: SourcesOf): PageSources {
 
   /** A saved query's record -- from a store, or as a share link carries it -- as a cube's source. */
   async function openedRecord(q: SavedQueryRecord): Promise<OpenedQuery> {
-    // read by the page's own compiler, its test data made in the page's database: offered only where it has them
-    if (!local || !queries) throw new Error(`“${q.name}” is a saved query: this page reads none`);
-    const { planner, engine, projects } = local;
+    if (!queries) throw new Error(`“${q.name}” is a saved query: this page reads none`);
+    // read by the host's compiler (the tab's planner, Python's native library: C5), planned over its project's
+    // mapping, its rows the project's own Data rows where the host's runs its project databases (C5)
+    const { reading } = services.engine;
     const { contextOf, enumerationsOf, enumsAsStrings, projectOf, sourceOf } = await savedQueries();
     const project = projectFor(q);
     if (!project && !modelHome) throw new Error(`“${q.name}” belongs to ${projectOf(q)}, which this page has no model for (config.json projects[], or a depot)`);
+    // a deployment's own project is seeded by SQL into the tab's database: only a tab runs it (R4: never the page's SQL)
+    if (project && !local) throw new Error(`“${q.name}” belongs to ${projectOf(q)}, a project this deployment seeds into a browser tab's database`);
     const key = projectOf(q);
     // the page's own project (config.json projects[]), else the version opened by name from Depot (design Phase 3)
     const model = await once(projectModels, key, async () => (project
       ? (await Promise.all(project.models.map((url) => queries.fetchText(url)))).join('\n')
       : (await import('../../../depot-client/src/model-text.ts')).modelText((await modelHome!.connect()).depot, q.groupId, q.artifactId, q.versionId)));
-    const elements = await local.elements(model) as ModelElement[];
+    const elements = await reading.elements(model) as ModelElement[];
     const context = contextOf(q, elements);
-    const lambdaOf = await planner.parse(q.content);
+    const lambdaOf = await reading.parse(q.content);
     const values = new Map<string, ValueSpecification>();
     for (const v of q.defaultParameterValues ?? []) {
-      const parsed = await planner.parse(`|${v.content}`);
+      const parsed = await reading.parse(`|${v.content}`);
       if (parsed.body[0]) values.set(v.name, parsed.body[0]);
     }
     let source = sourceOf(lambdaOf, values);
-    // a project opened by name brings its own rows: its Data elements' tables, in a database of the version's own
-    // inside the host's (C5, engine-client's project-data.ts) -- another version may be on the page beside it, in its own
+    // in the tab, a project opened by name brings its own rows: its Data elements' tables, in a database of the
+    // version's own inside the tab's DuckDB (C5, engine-client's project-data.ts) -- another version may be on the page
+    // beside it, in its own. On Python, Python runs a project's model in its own (the host's runner).
     let versioned: QueryEngine | undefined;
-    if (!project) {
-      versioned = (await (await projects()).engineFor(model, key, engine)).engine;
-    } else {
+    if (local && !project) {
+      versioned = (await (await local.projects()).engineFor(model, key, local.engine)).engine;
+    } else if (local && project) {
       await once(seeded, key, async () => {
         for (const url of project.seed) {
           for (const line of (await queries.fetchText(url)).split('\n')) {
             const sql = line.trim();
-            if (sql && !sql.startsWith('--')) await engine.run(sql, 0);
+            if (sql && !sql.startsWith('--')) await local.engine.run(sql, 0);
           }
         }
       });
     }
     const how: ModelOptions = { mapping: context.mapping, enumerations: [...enumerationsOf(elements)] };
-    const own = local.another(model, context.runtime, how);
+    const rows = services.engine.rows(model, context.runtime, how);
     // rule 4: an enumeration column is read as its value's name
-    const named = new Set((await own.relationType(lambda([], source))).filter((c) => c.enumeration).map((c) => c.name));
+    const named = new Set((await typer(rows).relationType(lambda([], source))).filter((c) => c.enumeration).map((c) => c.name));
     if (named.size > 0) source = enumsAsStrings(source, named);
-    const columns = await sourceColumns(own, source);
+    const columns = await sourceColumns(typer(rows), source);
     const { sharedPart } = await queryStores();
     const cubeSource: QuerySource = {
       _type: 'savedQuery', name: q.name, query: sharedPart(q), columns: columns.map((c) => ({ name: c.name, type: c.type })),
     };
-    return { label: q.name, model, runtime: context.runtime, how, source, columns, planner: own, cubeSource, ...(versioned ? { engine: versioned } : {}) };
+    return { label: q.name, model, runtime: context.runtime, how, source, columns, rows, cubeSource, ...(versioned ? { engine: versioned } : {}) };
   }
 
   /** A saved query for a grid: its own planner over its project's model, its version's rows; the query written down. */
@@ -876,10 +880,10 @@ export function pageSources(d: SourcesOf): PageSources {
       label: o.label,
       notes: r.notes,
       make: gridMaker(r.snapshot, r.configuration, [], {
-        planner: o.planner, cubeSource: o.cubeSource, label: o.label, ...(o.engine ? { engine: o.engine } : {}),
+        ...rowsPlace(o.rows), cubeSource: o.cubeSource, label: o.label, ...(o.engine ? { engine: o.engine } : {}),
         ...(r.tree ? { tree: r.tree } : {}), foldPanel: capped,
       }),
-      discard: async () => o.planner.dispose?.(),
+      discard: async () => letGo(o.rows),
     };
   }
 

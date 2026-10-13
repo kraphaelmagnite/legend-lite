@@ -889,38 +889,6 @@ what stands alone.
 **Anchor.** `PARK-32` in `datacube/src/headless/grid.ts` (`gridExport`) (ParkedWorkLedgerTest reads core only; checked
 by hand).
 
-## PARK-33 — a saved query is not opened as a grid on Python's page
-
-**Recorded** 2026-10-13 by the DataCube + Python line, with B5 (`docs/ONE_PLATFORM_PROGRAM_2026_10_12.md`: saved
-queries on one implementation). The store is one implementation on every host now -- the page's module, legend-lite's
-server and Python's native library answer `/api/pure/v1/query` with the same rules, and Python serves it from
-`ll.home()/queries` -- but a page on Python offers no Saved queries section.
-
-**What happens today.** Opening a saved query as a grid's source (`datacube/src/app/sources.ts` `openedRecord`) reads
-it with the page's own compiler and runs its project's test data in the page's own database (`services.engine.local`:
-its planner, its `elements`, `another` over the project's mapping, and the project's seed statements run on the tab's
-DuckDB). A page on Python has none of that pair: Python plans its sources over the models it wrote and takes no
-mapping from the page (`python-host.ts` `rows`), and a project's seed rows are SQL from the project's files, which
-Python would run on its own DuckDB -- the page sending SQL, against R4.
-
-**The fix.** A saved query opened on Python's page through Python: the page sends the query's id (or its record) and
-the project it names, and Python reads the project's model (its model home, a Depot), plans the query over it through
-its mapping, and fills the project's Data elements' tables from the model's own data (Pure, which Python's planner
-turns into its statements), never the page's SQL. Its design is B1's sweep, finished: the model, the mapping and the
-data as services.
-
-**Acceptance.** `datacube/test/python-engine/python-engine.mjs`: a query saved in the tab opened from Saved queries on
-Python's page, its rows as the tab shows them.
-
-**Why parked.** It is a design of its own (a mapping planned on Python; a project's data made without the page's
-SQL); B5 lands the store itself.
-
-**When.** Planned with PARK-35, whose mechanism it is: the program's C5, pull request 7
-(docs/ONE_PLATFORM_PROGRAM_2026_10_12.md §6). E (Query from Python) landed without it.
-
-**Anchor.** `const queries = local ? services.queries : undefined;` in `datacube/src/app/sources.ts` (ParkedWorkLedgerTest
-reads core only; checked by hand).
-
 ## PARK-34 — an execute over a column whose relational spelling is unprobed is refused
 
 **Recorded** 2026-10-13 by the DataCube + Python line, with C1 (`docs/ONE_PLATFORM_PROGRAM_2026_10_12.md`: the tab's
