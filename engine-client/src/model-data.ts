@@ -181,8 +181,9 @@ export async function loadFileTable(sink: FileSink, source: SeedSource, model: s
       throw e;
     }
   } finally {
-    // the rows are the table's now (or the table is as it was): the file is not read again
-    await sink.dropFile?.(registered);
+    // the rows are the table's now (or the table is as it was): the file is not read again -- and a drop that fails
+    // neither fails a put that worked nor hides why a read did not (at worst the file stays registered)
+    await sink.dropFile?.(registered).catch(() => undefined);
   }
   return seed;
 }

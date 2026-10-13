@@ -8,8 +8,14 @@
 // product. That is the whole point of the in-browser planner -- it is
 // not a convenience for the demo, it is what removes the server.
 
-import { cp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { cp as copyEntry, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
+
+// Every file copied as itself, never as the link it is in the build's tree: Bazel's inputs are links into its own
+// output tree, and a folder of links is not a folder you can host -- nor one Bazel can read again when what they point
+// at is not on disk (CI, 2026-10-13: "Inconsistent filesystem operations" on dist/vendor/duckdb-extensions, its
+// target a cache hit never downloaded).
+const cp = (from, to, options = {}) => copyEntry(from, to, { ...options, dereference: true });
 
 // A BUILD ACTION (datacube/BUILD.bazel, dist): Bazel builds the bundles
 // and runtimes into <site-root>/demo, and names the directory to fill.
