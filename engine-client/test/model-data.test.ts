@@ -281,6 +281,26 @@ describe("a table's rows from a person's file (plan A2)", () => {
     await tabs.reset(v1, 'PARTY', 'PARTY');
   });
 
+  it("a database the workspace comes back to holds the person's files as they are now (an undo; a reset elsewhere)", async () => {
+    const a = await version(V1);
+    const b = await version(V1.replace('Halberd', 'Kestrel'));
+    const tabs = tables();
+    await tabs.load(a);
+    await tabs.load(b);
+    await tabs.put(b, 'PARTY', 'PARTY', { name: 'parties.csv', bytes: enc('ID,NAME,COUNTRY\n7,Osprey Fund,NZ\n') });
+    // the Data row's edit undone: A again, which was made before the file
+    await tabs.load(a);
+    assert.deepEqual(await rows(), [[7, 'Osprey Fund', 'NZ']]);
+    assert.deepEqual((await tabs.tables(a))[0]!.source, { kind: 'file', name: 'parties.csv' });
+    // reset while on B; back on A, which held the file too: its own rows again
+    await tabs.load(b);
+    await tabs.reset(b, 'PARTY', 'PARTY');
+    assert.deepEqual((await rows()).map((r) => r[1]), ['Meridian Capital', 'Kestrel Securities']);
+    await tabs.load(a);
+    assert.deepEqual((await rows()).map((r) => r[1]), ['Meridian Capital', 'Halberd Securities']);
+    assert.deepEqual((await tabs.tables(a))[0]!.source, { kind: 'test', element: 'demo::party::PartyData' });
+  });
+
   it("fills a table from a file whose name DuckDB would read as a pattern (sales[2024].csv)", async () => {
     const v1 = await version(V1);
     const tabs = tables();

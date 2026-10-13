@@ -29,7 +29,7 @@
 # 2026-10-10 (build rebuild Phase 3b item 1b, GATES "Build rebuild Phase 3b"): `platform` reaches `error` -- PlatformPure.adopt
 # refuses a declaration whose parameter names differ from the platform's own version with a ModelException, the model error it is.
 # 2026-10-13 (docs/ONE_PLATFORM_PROGRAM_2026_10_12.md C5): setup reaches `protocol` (ProjectData reads a Data
-# element's CSV tables, Protocol.PRelationalCsvData) and `cache` (a project's database named by its identity's Hash).
+# element's CSV tables, Protocol.PRelationalCsvData) and `cache` (a project's database named by its content's Hash).
 # The same day: server_lib reaches `setup` (ConnectionResolver fills a kept in-memory database from the model's Data
 # rows).
 # 2026-10-10 (DataCube's Create a Class…, docs/DATACUBE_MODEL_DESIGN_2026_10_10.md §15.6): `pure_v1` reaches `compiler` --

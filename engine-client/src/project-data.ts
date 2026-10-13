@@ -53,8 +53,8 @@ export interface ProjectEngine {
 export class ProjectDatabases {
   readonly #host: ProjectHost;
   readonly #source: ProjectDataSource;
-  /** Each database held: its connection, and the planner's statements that drop it. */
-  readonly #open = new Map<string, Promise<{ readonly engine: QueryEngine; readonly close: readonly string[] }>>();
+  /** Each database held: its connection, its users' engine over it, and the planner's statements that drop it. */
+  readonly #open = new Map<string, Promise<Held>>();
 
   constructor(host: ProjectHost, source: ProjectDataSource) {
     this.#host = host;
@@ -68,9 +68,11 @@ export class ProjectDatabases {
 
   /**
    * `model`'s project database (named by what it holds): made and filled the first time, and `made` run on it then,
-   * before any query of anyone's reaches it (Studio puts a person's files in over its rows).
+   * before any query of anyone's reaches it (Studio puts a person's files in over its rows). The engine answered is
+   * the keeper's: its close does nothing (the database is kept).
    */
-  async engineFor(model: string, hostEngine: QueryEngine, made?: (engine: QueryEngine) => Promise<void>): Promise<ProjectEngine> {
+  async engineFor(model: string, hostEngine: QueryEngine,
+    made?: (engine: QueryEngine, name: string) => Promise<void>): Promise<ProjectEngine> {
     const statements = await this.#source.projectData(model, this.#host.databaseType);
     if (statements.fill.length === 0) return { engine: hostEngine, name: undefined };
     let opening = this.#open.get(statements.name);
@@ -80,7 +82,7 @@ export class ProjectDatabases {
       // a failed make is forgotten: the next ask makes it again
       opening.catch(() => this.#open.delete(statements.name));
     }
-    return { engine: (await opening).engine, name: statements.name };
+    return { engine: (await opening).users, name: statements.name };
   }
 
   /** Every project database dropped -- between a test's cases, which share one DuckDB. */
@@ -89,27 +91,46 @@ export class ProjectDatabases {
       this.#open.delete(name);
       const held = await opening.catch(() => undefined);
       if (!held) continue;
-      await held.engine.close();
+      await held.connection.close();
       for (const sql of held.close) await this.#host.run(sql);
     }
   }
 
-  async #make(statements: ProjectDataStatements, made?: (engine: QueryEngine) => Promise<void>):
-    Promise<{ readonly engine: QueryEngine; readonly close: readonly string[] }> {
+  async #make(statements: ProjectDataStatements, made?: (engine: QueryEngine, name: string) => Promise<void>): Promise<Held> {
     for (const sql of statements.open) await this.#host.run(sql);
     let engine: QueryEngine | undefined;
+    let users: QueryEngine | undefined;
     try {
       engine = await this.#host.connect();
       for (const sql of [...statements.use, ...statements.fill]) await engine.run(sql, 0);
-      if (made) await made(engine);
+      users = kept(engine);
+      if (made) await made(users, statements.name);
     } catch (e) {
       // a half-made database left behind would be found again by its name: drop it
       if (engine) await engine.close().catch(() => undefined);
       for (const sql of statements.close) await this.#host.run(sql).catch(() => undefined);
       throw e;
     }
-    return { engine, close: statements.close };
+    return { connection: engine, users: users!, close: statements.close };
   }
+}
+
+/** A database held: its connection, the engine its users are given over it, and the statements that drop it. */
+interface Held {
+  readonly connection: QueryEngine;
+  readonly users: QueryEngine;
+  readonly close: readonly string[];
+}
+
+/** A kept database's connection for its users: every call but close, which is the keeper's alone. */
+function kept(engine: QueryEngine): QueryEngine {
+  return {
+    name: engine.name,
+    execute: (...args) => engine.execute(...args),
+    stream: (...args) => engine.stream(...args),
+    run: (...args) => engine.run(...args),
+    close: () => Promise.resolve(),
+  };
 }
 
 /**
