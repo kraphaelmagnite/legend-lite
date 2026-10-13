@@ -162,6 +162,115 @@ class Calls(Served):
         self.assertGreaterEqual(self.server._server.request_queue_size, 128)
 
 
+PARTY = """Class demo::party::Party
+{
+  id: Integer[1];
+  name: String[1];
+}
+
+###Relational
+Database demo::party::PartyDB
+(
+  Schema PARTY
+  (
+    Table PARTY (ID INTEGER PRIMARY KEY, NAME VARCHAR(200))
+  )
+)
+
+###Mapping
+Mapping demo::party::PartyMapping
+(
+  *demo::party::Party: Relational
+  {
+    ~primaryKey ([demo::party::PartyDB] PARTY.PARTY.ID)
+    ~mainTable [demo::party::PartyDB] PARTY.PARTY
+    id: [demo::party::PartyDB] PARTY.PARTY.ID,
+    name: [demo::party::PartyDB] PARTY.PARTY.NAME
+  }
+)
+
+###Connection
+RelationalDatabaseConnection demo::party::Connection
+{
+  store: demo::party::PartyDB;
+  type: DuckDB;
+  specification: DuckDB { };
+  auth: Test;
+}
+
+###Runtime
+Runtime demo::party::Runtime
+{
+  mappings: [demo::party::PartyMapping];
+  connections: [demo::party::PartyDB: [db: demo::party::Connection]];
+}
+
+###Data
+Data demo::party::PartyData
+{
+  Relational
+  #{
+    PARTY.PARTY:
+      'ID,NAME\\n1,Meridian Capital\\n2,Halberd Securities\\n';
+  }#
+}
+"""
+PARTY_QUERY = ('|demo::party::Party.all()->project(~[name: p|$p.name])->sort(~name->ascending())'
+               '->from(demo::party::PartyMapping, demo::party::Runtime)')
+
+
+class ProjectQueries(Served):
+    """A project's query run on Python (PARK-35, docs/ONE_PLATFORM_PROGRAM_2026_10_12.md C5): Query or Studio served
+    here sends a model none of the frames wrote, with its own Data rows; Python makes that project's database inside its
+    DuckDB (the native library's statements), runs the query there on a cursor of its own, and the frames stay as they
+    were."""
+
+    def project_input(self, model=PARTY):
+        return json.dumps({'clientVersion': 'vX_X_X', 'function': ll.parse(PARTY_QUERY),
+                           'model': {'_type': 'text', 'code': model},
+                           'context': {'_type': 'BaseExecutionContext', 'queryTimeOutInSeconds': 60}})
+
+    def test_a_projects_query_answers_its_own_rows(self):
+        status, _, body = self.post('/api/pure/v1/execution/execute', self.project_input())
+        self.assertEqual(status, 200, body)
+        self.assertEqual([r['values'] for r in json.loads(body)['result']['rows']],
+                         [['Halberd Securities'], ['Meridian Capital']])
+        status, _, body = self.post('/api/pure/v1/execution/execute?serializationFormat=ARROW_IPC', self.project_input())
+        self.assertEqual(status, 200, body[:300])
+        self.assertEqual(read_arrow(body).column('name').to_pylist(), ['Halberd Securities', 'Meridian Capital'])
+        # one database for the project, asked twice; beside the frames, which answer as before
+        self.assertEqual(len(self.server.engine.projects.names), 1)
+        _, rows = self.arrow('->select(~[desk])->distinct()->sort(~desk->ascending())')
+        self.assertEqual(rows.column('desk').to_pylist(), ['EQ', 'FX', 'RATES'])
+        # nothing of the project's beside the frames: its table is in its own database alone
+        main = self.frames.connection.execute(
+            "SELECT count(*) FROM duckdb_tables() WHERE database_name = current_database() AND table_name = 'PARTY'")
+        self.assertEqual(main.fetchone()[0], 0)
+
+    def test_each_version_its_own_database(self):
+        later = PARTY.replace('2,Halberd Securities', '3,Kestrel Partners')
+        for model, want in ((PARTY, [['Halberd Securities'], ['Meridian Capital']]),
+                            (later, [['Kestrel Partners'], ['Meridian Capital']]),
+                            (PARTY, [['Halberd Securities'], ['Meridian Capital']])):
+            status, _, body = self.post('/api/pure/v1/execution/execute', self.project_input(model))
+            self.assertEqual(status, 200, body)
+            self.assertEqual([r['values'] for r in json.loads(body)['result']['rows']], want)
+        self.assertEqual(len(self.server.engine.projects.names), 2)
+
+    def test_dropped_when_idle_and_made_again(self):
+        projects = self.server.engine.projects
+        projects._idle = 0.05
+        self.assertEqual(self.post('/api/pure/v1/execution/execute', self.project_input())[0], 200)
+        for _ in range(100):
+            if not projects.names:
+                break
+            time.sleep(0.02)
+        self.assertEqual(projects.names, [])
+        attached = self.frames.connection.execute('SELECT count(*) FROM duckdb_databases() WHERE NOT internal')
+        self.assertEqual(attached.fetchone()[0], 1)
+        self.assertEqual(self.post('/api/pure/v1/execution/execute', self.project_input())[0], 200)
+
+
 class Refusals(Served):
     def error(self, path, body, content_type='application/json'):
         status, headers, raw = self.post(path, body, content_type)

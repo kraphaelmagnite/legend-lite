@@ -42,7 +42,7 @@ import threading
 import traceback
 import queue
 from concurrent.futures import Future
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from types import MappingProxyType
 from typing import Any, NamedTuple, Protocol
 from pathlib import Path
@@ -56,6 +56,7 @@ from . import _json, _planner, compiler, warehouse
 from .compiler import LegendError
 from ._library import library
 from .frames import Frames, UntypedColumn, typed_by_plan
+from .projects import ProjectDatabases
 from ._home import THIS_USER, Settings, home, model_home_folder, pages_folder, queries_folder, store_call
 
 _API = '/api/pure/v1/'
@@ -146,6 +147,18 @@ class _Pool:
 
 _pool: _Pool | None = None
 _pool_lock = threading.Lock()
+
+
+def _request_model(body: str) -> str | None:
+    """The model text an ExecuteInput carries (a PureModelContextText's code), or None for any other: the compiler
+    reads it, and refuses another kind itself (PureV1Api.modelText)."""
+    try:
+        model = json.loads(body).get('model')
+    except (ValueError, AttributeError):
+        return None
+    if isinstance(model, dict) and model.get('_type') == 'text' and isinstance(model.get('code'), str):
+        return model['code']
+    return None
 
 
 def _on_compiler_threads(call: Callable[[], str]) -> str:
@@ -489,6 +502,9 @@ class Engine:
         # the binding's calls on the compiler's threads, never a connection's (warehouse.set_library_thread)
         warehouse.set_library_thread(_on_compiler_threads)
         self.planner = planner if planner is not None else NativePlanner()
+        # a project's own rows, when Query or Studio served here runs one of its queries (PARK-35, C5): each project
+        # version in a database of its own inside the frames' DuckDB, made by the native library's statements
+        self.projects = ProjectDatabases(frames.connection, guard=frames.holding)
         self._pages_folder = Path(pages) if pages is not None else None
         self.site = Path(site).resolve() if site is not None else None
         if self.site is not None and not self.site.is_dir():
@@ -1228,11 +1244,12 @@ class Engine:
         runs); the answer is compressed outside."""
         with self.frames.serving() as models:
             self._noted(models)
-            answer = self.planner.execute_plan(body, list(models.values()))
-            if answer.status != 200:
-                return Answer(answer.status, answer.content_type, answer.body.encode('utf-8'))
-            planned = json.loads(answer.body)
-            rows = self.frames.connection.execute(planned['sql']).to_arrow_table()
+            with self._project_of(body, models) as (served, connection):
+                answer = self.planner.execute_plan(body, served)
+                if answer.status != 200:
+                    return Answer(answer.status, answer.content_type, answer.body.encode('utf-8'))
+                planned = json.loads(answer.body)
+                rows = connection.execute(planned['sql']).to_arrow_table()
         # upstream's headers for this answer (measured, legend-engine 4.145.0)
         return Answer(200, 'application/json', _arrow_ipc(rows, planned['metadata']),
                       {'x-legend-response-format': 'FormatNotSet'})
@@ -1244,13 +1261,30 @@ class Engine:
         is. One query at a time (the frames are held still while it runs)."""
         with self.frames.serving() as models:
             self._noted(models)
-            planned = self.planner.execute_json_plan(body, list(models.values()))
-            if planned.status != 200:
-                return Answer(planned.status, planned.content_type, planned.body.encode('utf-8'))
-            row = self.frames.connection.execute(json.loads(planned.body)['run']).fetchone()
+            with self._project_of(body, models) as (served, connection):
+                planned = self.planner.execute_json_plan(body, served)
+                if planned.status != 200:
+                    return Answer(planned.status, planned.content_type, planned.body.encode('utf-8'))
+                row = connection.execute(json.loads(planned.body)['run']).fetchone()
         wire = row[0] if row is not None and row[0] is not None else ''
         answer = self.planner.execute_json_answer(planned.body, wire)
         return Answer(answer.status, answer.content_type, answer.body.encode('utf-8'))
+
+    @contextlib.contextmanager
+    def _project_of(self, body: str, models: dict[str, str]) -> Iterator[tuple[list[str], Any]]:
+        """Where an execute runs: over the frames' models, on the frames' connection -- or, for a project's model with
+        Data rows (Query's or Studio's, served here: PARK-35), over that model alone, on a cursor of its project's own
+        database (C5). A model neither is stays refused by the compiler, as before (a frame's that changed, say)."""
+        served = list(models.values())
+        model = _request_model(body)
+        if model is None or model in served:
+            yield served, self.frames.connection
+            return
+        with self.projects.using(model) as cursor:
+            if cursor is None:
+                yield served, self.frames.connection
+            else:
+                yield [model], cursor
 
     def _cube(self, query: str) -> Answer:
         """The cube a page shows (DataCube's demo/engine.html, or a notebook's widget): ``table`` (a frame's name), its

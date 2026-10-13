@@ -60,7 +60,7 @@ const engine = spawn(fixture, ['--site', site], {
   env: { ...process.env, LEGEND_LITE_LIBRARY: runfileFromEnv('LEGEND_LITE_LIBRARY'),
     LEGEND_LITE_DATACUBE: runfileFromEnv('LEGEND_LITE_DATACUBE'),
     LEGEND_LITE_DUCKDB_EXTENSIONS: runfileFromEnv('LEGEND_LITE_DUCKDB_EXTENSIONS'), LEGEND_LITE_HOME: home, PYTHONUTF8: '1',
-    LEGEND_LITE_STUDIO_SITE: runfileFromEnv('STUDIO_SITE'),
+    LEGEND_LITE_QUERY_SITE: runfileFromEnv('QUERY_SITE'), LEGEND_LITE_STUDIO_SITE: runfileFromEnv('STUDIO_SITE'),
     PYTHONDONTWRITEBYTECODE: '1' },
 });
 // the engine's own account, in this test's log: a server-side reason is then never invisible
@@ -253,6 +253,42 @@ try {
   console.log(`${inStudio ? 'ok  ' : 'FAIL'} the class opens in Studio, served by the same Python, from the window's link`);
   if (!inStudio) {
     console.log(`  the link: ${studioHref}`);
+    failed = true;
+  }
+
+  // A PROJECT'S QUERY ON PYTHON (PARK-35, docs/ONE_PLATFORM_PROGRAM_2026_10_12.md C5): Studio's demo projects loaded
+  // into Python's repository (Studio served by Python), then Query served by Python opens the party project by name
+  // and runs a query over it -- its rows the project's own Data rows, in the project's database inside Python's
+  // DuckDB, as a tab's Query answers them (site/verify.mjs: 5 parties, Banque Lumière among them)
+  const token = served.authorization.replace(/^Bearer /, '');
+  const demo = await browser.newPage();
+  demo.on('pageerror', (e) => { console.log(`studio error: ${e.message}`); failed = true; });
+  await demo.goto(`${origin}/studio/demo/index.html?token=${token}#/`);
+  await demo.getByRole('button', { name: 'Load demo projects' }).click({ timeout: 60_000 });
+  const published = await demo.waitForFunction(() => /Demo projects published/.test(
+    document.querySelector('[data-testid=demo-status]')?.textContent ?? ''), undefined, { timeout: 180_000 }).then(() => true, () => false);
+  await demo.close();
+  let partyRows = '';
+  if (published) {
+    const enc = encodeURIComponent;
+    const q = await browser.newPage();
+    q.on('pageerror', (e) => { console.log(`query error: ${e.message}`); failed = true; });
+    await q.goto(`${origin}/query/demo/index.html?token=${token}#/create/manual/${enc('org.finos.lite.demo:party:master-SNAPSHOT')}`
+      + `/${enc('demo::party::PartyMapping')}/${enc('demo::party::Runtime')}?class=${enc('demo::party::Party')}`);
+    await q.waitForSelector('.q-node', { timeout: 120_000 });
+    for (const property of ['Name', 'Country']) await q.dblclick(`.q-node:has-text('${property}')`);
+    await q.click('button.q-run');
+    await q.waitForFunction(() => document.querySelector('.q-error-box')
+      || /\d+ rows? in \d+ ms/.test(document.querySelector('.q-results-bar')?.textContent ?? ''), undefined, { timeout: 120_000 });
+    const refused = await q.$('.q-error-box');
+    partyRows = refused ? `refused: ${await refused.textContent()}`
+      : `${await q.locator('.q-results-bar').textContent()} | ${(await q.$$eval('.q-grid tbody tr', (trs) => trs.map((tr) => tr.textContent ?? ''))).join(' | ')}`;
+    await q.close();
+  }
+  const ranOnPython = /(^|\D)5 rows? in/.test(partyRows) && partyRows.includes('Banque Lumière');
+  console.log(`${ranOnPython ? 'ok  ' : 'FAIL'} a project loaded in Studio on Python runs in Query on Python, on its own rows (5 parties)`);
+  if (!ranOnPython) {
+    console.log(`  published: ${published}; Query showed: ${partyRows.slice(0, 400)}`);
     failed = true;
   }
   if (classShown) {

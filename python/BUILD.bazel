@@ -496,6 +496,8 @@ copy_to_directory(
     name = "wheel_query_site",
     srcs = ["//query:site"],
     out = "legend_lite/_apps/query",
+    # //datacube:python_engine_test serves it beside DataCube's page: a project loaded in Studio runs there (C5)
+    visibility = ["//datacube:__pkg__"],
     exclude_srcs_patterns = _APP_SITE_LEFT_OUT,
     root_paths = ["query"],
 )

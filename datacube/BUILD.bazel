@@ -965,6 +965,7 @@ browser_test(
         ":upstream_arrow_answer",
         "//native:compiler",
         "//python:wheel_duckdb",
+        "//python:wheel_query_site",
         "//python:wheel_studio_site",
         "//warehouse:duckdb_library",
         "//warehouse:server_native",
@@ -981,7 +982,9 @@ browser_test(
         "LEGEND_LITE_LIBRARY": "$(rlocationpath //native:compiler)",
         "PYTHON_ENGINE_PAGE": "$(rlocationpath :python_engine_page)",
         "UPSTREAM_ARROW_ANSWER": "$(rlocationpath :upstream_arrow_answer)",
-        # Studio as the wheel ships it, served by Python's engine (E): a class made on Python's page opens there
+        # Query and Studio as the wheel ships them, served by Python's engine (E): a class made on Python's page opens
+        # in Studio; Studio's demo projects, loaded there, open in Query by name and run on their own rows (C5)
+        "QUERY_SITE": "$(rlocationpath //python:wheel_query_site)",
         "STUDIO_SITE": "$(rlocationpath //python:wheel_studio_site)",
         # a warehouse the page reads through Python (C3), as live_snap_test starts it
         "WAREHOUSE_BINARY": "$(rlocationpath //warehouse:server_native)",
