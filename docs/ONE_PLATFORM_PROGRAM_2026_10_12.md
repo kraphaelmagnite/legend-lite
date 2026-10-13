@@ -949,6 +949,55 @@ see; Snap's preflight against a Postgres catalog (the warehouse's lane).
   of a wrong answer anyone met: Postgres before 16 requires a subquery's alias, but the warehouse refuses a Postgres
   older than 16 (`warehouse/.../server/Postgres.java`, `MIN_SERVER_VERSION_NUM`), and 16 accepts the old spelling.
 
+#### D5b. No SQL carried by a host (D5's follow-up)
+
+D5 took every statement the tab and Python's host spelled and made it a named operation the planner answers. It left
+three operation fields that carry SQL in from the host -- a source query, a copy's select list, a column's conversion --
+each the planner's own text, handed back (the user, 2026-10-13: "obviously all of those should just be again pure
+queries not sql queries -- at least the snap ones for sure"). D5b's rule: **a host never passes SQL into a planner
+question; it runs the statements the planner answers, as given.** Then no operation has a field that holds SQL, and
+nothing needs marking.
+
+**The design.**
+1. **Snap is Pure, one planner question.** Today the tab's Snap plans the cube's pull, then sends the plan's SQL back
+   to be counted and copied (`snap.ts`); Python's does the same inside the host (`engine.py` `_warehouse_snap`). Both
+   ask instead one question, `snap` (Boundary, its native twin), with data only:
+   - asked: the cube's model and its live runtime, the pull (the Pure lambda: the source's every column), the live
+     database's type, the copy's store's type (the tab's DuckDB, Python's), the copy's name (database, schema, table)
+     and, for a copy that converts, the source table's catalog columns (what the table model is written from);
+   - answered: the pull (a plan, typed, as every plan is), the count in the live database's own SQL, the copy's
+     statements in the store's (its schema made, the table there dropped, the copy made from the pulled rows, each
+     conversion the planner's own), and the landing's drop.
+   The tab's `SnapManager.snap` takes the Pure pull (as `HostSnaps` already does: the page sends Pure, R4); the split
+   between the two (where the copy lives) stays.
+2. **A table's conversions are a statement the planner writes whole.** The table-model answer (`Boundary.tableModel`,
+   `compiler.table_model`) already knows the table's name and database type; it answers `rebuild` -- the statements
+   that rebuild the table with its conversions, none when nothing converts -- in place of `copySelectList` and the
+   conversions' SQL. An upload (`upload.ts`) and a Python frame (`frames.py`) run `rebuild`; Snap's conversions are
+   its own question's (1).
+3. **The operations lose their SQL fields.** `HostOperation.Source.Query`, `MakeRelation.selectList`,
+   `MakeRelation.replacing` and `Conversion` go, with their JSON (`HostOperationsJson`), types (`host-operations.ts`)
+   and Python's twin; a test holds that no operation record has a field that holds SQL. The guard's note about the
+   three fields goes from `host_sql.txt`.
+4. **The warehouse's fixture is loaded by whoever starts the warehouse.** Query's page runs a SQL file on the warehouse
+   at sign-in (`config-warehouse.json` `seed`, `main.ts` `seed()`): the page running SQL. Query's browser test loads
+   the fixture as the warehouse's owner before its warehouse suite (as DataCube's live-snap page does), and the page's
+   `seed` and the config's go. A person pointing Query at a warehouse brings one with data (the README says how to load
+   the demo's).
+5. **Dead output goes.** The planner's test-data answer drops what nothing reads since D5 (`table`, `columns[].sql`).
+6. **C5's measurements, owed:** a demo project's fill, the first and the repeated query, on Python and in the tab, and
+   legend-lite's server with several projects open -- committed under the program's evidence.
+
+**Not in D5b:** a project's database on Postgres or another database (C5's refusal stands); a query mixing a project's
+rows with a person's own tables; the warehouse's own SQL (D4) and core's hand-written test SQL (the dialect program's).
+
+**Proof.** Snap's tests on every plane (`//engine-client:snap_test`, `//datacube:live_snap_test`, Python's engine test of
+a warehouse table's snap), the uploads' and frames' tests, Query's browser test on the warehouse, the guard, the new
+no-SQL-field test; the warehouse lane on all three platforms.
+
+**Reviews:** Plan Gen (the `snap` question, the table-model answer), the Compiler Rewrite line (core, the BUILD files),
+the Studio line (engine-client, Query), an audit. Announced in IN_FLIGHT before its core files land.
+
 #### C4. The small copies
 
 - One table of the site's file types, which Python reads.
