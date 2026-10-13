@@ -102,7 +102,7 @@ async function boot(): Promise<void> {
     let runner: QueryEngine;
     if (exec.kind === 'duckdb-wasm') {
       starting('Starting DuckDB in this tab');
-      const tab = await startDuckDbInTab('./vendor/', (databaseType) => planner!.sessionSetup(databaseType));
+      const tab = await startDuckDbInTab('./vendor/', planner!);
       // a project opened by name brings its own rows, in a database of its own here (C5): the screens run on `runner`,
       // pointed there as it opens (AppContext.activate)
       const projectRunner = new ProjectRunner(tab.engine);

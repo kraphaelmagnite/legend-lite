@@ -28,6 +28,7 @@ KINDS: dict[str, tuple[str, Callable[[dict[str, Any]], tuple[str, ...]]]] = {
     'testData': ('lite_test_data_sql', lambda m: (m['model'], m['database'], m['tables'])),
     'sessionSetup': ('lite_session_setup', lambda m: (m['databaseType'],)),
     'projectData': ('lite_project_data', lambda m: (m['model'], m['databaseType'])),
+    'hostOperations': ('lite_host_operations', lambda m: (m['databaseType'], m['operations'])),
     'warm': ('lite_warm_model', lambda m: (m['model'],)),
 }
 

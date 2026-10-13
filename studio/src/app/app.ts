@@ -112,8 +112,7 @@ function serverSession(api: string, user: string): RunSession & BuilderSession {
 function inTabSession(grammar: WasmGrammar, duckdbVendor: string, user: string): RunSession & BuilderSession {
   type Started = { engine: BrowserEngine; sql: QueryEngine; tables: TabTables };
   let started: Promise<Started> | undefined;
-  const start = (): Promise<Started> => (started ??= startDuckDbInTab(duckdbVendor,
-    (databaseType) => grammar.sessionSetup(databaseType))
+  const start = (): Promise<Started> => (started ??= startDuckDbInTab(duckdbVendor, grammar)
     .then((tab) => {
       // the workspace's model in a database of its own inside the tab's DuckDB (C5): every screen runs on `runner`,
       // pointed there as the model loads

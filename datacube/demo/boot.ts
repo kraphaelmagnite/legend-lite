@@ -312,7 +312,13 @@ async function startPage(makePlanner: MakePlanner, settled: { show: (reason: str
   // session set up by the planner's rules before anything uses it. So the database is ready once the planner is too:
   // DuckDB's start still overlaps the planner's (above), but the sample's rows and a remote mount below come after
   // both -- before a value is written, the session is the planner's (C1), not the browser's zone.
-  const duck = await startDuckDbInTab('./vendor/', (databaseType) => engineReady.then((p) => p.tables.sessionSetup(databaseType)));
+  // the planner's, as it arrives: the extension folder, the session, and the page's host operations (D5)
+  const planned = {
+    sessionSetup: (databaseType: string) => engineReady.then((p) => p.tables.sessionSetup(databaseType)),
+    hostOperations: (databaseType: string, operations: Parameters<TableModels['hostOperations']>[1]) =>
+      engineReady.then((p) => p.tables.hostOperations(databaseType, operations)),
+  };
+  const duck = await startDuckDbInTab('./vendor/', planned);
   performance.mark('dc:database-ready');
 
   // A REMOTE SOURCE, when one is named.
@@ -333,7 +339,7 @@ async function startPage(makePlanner: MakePlanner, settled: { show: (reason: str
   if (start.kind === 'sample' && remote) {
     status.textContent = `mounting ${remote}…`;
     const format = params.get('format');
-    await mountRemote(duck.engine, {
+    await mountRemote(duck.engine, planned, {
       sources: [{
         name: 'trades',
         url: remote,

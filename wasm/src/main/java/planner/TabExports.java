@@ -130,6 +130,12 @@ public final class TabExports {
         return Folded.of(() -> Boundary.sessionSetup(databaseType));
     }
 
+    /** {@link Boundary#hostOperations}. */
+    @JSExport
+    public static String hostOperationsOrError(String databaseType, String operationsJson) {
+        return Folded.of(() -> Boundary.hostOperations(databaseType, operationsJson));
+    }
+
     /** {@link Boundary#projectData}. */
     @JSExport
     public static String projectDataOrError(String model, String databaseType) {

@@ -332,6 +332,21 @@ public final class Boundary {
     }
 
     /**
+     * A host's named operations on its own database of the given type (docs/ONE_PLATFORM_PROGRAM_2026_10_12.md D5,
+     * {@code com.legend.sql.dialect.HostOperations}): {@code operationsJson} a JSON array of them (planner's
+     * HostOperationsJson reads it), answered {@code [[statement, ...], ...]}, one list per operation, in order -- what
+     * the tab and Python's host run instead of spelling SQL. An operation the database has not is refused by name.
+     */
+    public static String hostOperations(String databaseType, String operationsJson) {
+        com.legend.sql.dialect.HostOperations host = com.legend.sql.dialect.HostOperations.of(dialectOf(databaseType));
+        java.util.List<Object> out = new java.util.ArrayList<>();
+        for (com.legend.sql.dialect.HostOperation op : HostOperationsJson.read(operationsJson)) {
+            out.add(host.statements(op));
+        }
+        return com.legend.json.Json.toCompact(out);
+    }
+
+    /**
      * A project's own database on a database of the given type (docs/ONE_PLATFORM_PROGRAM_2026_10_12.md C5,
      * {@code com.legend.setup.ProjectData}): where {@code model}'s Data rows live on a host, named by what it holds
      * (the model's Databases and Data rows). {@code {"name", "open", "use", "fill", "close"}}, each but the name the

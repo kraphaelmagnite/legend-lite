@@ -265,6 +265,8 @@ _WASM_TESTS = [
     "model-join",
     # the model's routes, asked of the tab's module (docs/DATACUBE_MODEL_DESIGN_2026_10_10.md §15.6a)
     "model-route",
+    # a remote file's operations, their statements the planner's (docs/ONE_PLATFORM_PROGRAM_2026_10_12.md D5)
+    "remote",
 ]
 
 # node:test files, each its own node_test (tools/js/defs.bzl: types stripped, the spec and strict reporters, a

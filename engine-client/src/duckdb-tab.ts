@@ -8,6 +8,7 @@ import * as duckdb from './duckdb-wasm.ts';
 import { DuckDbEngine, type ArrowishConnection } from './duckdb.ts';
 import { setUpSession } from './engine.ts';
 import type { FileSink } from './model-data.ts';
+import { runHostOperations, type HostOperationsSource } from './host-operations.ts';
 
 export interface DuckDbInTab {
   readonly engine: DuckDbEngine;
@@ -22,23 +23,27 @@ export interface DuckDbInTab {
   connect(): Promise<DuckDbEngine>;
 }
 
-/**
- * The tab's DuckDB loads its extensions from `repository` -- the site's own (vendor/duckdb-extensions/, beside its
- * DuckDB files: //engine-client:duckdb_extensions, pinned in MODULE.bazel), in the layout DuckDB asks a repository for
- * -- never from extensions.duckdb.org. Before anything loads one: the session's time zone loads ICU (setUpSession).
- */
-async function ownExtensions(engine: Pick<DuckDbEngine, 'run'>, repository: string): Promise<void> {
-  const at = `'${repository.replace(/'/g, "''")}'`;
-  await engine.run(`SET custom_extension_repository = ${at}`, 0);
-  await engine.run(`SET autoinstall_extension_repository = ${at}`, 0);
+/** What the tab's DuckDB is set up by: legend-lite's planner (WasmGrammar, DataCube's LitePlanner). */
+export interface TabDuckDbPlanner extends HostOperationsSource {
+  /** The planner's session setup for a database's type (Boundary.sessionSetup: a DuckDB session in UTC). */
+  sessionSetup(databaseType: string): Promise<readonly string[]>;
 }
 
 /**
- * `vendor`: the URL of the folder holding duckdb-{mvp,eh}.wasm and their workers. `setup`: the planner's session setup
- * for a database's type (WasmGrammar's sessionSetup), run on the connection before it is handed out.
+ * The tab's DuckDB loads its extensions from `repository` -- the site's own (vendor/duckdb-extensions/, beside its
+ * DuckDB files: //engine-client:duckdb_extensions, pinned in MODULE.bazel), in the layout DuckDB asks a repository for
+ * -- never from extensions.duckdb.org; the statements the planner's (a host operation, D5). Before anything loads one:
+ * the session's time zone loads ICU (setUpSession).
  */
-export async function startDuckDbInTab(vendor: string,
-  setup: (databaseType: string) => Promise<readonly string[]>): Promise<DuckDbInTab> {
+async function ownExtensions(engine: DuckDbEngine, planner: HostOperationsSource, repository: string): Promise<void> {
+  await runHostOperations(planner, engine, [{ op: 'extensionRepository', url: repository }]);
+}
+
+/**
+ * `vendor`: the URL of the folder holding duckdb-{mvp,eh}.wasm and their workers. `planner`: what sets up each
+ * connection before it is handed out -- the extension folder, then the session (WasmGrammar's sessionSetup).
+ */
+export async function startDuckDbInTab(vendor: string, planner: TabDuckDbPlanner): Promise<DuckDbInTab> {
   // absolute URLs: the worker resolves its module against its own location, not the page's
   const asset = (f: string): string => new URL(f, new URL(vendor, globalThis.location.href)).href;
   const bundle = await duckdb.selectBundle({
@@ -50,8 +55,8 @@ export async function startDuckDbInTab(vendor: string,
   // every connection set up alike: a setting of DuckDB's may be a session's, so none is left to the first's
   const connect = async (): Promise<DuckDbEngine> => {
     const connection = new DuckDbEngine((await db.connect()) as unknown as ArrowishConnection);
-    await ownExtensions(connection, asset('duckdb-extensions'));
-    await setUpSession(connection, setup);
+    await ownExtensions(connection, planner, asset('duckdb-extensions'));
+    await setUpSession(connection, (databaseType) => planner.sessionSetup(databaseType));
     return connection;
   };
   const engine = await connect();

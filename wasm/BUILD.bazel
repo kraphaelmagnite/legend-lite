@@ -28,6 +28,7 @@ legend_java_library(
     srcs = [
         "src/main/java/planner/Boundary.java",
         "src/main/java/planner/Folded.java",
+        "src/main/java/planner/HostOperationsJson.java",
     ],
     visibility = ["//native:__pkg__"],
     deps = [

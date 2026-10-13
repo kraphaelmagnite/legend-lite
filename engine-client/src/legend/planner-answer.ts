@@ -25,6 +25,7 @@ export interface PlannerModule {
     testDataSqlOrError(model: string, database: string, tablesJson: string): string;
     sessionSetupOrError(databaseType: string): string;
     projectDataOrError(model: string, databaseType: string): string;
+    hostOperationsOrError(databaseType: string, operations: string): string;
     warmModelOrError(model: string): string;
   };
 }
@@ -46,6 +47,7 @@ export function answer(m: PlannerModule, r: RequestBody): string {
     case 'testData': return m.exports.testDataSqlOrError(r.model, r.database, r.tables);
     case 'sessionSetup': return m.exports.sessionSetupOrError(r.databaseType);
     case 'projectData': return m.exports.projectDataOrError(r.model, r.databaseType);
+    case 'hostOperations': return m.exports.hostOperationsOrError(r.databaseType, r.operations);
     case 'warm': return m.exports.warmModelOrError(r.model);
   }
 }

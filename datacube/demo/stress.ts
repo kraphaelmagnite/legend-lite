@@ -74,7 +74,7 @@ async function boot() {
   const { planner, models, tables } = await plannerFor(chosenPlane(), '');
   if (!models) throw new Error('the chosen planner cannot take a file\'s model');
   // the one start of a tab's DuckDB (engine-client's startDuckDbInTab), set up by that planner's rules
-  const { db, engine } = await startDuckDbInTab('./vendor/', (databaseType) => tables.sessionSetup(databaseType));
+  const { db, engine } = await startDuckDbInTab('./vendor/', tables);
   return { db, engine, planner, models, tables };
 }
 

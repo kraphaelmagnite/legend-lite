@@ -219,6 +219,13 @@ def session_setup(database_type: str) -> list[str]:
     return _json.loads(_answer(library().call('lite_session_setup', database_type)))
 
 
+def host_operations(database_type: str, operations: list[dict[str, Any]]) -> list[list[str]]:
+    """A host's named operations on its own database of the given type (docs/ONE_PLATFORM_PROGRAM_2026_10_12.md D5):
+    each operation's statements, in order -- what Python's host runs instead of spelling SQL (engine-client's
+    host-operations.ts writes the same operations). One the database has not is refused by name."""
+    return _json.loads(_answer(library().call('lite_host_operations', database_type, _json.dumps(operations))))
+
+
 def project_data(model: str, database_type: str) -> dict[str, Any]:
     """A project's own database on a database of the given type (docs/ONE_PLATFORM_PROGRAM_2026_10_12.md C5): where
     ``model``'s Data rows live on this host, named by what it holds (the model's Databases and Data rows: an edited row

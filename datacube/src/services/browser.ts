@@ -135,7 +135,7 @@ function tabDatabase(duck: { readonly engine: DuckDbEngine; readonly db: AsyncDu
   const { engine, db } = duck;
   return {
     ingestFile: (file, options) => ingestFile(engine, db, file, tables, options),
-    forgetFile: (fileName, table) => forgetUpload(engine, db, fileName, table),
+    forgetFile: (fileName, table) => forgetUpload(engine, tables, db, fileName, table),
     mountRemote: (url, s3, name) => mountRemoteView(engine, tables, { url, name, ...(s3 ? { s3 } : {}) }),
   };
 }

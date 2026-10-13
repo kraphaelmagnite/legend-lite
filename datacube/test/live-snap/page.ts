@@ -159,7 +159,7 @@ async function run(): Promise<void> {
   window.__liveSnapStage = 'starting the tab\'s DuckDB';
   const worker = new URL('planner-worker.js', location.href).href;
   const planner = new LitePlanner({ model: MODEL, runtime: RUNTIME, workerUrl: worker });
-  const local: DuckDbEngine = (await startDuckDbInTab('vendor/', (databaseType) => planner.sessionSetup(databaseType))).engine;
+  const local: DuckDbEngine = (await startDuckDbInTab('vendor/', planner)).engine;
 
   await check('every cube case answers the same live on the warehouse and snapped in the tab', async () => {
     const liveRunner = new PlanThenRun(planner, live);

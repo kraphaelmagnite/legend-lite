@@ -242,6 +242,19 @@ public final class Compiler {
         return answer(a);
     }
 
+    /** A host's named operations on its own database of the given type ({@code Boundary.hostOperations}). */
+    @CEntryPoint(name = "lite_host_operations")
+    static CCharPointer hostOperations(IsolateThread thread, CCharPointer databaseType, CCharPointer operations) {
+        String a;
+        try {
+            String d = text(databaseType), o = text(operations);
+            a = Folded.of(() -> Boundary.hostOperations(d, o));
+        } catch (Throwable failure) {
+            a = Folded.failure(failure);
+        }
+        return answer(a);
+    }
+
     /** A project's own database on a database of the given type ({@code Boundary.projectData}). */
     @CEntryPoint(name = "lite_project_data")
     static CCharPointer projectData(IsolateThread thread, CCharPointer model, CCharPointer databaseType) {

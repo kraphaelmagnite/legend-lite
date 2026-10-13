@@ -276,8 +276,9 @@ describe('an upload overtaken before it was used is forgotten', () => {
   it('drops its table and lets go of its file bytes', async () => {
     const sql: string[] = [];
     const dropped: string[] = [];
-    const engine = { run: async (q: string) => { sql.push(q); return { columns: [], rowCount: 0 }; } } as unknown as QueryEngine;
-    await forgetUpload(engine, {
+    const engine = { databaseType: 'DuckDB', run: async (q: string) => { sql.push(q); return { columns: [], rowCount: 0 }; } } as unknown as
+      QueryEngine & { readonly databaseType: string };
+    await forgetUpload(engine, writer, {
       registerFileText: async () => {},
       registerFileBuffer: async () => {},
       dropFile: async (name) => { dropped.push(name); },

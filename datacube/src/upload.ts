@@ -8,7 +8,8 @@ import type { RawTable } from '../../engine-client/src/engine.ts';
 import type { DuckDbEngine } from '../../engine-client/src/duckdb.ts';
 import type { Scalar } from '../../engine-client/src/result.ts';
 import type { CatalogColumn, InferredModel, TableModels } from './infer.ts';
-import { mountRemote, sqlLiteral, type S3Credentials } from './remote.ts';
+import { mountRemote, type S3Credentials } from './remote.ts';
+import { runHostOperations } from '../../engine-client/src/host-operations.ts';
 
 /**
  * The duckdb-wasm surface used here.
@@ -32,10 +33,6 @@ export interface UploadResult extends InferredModel {
 }
 
 /** DuckDB's identifier quoting: the doubled quote, not a backslash. */
-function dq(name: string): string {
-  return `"${name.replace(/"/g, '""')}"`;
-}
-
 /**
  * Guess by extension; the picker allows only these. JSON covers both a
  * document holding an array of records and newline-delimited records
@@ -78,10 +75,11 @@ export function tableNameOf(fileName: string): string {
  * file's bytes go, so an open abandoned half-way leaves nothing held in the tab. The caller
  * makes sure no cube reads a table of the same name.
  */
-export async function forgetUpload(engine: QueryEngine, db: DuckDbFiles, fileName: string,
+export async function forgetUpload(engine: QueryEngine & { readonly databaseType: string }, models: TableModels,
+  db: DuckDbFiles, fileName: string,
   // the table it was read into, when not the file's own name (`ingestFile`'s `table`)
   table = tableNameOf(fileName)): Promise<void> {
-  await dropFileTable(engine, table);
+  await dropFileTable(engine, models, table);
   await db.dropFile?.(uploadFileName(table, fileName));
 }
 
@@ -302,18 +300,6 @@ export async function readFileInto(
 ): Promise<UploadResult> {
   const { table } = file;
   const format = formatOf(file.fileName);
-  const at = sqlLiteral(file.at);
-  const reader = format === 'parquet'
-    ? `read_parquet(${at})`
-    : format === 'json'
-      // Each record's top-level keys become columns; anything nested
-      // below them arrives as a STRUCT or a LIST, kept as it is (a Variant).
-      ? `read_json(${at}, auto_detect=true)`
-      // AUTO_DETECT sniffs delimiter, quoting and types. Upstream's
-      // DataCube requires a header row and comma delimiters; DuckDB's
-      // sniffer handles more than that, so there is no reason to
-      // impose the narrower rule.
-      : `read_csv(${at}, AUTO_DETECT=TRUE, HEADER=TRUE)`;
 
   // The user's own column names, unchanged. An earlier version
   // renamed anything that was not a plain identifier, because a
@@ -323,13 +309,14 @@ export async function readFileInto(
   // against a bare reference -- and both are fixed there now, so
   // mangling the user's headers to route around them would be
   // keeping a workaround that has outlived its bug.
-  // Quote the table name: it comes from a FILENAME, and `pivot.csv`
-  // produced `CREATE OR REPLACE TABLE pivot AS …`, which is a syntax
-  // error because pivot is reserved in DuckDB. tableNameOf already
-  // strips it to [A-Za-z0-9_], so quoting is all that is left.
-  const qt = dq(table);
-  await engine.run(
-    `CREATE OR REPLACE TABLE ${qt} AS SELECT * FROM ${reader}`, 0);
+  // The table's name is a person's (from a FILENAME: `pivot.csv` is a reserved word in DuckDB), so the planner quotes
+  // it; the file read by its format -- a CSV sniffed with a header, Parquet, JSON with each record's keys its columns
+  // (anything nested below them a STRUCT or a LIST, kept: a Variant).
+  const target = { name: table };
+  await runHostOperations(models, engine, [{
+    op: 'relation', kind: 'table', target, replace: true,
+    from: { file: { at: file.at, format: format === 'parquet' ? 'parquet' : format === 'json' ? 'json' : 'csv' } },
+  }]);
 
   // legend-lite's writer reads the catalog's types and says which columns the
   // table must convert to hold what the model declares: a TIMESTAMPTZ its UTC
@@ -341,11 +328,13 @@ export async function readFileInto(
     { table, convertible: true, databaseType: engine.databaseType });
   if (inferred.conversions.length > 0) {
     // the writer's own select list: each conversion under its column's name (CatalogModel.copySelectList)
-    await engine.run(`CREATE OR REPLACE TABLE ${qt} AS SELECT ${inferred.copySelectList} FROM ${qt}`, 0);
+    await runHostOperations(models, engine, [{
+      op: 'relation', kind: 'table', target, replace: true, selectList: inferred.copySelectList, from: { relation: target },
+    }]);
   }
 
-  const counted = await engine.run(
-    `SELECT count(*) AS n FROM ${qt}`, 0);
+  const [count] = await models.hostOperations(engine.databaseType, [{ op: 'count', from: { relation: target } }]);
+  const counted = await engine.run(count![0]!, 0);
   const rowCount = Number(counted.columns[0]?.values[0] ?? 0);
 
   return {
@@ -363,15 +352,16 @@ export async function readFileInto(
  */
 export async function mountRemoteView(engine: DuckDbEngine, models: TableModels,
   file: { readonly url: string; readonly s3?: S3Credentials; readonly name: string }): Promise<InferredModel> {
-  await mountRemote(engine, { sources: [{ name: file.name, url: file.url }], ...(file.s3 ? { s3: file.s3 } : {}) });
+  await mountRemote(engine, models, { sources: [{ name: file.name, url: file.url }], ...(file.s3 ? { s3: file.s3 } : {}) });
   return models.tableModel(await catalogColumns(engine, models, file.name), {
     table: file.name, convertible: false, databaseType: engine.databaseType,
   });
 }
 
 /** A file's table dropped: its name is free again (the caller lets go of the file itself, where it keeps one). */
-export async function dropFileTable(engine: QueryEngine, table: string): Promise<void> {
-  await engine.run(`DROP TABLE IF EXISTS ${dq(table)}`, 0);
+export async function dropFileTable(engine: QueryEngine & { readonly databaseType: string }, models: TableModels,
+  table: string): Promise<void> {
+  await runHostOperations(models, engine, [{ op: 'drop', kind: 'table', target: { name: table } }]);
 }
 
 /**

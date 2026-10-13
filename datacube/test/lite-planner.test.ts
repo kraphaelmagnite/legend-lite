@@ -58,6 +58,7 @@ function fakeExports(
     testDataSqlOrError: () => 'ERR\nfake\nnot in this fake',
     sessionSetupOrError: () => 'ERR\nfake\nnot in this fake',
     projectDataOrError: () => 'ERR\nfake\nnot in this fake',
+    hostOperationsOrError: () => 'ERR\nfake\nnot in this fake',
     planJsonOrError: () => 'ERR\nfake\nnot in this fake',
     executeJsonPlanOrError: () => 'ERR\nfake\nnot in this fake',
     executeJsonAnswerOrError: () => 'ERR\nfake\nnot in this fake',

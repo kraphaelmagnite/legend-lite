@@ -13,7 +13,9 @@
 
 import type { DuckDbEngine } from '../../engine-client/src/duckdb.ts';
 import { startDuckDbInTab } from '../../engine-client/src/duckdb-tab.ts';
+import type { TableModels } from '../src/infer.ts';
 import { mountRemote, type RemoteSource } from '../src/remote.ts';
+import { plannerFor } from './planners.ts';
 
 declare global {
   interface Window {
@@ -21,16 +23,18 @@ declare global {
   }
 }
 
-async function boot(): Promise<DuckDbEngine> {
-  // the one start of a tab's DuckDB (engine-client's startDuckDbInTab); no planner here, so no session to set up
-  return (await startDuckDbInTab('./vendor/', async () => [])).engine;
+async function boot(): Promise<{ readonly engine: DuckDbEngine; readonly tables: TableModels }> {
+  // the tab's planner: it writes the tab's DuckDB's set-up and the mount's statements (D5); the one start of a tab's
+  // DuckDB (engine-client's startDuckDbInTab)
+  const { tables } = await plannerFor('local', '');
+  return { engine: (await startDuckDbInTab('./vendor/', tables)).engine, tables };
 }
 
 const ready = boot();
 
 window.remoteTest = async (source: RemoteSource) => {
-  const engine = await ready;
-  await mountRemote(engine, { sources: [source] });
+  const { engine, tables } = await ready;
+  await mountRemote(engine, tables, { sources: [source] });
 
   // The shape the planner emits: a grouped aggregate over the table
   // NAME, with no idea the rows are coming over the network.

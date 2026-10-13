@@ -2,7 +2,8 @@
 //
 // These test the STATEMENTS, because that is the part with decisions
 // in it: which extension is loaded, how a URL is escaped, whether a
-// credential can escape into an error message. Whether the bytes
+// credential can escape into an error message. The page names the
+// operations (remote.ts) and legend-lite's planner writes them (D5). Whether the bytes
 // actually arrive is proved in the browser, in verify-remote.mjs -- the
 // node build of duckdb-wasm does not make real HTTP requests (it
 // answers a synthetic 404), so a node test claiming to have fetched
@@ -10,20 +11,37 @@
 
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
+import { plannerOptions } from '#test-host';
 
+import type { HostOperation } from '../../engine-client/src/host-operations.ts';
 import type { ResultTable } from '../../engine-client/src/result.ts';
+import { LitePlanner } from '../src/lite-planner.ts';
 import {
+  credentialOperations,
   credentialScope,
-  credentialStatements,
   inferFormat,
+  mountOperations,
   mountRemote,
-  mountStatements,
   redactSecrets,
-  scanExpression,
-  sqlLiteral,
-  viewStatement,
+  viewOperation,
+  type RemoteOptions,
+  type RemoteSource,
+  type S3Credentials,
 } from '../src/remote.ts';
 import { FakeEngine } from './fake-engine.ts';
+
+/** legend-lite's planner, which writes each operation's statements (D5): the module in-thread, or Python's library in
+ *  the headless lane -- the statements under test are the platform's, as every host runs them. */
+const planner = new LitePlanner({ model: '', runtime: '', ...plannerOptions(), cache: false });
+const statements = async (operations: readonly HostOperation[]): Promise<string[]> =>
+  (await planner.hostOperations('DuckDB', operations)).flat();
+const viewStatement = async (source: RemoteSource): Promise<string> => (await statements([viewOperation(source)]))[0]!;
+/** A view's scan: what it reads its rows from. */
+const scanExpression = async (source: RemoteSource): Promise<string> =>
+  (await viewStatement(source)).replace(/^.* AS SELECT \* FROM /, '');
+const credentialStatements = (creds: S3Credentials | undefined, source: { readonly name: string; readonly url: string }): Promise<string[]> =>
+  statements(credentialOperations(creds, source));
+const mountStatements = (options: RemoteOptions): Promise<string[]> => statements(mountOperations(options));
 
 const empty = (epoch: number): ResultTable => ({
   columns: [],
@@ -34,6 +52,7 @@ const empty = (epoch: number): ResultTable => ({
 
 class RecordingEngine extends FakeEngine {
   readonly name = 'recording';
+  readonly databaseType = 'DuckDB';
   readonly sql: string[] = [];
   failOn?: RegExp;
   async answer(sql: string, epoch: number): Promise<ResultTable> {
@@ -72,59 +91,58 @@ describe('choosing a format', () => {
 });
 
 describe('the scan expression', () => {
-  it('uses the right reader per format', () => {
+  it('uses the right reader per format', async () => {
     assert.match(
-      scanExpression({ name: 't', url: 'https://x/y.parquet' }),
+      await scanExpression({ name: 't', url: 'https://x/y.parquet' }),
       /^read_parquet\('https:\/\/x\/y\.parquet'\)$/,
     );
     assert.match(
-      scanExpression({ name: 't', url: 'https://x/y.csv' }),
+      await scanExpression({ name: 't', url: 'https://x/y.csv' }),
       /^read_csv_auto\(/,
     );
     assert.match(
-      scanExpression({ name: 't', url: 's3://b/t', format: 'iceberg' }),
+      await scanExpression({ name: 't', url: 's3://b/t', format: 'iceberg' }),
       /^iceberg_scan\('s3:\/\/b\/t'\)$/,
     );
   });
 
-  it('strips the iceberg marker from the URL it passes on', () => {
+  it('strips the iceberg marker from the URL it passes on', async () => {
     assert.equal(
-      scanExpression({ name: 't', url: 's3://b/t#iceberg' }),
+      await scanExpression({ name: 't', url: 's3://b/t#iceberg' }),
       "iceberg_scan('s3://b/t')",
     );
   });
 
-  it('escapes a quote in the URL by doubling it', () => {
+  it('escapes a quote in the URL by doubling it', async () => {
     // SQL doubles the quote; it does NOT use a backslash. The same
     // class of bug as the Pure escaping already fixed here.
-    assert.equal(sqlLiteral("a'b"), "'a''b'");
     assert.match(
-      scanExpression({ name: 't', url: "s3://b/it's.parquet" }),
+      await scanExpression({ name: 't', url: "s3://b/it's.parquet" }),
       /'s3:\/\/b\/it''s\.parquet'/,
     );
   });
 });
 
 describe('the view that hides the remoteness', () => {
-  it('takes the name the model already uses', () => {
+  it('takes the name the model already uses', async () => {
     // The whole design: the planner keeps emitting SELECT ... FROM
     // TRADES and never learns the data is somewhere else.
     assert.equal(
-      viewStatement({ name: 'TRADES', url: 'https://x/y.parquet' }),
+      await viewStatement({ name: 'TRADES', url: 'https://x/y.parquet' }),
       'CREATE OR REPLACE VIEW "TRADES" AS SELECT * FROM'
       + " read_parquet('https://x/y.parquet')",
     );
   });
 
-  it('quotes a name that needs it', () => {
-    const s = viewStatement({ name: 'with space', url: 'https://x/y.parquet' });
+  it('quotes a name that needs it', async () => {
+    const s = await viewStatement({ name: 'with space', url: 'https://x/y.parquet' });
     assert.match(s, /VIEW "with space"/);
   });
 
-  it('replaces rather than failing on a remount', () => {
+  it('replaces rather than failing on a remount', async () => {
     // Pointing at yesterday's file and back is a normal thing to do.
     assert.match(
-      viewStatement({ name: 'T', url: 'https://x/y.parquet' }),
+      await viewStatement({ name: 'T', url: 'https://x/y.parquet' }),
       /CREATE OR REPLACE VIEW/,
     );
   });
@@ -133,13 +151,13 @@ describe('the view that hides the remoteness', () => {
 describe('credentials', () => {
   const source = { name: 'trades', url: 's3://bucket/trades/2024.parquet' };
 
-  it('writes nothing when there are none', () => {
-    assert.deepEqual(credentialStatements(undefined, source), []);
-    assert.deepEqual(credentialStatements({}, source), []);
+  it('writes nothing when there are none', async () => {
+    assert.deepEqual(await credentialStatements(undefined, source), []);
+    assert.deepEqual(await credentialStatements({}, source), []);
   });
 
-  it('writes one secret per source, scoped to its own path, rather than global settings', () => {
-    const [stmt] = credentialStatements({
+  it('writes one secret per source, scoped to its own path, rather than global settings', async () => {
+    const [stmt] = await credentialStatements({
       accessKeyId: 'AKIA',
       secretAccessKey: 'shh',
       region: 'eu-west-2',
@@ -151,8 +169,8 @@ describe('credentials', () => {
     assert.match(stmt ?? '', /REGION 'eu-west-2'/);
   });
 
-  it('carries the settings an S3-compatible endpoint needs', () => {
-    const [stmt] = credentialStatements({
+  it('carries the settings an S3-compatible endpoint needs', async () => {
+    const [stmt] = await credentialStatements({
       endpoint: 'minio:9000',
       urlStyle: 'path',
       useSsl: false,
@@ -162,8 +180,8 @@ describe('credentials', () => {
     assert.match(stmt ?? '', /USE_SSL false/);
   });
 
-  it('escapes a credential containing a quote', () => {
-    const [stmt] = credentialStatements({ secretAccessKey: "a'b" }, source);
+  it('escapes a credential containing a quote', async () => {
+    const [stmt] = await credentialStatements({ secretAccessKey: "a'b" }, source);
     assert.match(stmt ?? '', /SECRET 'a''b'/);
   });
 
@@ -173,14 +191,14 @@ describe('credentials', () => {
     assert.equal(credentialScope('https://host/x.csv'), 'https://host/x.csv');
   });
 
-  it('gives two sources two secrets: one page\'s keys never replace another\'s', () => {
-    const statements = mountStatements({
+  it('gives two sources two secrets: one page\'s keys never replace another\'s', async () => {
+    const secrets = (await mountStatements({
       sources: [{ name: 'a', url: 's3://one/a.parquet' }, { name: 'b', url: 's3://two/b.parquet' }],
       s3: { accessKeyId: 'AKIA', secretAccessKey: 'shh' },
-    }).filter((s) => s.startsWith('CREATE OR REPLACE SECRET'));
-    assert.equal(statements.length, 2);
-    assert.match(statements[0]!, /"datacube_s3_a".*SCOPE 's3:\/\/one\/a\.parquet'/);
-    assert.match(statements[1]!, /"datacube_s3_b".*SCOPE 's3:\/\/two\/b\.parquet'/);
+    })).filter((s) => s.startsWith('CREATE OR REPLACE SECRET'));
+    assert.equal(secrets.length, 2);
+    assert.match(secrets[0]!, /"datacube_s3_a".*SCOPE 's3:\/\/one\/a\.parquet'/);
+    assert.match(secrets[1]!, /"datacube_s3_b".*SCOPE 's3:\/\/two\/b\.parquet'/);
   });
 });
 
@@ -212,7 +230,7 @@ describe('keeping secrets out of messages', () => {
     engine.failOn = /SECRET/;
     let message = '';
     try {
-      await mountRemote(engine, {
+      await mountRemote(engine, planner, {
         sources: [{ name: 'T', url: 'https://x/y.parquet' }],
         s3: creds,
       });
@@ -226,8 +244,8 @@ describe('keeping secrets out of messages', () => {
 });
 
 describe('the mount sequence', () => {
-  it('loads httpfs before anything references a URL', () => {
-    const stmts = mountStatements({
+  it('loads httpfs before anything references a URL', async () => {
+    const stmts = await mountStatements({
       sources: [{ name: 'T', url: 'https://x/y.parquet' }],
     });
     assert.equal(stmts[0], 'INSTALL httpfs');
@@ -235,20 +253,20 @@ describe('the mount sequence', () => {
     assert.match(stmts[stmts.length - 1] ?? '', /CREATE OR REPLACE VIEW/);
   });
 
-  it('loads iceberg only when an iceberg source is present', () => {
-    const without = mountStatements({
+  it('loads iceberg only when an iceberg source is present', async () => {
+    const without = await mountStatements({
       sources: [{ name: 'T', url: 'https://x/y.parquet' }],
     });
     assert.ok(!without.some((s) => /iceberg/.test(s)), without.join('; '));
 
-    const with_ = mountStatements({
+    const with_ = await mountStatements({
       sources: [{ name: 'T', url: 's3://b/t', format: 'iceberg' }],
     });
     assert.ok(with_.includes('LOAD iceberg'));
   });
 
-  it('creates the secret before the views that need it', () => {
-    const stmts = mountStatements({
+  it('creates the secret before the views that need it', async () => {
+    const stmts = await mountStatements({
       sources: [{ name: 'T', url: 's3://b/y.parquet' }],
       s3: { accessKeyId: 'a', secretAccessKey: 'b' },
     });
@@ -259,7 +277,7 @@ describe('the mount sequence', () => {
 
   it('mounts several sources in one pass', async () => {
     const engine = new RecordingEngine();
-    await mountRemote(engine, {
+    await mountRemote(engine, planner, {
       sources: [
         { name: 'TRADES', url: 'https://x/trades.parquet' },
         { name: 'BOOKS', url: 'https://x/books.csv' },

@@ -34,6 +34,7 @@ import type { PrintStyle } from '../../engine-client/src/pure-v1.ts';
 import { relationColumns, type Plan, type PlanColumn } from '../../engine-client/src/relation-type.ts';
 import type { SeedTable, TableSeed } from '../../engine-client/src/model-data.ts';
 import type { ProjectDataStatements } from '../../engine-client/src/project-data.ts';
+import type { HostOperation } from '../../engine-client/src/host-operations.ts';
 import { answer as answerOf, type PlannerModule } from '../../engine-client/src/legend/planner-answer.ts';
 import type { PlannerWorker, RequestBody, Response } from '../../engine-client/src/legend/planner-protocol.ts';
 
@@ -611,6 +612,12 @@ export class LitePlanner implements Planner, TableModels, ModelWriter {
    * its name and the statements that make it, point a connection at it, fill it from the model's Data elements, and
    * drop it. The model is the one given, not this planner's own.
    */
+  /** A host's named operations on a database of that type (D5, Boundary.hostOperations): each one's statements. */
+  async hostOperations(databaseType: string, operations: readonly HostOperation[]): Promise<string[][]> {
+    const answer = await this.#call({ kind: 'hostOperations', databaseType, operations: JSON.stringify(operations) });
+    return JSON.parse(decode(answer, `a host's operations on ${databaseType}`)) as string[][];
+  }
+
   async projectData(model: string, databaseType: string): Promise<ProjectDataStatements> {
     const answer = await this.#call({ kind: 'projectData', model, databaseType });
     return JSON.parse(decode(answer, `a project's database on ${databaseType}`)) as ProjectDataStatements;

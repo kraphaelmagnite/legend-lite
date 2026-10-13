@@ -167,7 +167,7 @@ async function run(): Promise<void> {
   // the one start of a tab's DuckDB (engine-client's startDuckDbInTab), set up by the planner's rules before anything is
   // written to it (this browser is in New York: python-engine.mjs); the database kept too, which a person's file is
   // read into (upload.ts)
-  const { db, engine: local } = await startDuckDbInTab('./vendor/', (databaseType) => planner.sessionSetup(databaseType));
+  const { db, engine: local } = await startDuckDbInTab('./vendor/', planner);
   await local.run(`CREATE TABLE trades (region VARCHAR, desk VARCHAR, book VARCHAR, year INTEGER, qtr VARCHAR,
     notional DOUBLE, pnl DOUBLE, qty INTEGER)`, 0);
   await local.run(`INSERT INTO trades VALUES ${served.rows.map((r) => `(${r.map(sqlValue).join(', ')})`).join(', ')}`, 0);
