@@ -997,8 +997,8 @@ class Engine:
     def _warehouse_snap(self, asked: dict[str, Any]) -> Answer:
         """SNAP, ON PYTHON (C3; engine-client/src/snap.ts, the tab's, is its twin): ``{"op": "snap", "model", "pull"}`` --
         the pull, Pure (its source's every column), planned with the table's live runtime and counted where the rows
-        are against the same limit, its Arrow chunks copied into the frames' DuckDB under the table's own name (the
-        model's conversions applied, as the tab's copy applies them), read from then on through the snap runtime; the
+        are against the same limit, its Arrow chunks copied into the frames' DuckDB under the table's own name (as
+        they are, as the tab's copy takes them: D5b), read from then on through the snap runtime; the
         grid that snapped holds the copy, and a grid that snaps it while it is there holds the same copy, as it is (one
         copy per table, as the tab's is one per tab: a second pull would change the first grid's rows under it).
         ``{"op": "release", "model"}``: that grid lets it go, and the copy is dropped when no grid holds it. Never a

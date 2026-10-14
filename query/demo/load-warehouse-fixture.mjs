@@ -1,6 +1,6 @@
-// `bazel run //query:warehouse_fixture -- <the warehouse's URL> [--user alice --password alice-pw]`: the trading demo's
-// tables loaded into a warehouse as its owner (warehouse-fixture.mjs), for Query's config-warehouse.json to read. A hand
-// tool: manual, built by :tools_build_test.
+// `bazel run //query:warehouse_fixture -- <the warehouse's URL> [--user alice --password alice-pw]`: the trading
+// demo's tables loaded into a warehouse as its owner (warehouse-fixture.mjs), for Query's config-warehouse.json to
+// read. A hand tool: manual, built by :tools_build_test.
 
 import { loadWarehouseFixture } from './warehouse-fixture.mjs';
 

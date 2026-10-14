@@ -194,15 +194,16 @@ class CatalogModelTest {
     /**
      * A zoned timestamp is its UTC instant (docs/DATACUBE_APP_PLAN_2026_10_02.md, leg B): a read-only
      * source declares it TIMESTAMP and reads it as stored, under the UTC session every reader runs
-     * ({@link SqlDialect#sessionSetup}); a copy is converted to its UTC wall time.
+     * ({@link SqlDialect#sessionSetup}), and lists no conversion (a snap copies it as it is: D5b); an
+     * upload's rebuild converts it to its UTC wall time.
      */
     @Test
-    void aZonedTimestampIsReadInPlaceOnAReadOnlySource_andConvertedInACopy() {
+    void aZonedTimestampIsReadInPlaceOnAReadOnlySource_andConvertedInARebuild() {
         List<CatalogModel.Column> columns = catalog("id BIGINT, \"at\" TIMESTAMPTZ NOT NULL");
         CatalogModel.Database readOnly = CatalogModel.database("t::DB", "sales", "orders", columns, new DuckDb(), false);
         assertEquals(List.of(), readOnly.excluded());
-        // read in place as stored; listed for a copy (a Snap) to apply
-        assertEquals(List.of(new CatalogModel.Conversion("at", "CAST(timezone('UTC', \"at\") AS TIMESTAMP)")), readOnly.conversions());
+        // read in place as stored; nothing listed (a read-only source is never rebuilt)
+        assertEquals(List.of(), readOnly.conversions());
         assertTrue(readOnly.text().contains(" at TIMESTAMP NOT NULL"), readOnly.text());
         CatalogModel.Database copy = CatalogModel.database("t::DB", "sales", "orders", columns, new DuckDb(), true);
         assertEquals(List.of(new CatalogModel.Conversion("at", "CAST(timezone('UTC', \"at\") AS TIMESTAMP)")), copy.conversions());

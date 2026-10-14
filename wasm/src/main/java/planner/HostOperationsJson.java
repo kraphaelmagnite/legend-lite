@@ -38,6 +38,7 @@ final class HostOperationsJson {
             Map.entry("relation", java.util.Set.of("kind", "target", "replace", "from")),
             Map.entry("insert", java.util.Set.of("target", "columns", "from")),
             Map.entry("drop", java.util.Set.of("kind", "target")),
+            Map.entry("rename", java.util.Set.of("kind", "target", "from", "replace")),
             Map.entry("schema", java.util.Set.of("database", "name")),
             Map.entry("dropSchema", java.util.Set.of("database", "name")),
             Map.entry("count", java.util.Set.of("from")),
@@ -74,6 +75,8 @@ final class HostOperationsJson {
                     bool(o, "replace"), source(object(o, "from")));
             case "insert" -> new HostOperation.Insert(name(object(o, "target")), columns(o), source(object(o, "from")));
             case "drop" -> new HostOperation.Drop(kind(string(o, "kind")), name(object(o, "target")));
+            case "rename" -> new HostOperation.Rename(kind(string(o, "kind")), name(object(o, "target")),
+                    name(object(o, "from")), bool(o, "replace"));
             case "schema" -> new HostOperation.MakeSchema(stringOrNull(o, "database"), string(o, "name"));
             case "dropSchema" -> new HostOperation.DropSchema(stringOrNull(o, "database"), string(o, "name"));
             case "count" -> new HostOperation.Count(source(object(o, "from")));
@@ -102,7 +105,8 @@ final class HostOperationsJson {
         };
     }
 
-    private static HostOperation.Kind kind(String kind) {
+    /** A relation's kind, by its JSON name (the table model's rebuild's too: Boundary.tableModel). */
+    static HostOperation.Kind kind(String kind) {
         return switch (kind) {
             case "table" -> HostOperation.Kind.TABLE;
             case "view" -> HostOperation.Kind.VIEW;
@@ -196,7 +200,8 @@ final class HostOperationsJson {
         return o;
     }
 
-    private static Json.Obj object(Json.Obj o, String field) {
+    /** An object field, read by its kind (Boundary's readers of a host's JSON use it too). */
+    static Json.Obj object(Json.Obj o, String field) {
         if (!o.has(field)) {
             throw new IllegalArgumentException("an operation names no " + field);
         }
@@ -225,20 +230,30 @@ final class HostOperationsJson {
         }
     }
 
-    private static @com.legend.base.Nullable String stringOrNull(Json.Obj o, String field) {
+    /** A string field that may be absent or null, read by its kind. */
+    static @com.legend.base.Nullable String stringOrNull(Json.Obj o, String field) {
         if (!o.has(field) || o.get(field) instanceof Json.Null) {
             return null;
         }
         return string(o, field);
     }
 
-    private static boolean bool(Json.Obj o, String field) {
+    /** A boolean field, false when absent, read by its kind. */
+    static boolean bool(Json.Obj o, String field) {
         if (!o.has(field)) {
             return false;
         }
         if (!(o.get(field) instanceof Json.Bool b)) {
-            throw new IllegalArgumentException("an operation's " + field + " is true or false");
+            throw new IllegalArgumentException("'" + field + "' is true or false");
         }
         return b.value();
+    }
+
+    /** A boolean field that must be there, read by its kind. */
+    static boolean requiredBool(Json.Obj o, String field) {
+        if (!o.has(field)) {
+            throw new IllegalArgumentException("Missing required field: " + field);
+        }
+        return bool(o, field);
     }
 }

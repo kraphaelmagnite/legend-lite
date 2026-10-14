@@ -21,8 +21,8 @@ import java.util.Set;
  * DuckDB's readers (read_csv with its sniffer and a header, read_parquet, read_json with its records' keys as columns,
  * read_csv_auto and iceberg_scan for a remote file), `CREATE ... AS SELECT`, `SELECT * REPLACE`, its secrets, its
  * extensions' settings, and its catalog functions (duckdb_tables, duckdb_views, duckdb_schemas, the Iceberg extension's
- * metadata). A model's declared name is spelled as its seed made it ({@link DuckDb#physicalName}); every other name is
- * quoted; every value is a literal.
+ * metadata); and one since, `ALTER ... RENAME TO`, a snap's landing swapped in (D5b). A model's declared name is
+ * spelled as its seed made it ({@link DuckDb#physicalName}); every other name is quoted; every value is a literal.
  */
 final class DuckDbHostOperations implements HostOperations {
 
@@ -62,6 +62,15 @@ final class DuckDbHostOperations implements HostOperations {
                     + ") SELECT " + String.join(", ", i.columns().stream().map(c -> quoted(c.from())).toList())
                     + " FROM " + source(i.from()));
             case HostOperation.Drop d -> List.of("DROP " + kind(d.kind()) + " IF EXISTS " + name(d.target()));
+            case HostOperation.Rename r -> {
+                List<String> out = new ArrayList<>();
+                if (r.replace()) {
+                    out.add("DROP " + kind(r.kind()) + " IF EXISTS " + name(r.target()));
+                }
+                // the new name alone: a relation keeps its schema
+                out.add("ALTER " + kind(r.kind()) + " " + name(r.from()) + " RENAME TO " + last(r.target()));
+                yield out;
+            }
             case HostOperation.MakeSchema m -> List.of("CREATE SCHEMA IF NOT EXISTS " + schema(m.database(), m.name()));
             case HostOperation.DropSchema d -> List.of("DROP SCHEMA IF EXISTS " + schema(d.database(), d.name()));
             case HostOperation.Count c -> List.of("SELECT count(*) AS n FROM " + source(c.from()));
@@ -196,7 +205,7 @@ final class DuckDbHostOperations implements HostOperations {
 
     /** A relation's name: a model's declared one as its seed spelled it, any other quoted; its database, schema too. */
     private static String name(HostOperation.Name n) {
-        String last = n.declared() ? DIALECT.physicalName(n.name()) : quoted(n.name());
+        String last = last(n);
         String schema = n.schema() == null ? null : n.declared() ? DIALECT.physicalName(n.schema()) : quoted(n.schema());
         StringBuilder out = new StringBuilder();
         if (n.database() != null) {
@@ -206,6 +215,11 @@ final class DuckDbHostOperations implements HostOperations {
             out.append(schema).append('.');
         }
         return out.append(last).toString();
+    }
+
+    /** A relation's own name, without its database or schema: a declared one as its seed spelled it, else quoted. */
+    private static String last(HostOperation.Name n) {
+        return n.declared() ? DIALECT.physicalName(n.name()) : quoted(n.name());
     }
 
     private static String schema(@com.legend.base.Nullable String database, String name) {

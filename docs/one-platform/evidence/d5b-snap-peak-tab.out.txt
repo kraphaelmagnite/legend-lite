@@ -1,0 +1,6 @@
+{"mode":"before-d5b","rows":10000000,"refused":"the re-snap: Out of Memory Error: could not allocate block of size 256.0 KiB (3.1 GiB/3.1 GiB used)"}
+{"mode":"b832ab481","rows":10000000,"refused":"the re-snap: Out of Memory Error: could not allocate block of size 256.0 KiB (3.1 GiB/3.1 GiB used)"}
+{"mode":"now","rows":10000000,"refused":"the re-snap: Out of Memory Error: could not allocate block of size 256.0 KiB (3.1 GiB/3.1 GiB used)"}
+{"mode":"before-d5b","rows":4000000,"one table (MB)":352,"before the step (MB)":803,"after it (MB)":1092,"growth (tables)":0.82,"ms":289,"snap rows":4000000,"rows unlike live":0,"landing left":0}
+{"mode":"b832ab481","rows":4000000,"one table (MB)":352,"before the step (MB)":803,"after it (MB)":1738,"growth (tables)":2.66,"ms":939,"snap rows":4000000,"rows unlike live":0,"landing left":0}
+{"mode":"now","rows":4000000,"one table (MB)":352,"before the step (MB)":803,"after it (MB)":1092,"growth (tables)":0.82,"ms":1370,"snap rows":4000000,"rows unlike live":0,"landing left":0}

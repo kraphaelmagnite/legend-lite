@@ -1,9 +1,9 @@
 // DATA IN, HEADLESS (docs/DATACUBE_ONE_APP_DESIGN_2026_10_11.md §4.2, §4.3; step 2b): a file read into the host's
 // database by DataCube's own code -- upload.ts's readFileInto, the tab's -- so Python and the tab take a file the same
 // way: DuckDB reading the file's own bytes, a table of its own, the model legend-lite's writer writes from what the
-// catalog found, and the conversions that table then applies. Python has written the file's bytes where its DuckDB
-// reads them, and hands in only that path, the file's name and the table Python chose: the bytes never cross into the
-// engine, and the SQL is DataCube's, never the page's (R4).
+// catalog found, and the rebuild that table then applies (its conversions). Python has written the file's bytes where
+// its DuckDB reads them, and hands in only that path, the file's name and the table Python chose: the bytes never cross
+// into the engine, and the SQL is DataCube's, never the page's (R4).
 
 import { DuckDbEngine } from '../../../engine-client/src/duckdb.ts';
 import { LitePlanner } from '../lite-planner.ts';

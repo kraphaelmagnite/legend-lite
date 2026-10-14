@@ -31,9 +31,11 @@ public record CatalogType(Read read, @com.legend.base.Nullable String declared,
         CONVERTED,
         /**
          * Read in place, the stored value reads as the declared type under the platform's session
-         * contract (every reading session's zone is UTC: {@link SqlDialect#sessionSetup}); a COPY is
-         * converted, so it holds the declared type whatever zone later reads it. A zoned timestamp: its
-         * UTC instant.
+         * contract (every reading session's zone is UTC: {@link SqlDialect#sessionSetup}); an upload's or
+         * a frame's rebuild converts it, so it holds the declared type whatever zone later reads it. A
+         * zoned timestamp: its UTC instant. A snap's copy is NOT converted: it is taken as it is, read
+         * under the same UTC session, and so equals the live table in value and type
+         * (docs/one-platform/evidence/d5b-snap-queries.out.txt; docs/ONE_PLATFORM_PROGRAM_2026_10_12.md D5b).
          */
         COPY_CONVERTED,
         /** No Pure Database type holds the value (bytes): the column is left out, naming it, on every source. */

@@ -216,6 +216,26 @@ check(
   rendered > 0,
   `${rendered} rows — ${(await app.textContent('#status').catch(() => '')) ?? ''}`,
 );
+
+// SNAPPED (D5b): the plane button freezes the mounted file's rows into the tab -- the pull planned and streamed batch
+// by batch into a landing on a second connection, swapped in by the planner's rename -- and the grid reads the snap
+let snapped = '';
+if (rendered > 0) {
+  await app.click('.dc-titlebar-toggle');
+  snapped = await app.waitForFunction(() => {
+    const cube = window.__dataCube;
+    return cube?.controller.snaps.state.mode === 'snapped' && !cube.busy
+      ? `${cube.controller.snaps.state.snap.rowCount} rows, ${document.querySelectorAll('.dc-row').length} shown`
+      : false;
+  }, null, { timeout: 120_000 }).then((h) => h.jsonValue()).catch(() => '');
+}
+const shown = await app.locator('.dc-row').count();
+check(
+  'a Snap freezes the remote file\'s rows into the tab, and the grid reads them',
+  snapped !== '' && !/^0 rows/.test(snapped) && shown > 0
+    && await app.textContent('.dc-titlebar-toggle').then((s) => s?.trim() === 'Snapped'),
+  snapped || 'it did not snap',
+);
 check(
   'and it did so without page errors',
   appProblems.length === 0,

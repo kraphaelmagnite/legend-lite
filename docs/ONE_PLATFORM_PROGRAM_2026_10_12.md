@@ -988,9 +988,13 @@ nothing needs marking.
      a window count with the rows was weighed and not taken: the database holds the whole result before the first row,
      so a refused pull costs the warehouse it all);
    - **the pull**, the source's every column.
-   The rows land beside the copy's name -- a warehouse's Arrow chunks by DuckDB's Arrow reader, the store's own rows by
-   its Arrow insert, Python's registered -- and the copy is made of the landing (the `relation` operation), replacing
-   the one there only once it is made; the landing is dropped whatever happens. **No conversion:** since the tab's
+   The rows land beside the snap's name -- a warehouse's Arrow chunks by DuckDB's Arrow reader, the store's own rows
+   streamed a batch at a time into its Arrow insert, Python's registered -- and the landing becomes the snap. **The
+   tab swaps it in** (the user, 2026-10-13, on Studio's review: the first try copied the landing, holding the rows
+   three times at a re-snap's peak): one transaction drops the snap there and renames the landing to its name (the
+   `rename` operation), so no rows are copied and a failure rolls back to the snap that was there; a landing a failure
+   leaves is dropped. **Python copies its registration** (the `relation` operation): its landing is a registered
+   Arrow table, not a table of the database, and it never replaces a copy a grid holds. **No conversion:** since the tab's
    DuckDB runs in UTC (C1), a zoned timestamp copied as it is answers as the warehouse does, value and type -- the
    conversion was the browser's zone's (`docs/one-platform/evidence/d5b-snap-queries.py`, its output beside it).
 2. **A table's conversions are a statement the planner writes whole.** The table-model answer (`Boundary.tableModel`,
@@ -1014,8 +1018,8 @@ nothing needs marking.
 **Not in D5b:** a project's database on Postgres or another database (C5's refusal stands); a query mixing a project's
 rows with a person's own tables; the warehouse's own SQL (D4) and core's hand-written test SQL (the dialect program's).
 
-**Proof.** Snap's tests on every plane (`//engine-client:snap_test`, `//datacube:live_snap_test`, Python's engine test of
-a warehouse table's snap), the uploads' and frames' tests, Query's browser test on the warehouse, the guard, the new
+**Proof.** Snap's tests on every plane (`//engine-client:snap_test`, `//datacube:live_snap_test`, Python's engine test
+of a warehouse table's snap), the uploads' and frames' tests, Query's browser test on the warehouse, the guard, the new
 no-SQL-field test; the warehouse lane on all three platforms.
 
 **Next, after D5b (the user, 2026-10-13):** the catalog of what is not portable -- everything a host does that would
@@ -1028,8 +1032,11 @@ files), the Studio line (engine-client, Query), an audit. Announced in IN_FLIGHT
 **Built 2026-10-13 (branch `datacube/d5b-pure-snap`, on main's C5 and D5, fbd216a3f):**
 - **Snap, the tab:** `SnapManager.snap(planner, pull, ...)` asks the cube's live planner for the count's plan and the
   pull's (`sizeOf(pull)`, the pull), runs each where the rows are, lands the rows (`DuckDbEngine.loadArrow` for a
-  warehouse's, the new `loadQuery` for the store's own: DuckDB-WASM's `insertArrowTable`) and copies the landing; the
-  copy's row count is the store's count of it. The cube passes its live planner; nothing else knows of a snap.
+  warehouse's; the new `loadQuery` for the store's own, which streams the answer -- `send` with streaming on -- and puts
+  each batch in on a second connection of the database, set up as the first: a connection streaming an answer cannot
+  take rows in too), then swaps the landing in (`DuckDbEngine.runTransaction`: the planner's begin, `rename` and commit
+  in one turn of the query queue, its rollback on a failure); the snap's row count is the store's count of it. The
+  cube passes its live planner; nothing else knows of a snap.
 - **Snap, Python:** `_warehouse_snap` plans the count (`size` over the pull) and the pull with the page's planner,
   runs both on the warehouse, registers the rows and copies them (`relation` over the registration).
 - **Conversions:** the table model answers `rebuild` (an upload's, a frame's), its `conversions` and `copySelectList`
@@ -1045,13 +1052,31 @@ files), the Studio line (engine-client, Query), an audit. Announced in IN_FLIGHT
   (the README says so); the page's `seed`, the config's and the execution type's go.
 - **Dead output:** the test-data answer's `table`, `drop` and each column's `sql`.
 - **C5's timings:** above, in C5's notes (`c5-timings.py`, `c5-timings-tab.mts`, their output).
+- **The swap's peak (Studio's review):** a re-snap holds the old snap and the new rows, never a third copy. On
+  DuckDB at 10M rows of the worst shape (a UUID text beside numbers), one table is 877 MB: copying the landing takes
+  the peak from 1,759 to 2,622 MB, renaming it leaves it at 1,759 (`d5b-snap-peak.py`). In the tab's DuckDB-WASM at 4M
+  rows (352 MB a table) a re-snap grew it by 0.82 tables before D5b, 2.66 as first reviewed (the whole answer through
+  the page, then the copy), and 0.82 now, streamed and swapped (`d5b-snap-peak-tab.cjs`). At the 10M limit itself the
+  tab's DuckDB (3.1 GiB) refuses that shape's re-snap in every way, before D5b too: an Out of Memory error, the old
+  snap kept. `MAX_SNAP_ROWS`'s ~500 MB a 10M rows is not this shape's; the limit is left as it was, for the user.
+  **Its time:** a local snap of those 4M rows took 1,370 ms, against 289 ms before D5b -- each batch now goes through
+  the page and back where one statement inside DuckDB made the copy (the price of a pull any planner can answer,
+  Studio's review); a warehouse's snap always came through the page. Not a regression to chase: the same pull, moved.
+- **A JSON column through Arrow** (Plan Gen's review): a Variant column (DuckDB's JSON) streamed through Arrow lands
+  as VARCHAR in the snap, as a warehouse's always did; reading it is unchanged, since the planner reads a Variant
+  through `CAST(... AS JSON)` either way (measured on the tab's DuckDB-WASM: the landed column VARCHAR, a key read
+  through the cast).
 - **Measured:** engine-client's snap test (a real model; the count and the pull planned; 20,000,000 rows refused before
   anything is made; a warehouse pull cut short keeps the last snap and leaves no landing, and the next lands afresh;
-  SQL sent in an operation's field, or a nested one, refused); DataCube's plane test (the count then the pull, both the
-  live planner's; the landing copied as it is; a server's planner snapping with its plans alone); the live-snap page;
-  the uploads' and frames' converted columns; Python's engine test (a warehouse table's snap through the page's
-  planner; a failing copy leaving nothing); Query's browser test on the warehouse; `d5b-snap-queries.py` (the count on
-  legend-lite and legend-engine; a zoned timestamp copied as it is).
+  a re-snap of the store's own rows swapped in with no landing left; an empty pull an empty snap of its columns; a
+  refused transaction rolled back, its table kept; SQL sent in an operation's field, or a nested one, refused);
+  DataCube's plane test (the count then the pull, both the live planner's; the landing swapped in as it is; a
+  server's planner snapping with its plans alone); the live-snap page; the remote-file browser test clicking Snap
+  (the store's own path in Chromium: 24 rows frozen, the grid reading them); the uploads' and frames' converted
+  columns; Python's engine test (a warehouse table's snap through the page's planner; a failing copy leaving
+  nothing); Query's browser test on the warehouse; `HostOperationsTest` (the rename's statements, a swap and its
+  rollback on DuckDB); `d5b-snap-queries.py` (the count on legend-lite and legend-engine; a zoned timestamp copied as
+  it is).
 
 #### C4. The small copies
 

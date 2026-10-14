@@ -1,7 +1,7 @@
 // THE WAREHOUSE'S DEMO FIXTURE (docs/ONE_PLATFORM_PROGRAM_2026_10_12.md D5b): the trading demo's tables
 // (models/trading-seed.sql), loaded into a warehouse as its owner through the warehouse's own API -- a real server's
-// data, which no page loads. Query's config-warehouse.json reads them. Its browser test loads them so (verify.mjs), and a
-// person by `bazel run //query:warehouse_fixture -- <the warehouse's URL> [--user U --password P]`
+// data, which no page loads. Query's config-warehouse.json reads them. Its browser test loads them so (verify.mjs),
+// and a person by `bazel run //query:warehouse_fixture -- <the warehouse's URL> [--user U --password P]`
 // (load-warehouse-fixture.mjs).
 
 import { readFile } from 'node:fs/promises';

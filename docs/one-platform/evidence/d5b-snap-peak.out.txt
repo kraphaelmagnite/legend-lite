@@ -1,0 +1,3 @@
+{"mode": "copied", "one table (MB)": 877, "peak before the step (MB)": 1759, "peak after the step (MB)": 2622, "held after (MB)": 887, "rows": 10000000, "landing left": 0}
+{"mode": "swapped", "one table (MB)": 877, "peak before the step (MB)": 1759, "peak after the step (MB)": 1759, "held after (MB)": 877, "rows": 10000000, "landing left": 0}
+{"refused with": "CatalogException", "the old snap after": [[1]]}

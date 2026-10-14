@@ -246,8 +246,10 @@ public final class Boundary {
     public static String databaseFromCatalog(String catalogJson) {
         com.legend.json.Json.Obj in = com.legend.json.Json.parseObject(catalogJson);
         com.legend.sql.dialect.CatalogModel.Database db = com.legend.sql.dialect.CatalogModel.database(
-                HostOperationsJson.string(in, "path"), in.getStringOr("schema", null), HostOperationsJson.string(in, "table"),
-                catalogColumns(in), dialectOf(HostOperationsJson.string(in, "databaseType")), in.getBool("convertible"));
+                HostOperationsJson.string(in, "path"), HostOperationsJson.stringOrNull(in, "schema"),
+                HostOperationsJson.string(in, "table"), catalogColumns(in),
+                dialectOf(HostOperationsJson.string(in, "databaseType")),
+                HostOperationsJson.requiredBool(in, "convertible"));
         java.util.Map<String, Object> out = new java.util.LinkedHashMap<>();
         out.put("text", db.text());
         out.put("source", sourceOf(db));
@@ -267,21 +269,22 @@ public final class Boundary {
      * {@code {"model", "runtime", "snapRuntime"?, "source" (protocol), "accessor" (its Pure text),
      * "excluded": [name], "bitColumns": [name]}} out.
      * {@code bitColumns}: the columns declared BIT (DuckDB's BOOLEAN), which legend-engine types TinyInt.
-     * {@code "rebuild": {"kind", "target", "from"}} in (names as a host operation's): {@code "rebuild": [statement]} out,
-     * the statements that make {@code target} from {@code from} with the table's conversions applied, none when no
-     * column converts -- an upload's rewrite, a Python frame's (docs/ONE_PLATFORM_PROGRAM_2026_10_12.md D5b: the host
-     * runs the planner's statement, never a select list it was given).
+     * {@code "rebuild": {"kind", "target", "from"}} in (names as a host operation's): {@code "rebuild": [statement]}
+     * out, the statements that make {@code target} from {@code from} with the table's conversions applied, none when
+     * no column converts -- an upload's rewrite, a Python frame's (docs/ONE_PLATFORM_PROGRAM_2026_10_12.md D5b: the
+     * host runs the planner's statement, never a select list it was given).
      */
     public static String tableModel(String tableJson) {
         com.legend.json.Json.Obj in = com.legend.json.Json.parseObject(tableJson);
-        String pkg = in.getStringOr("pkg", "local");
+        String named = HostOperationsJson.stringOrNull(in, "pkg");
+        String pkg = named == null ? "local" : named;
         String databaseType = HostOperationsJson.string(in, "databaseType");
-        String snapDatabaseType = in.getStringOr("snapDatabaseType", null);
+        String snapDatabaseType = HostOperationsJson.stringOrNull(in, "snapDatabaseType");
         java.util.List<com.legend.sql.dialect.CatalogModel.Column> columns = catalogColumns(in);
         com.legend.sql.dialect.SqlDialect dialect = dialectOf(databaseType);
         com.legend.sql.dialect.CatalogModel.Database db = com.legend.sql.dialect.CatalogModel.database(
-                pkg + "::DB", in.getStringOr("schema", null), HostOperationsJson.string(in, "table"), columns, dialect,
-                in.getBool("convertible"));
+                pkg + "::DB", HostOperationsJson.stringOrNull(in, "schema"), HostOperationsJson.string(in, "table"),
+                columns, dialect, HostOperationsJson.requiredBool(in, "convertible"));
         String model = db.text() + "\n" + connectionAndRuntime(pkg, "Conn", "RT", databaseType)
                 + (snapDatabaseType == null ? "" : "\n" + connectionAndRuntime(pkg, "SnapConn", "SnapRT", snapDatabaseType));
         java.util.List<String> bitColumns = new java.util.ArrayList<>();
@@ -301,29 +304,18 @@ public final class Boundary {
         out.put("excluded", db.excluded());
         out.put("bitColumns", bitColumns);
         if (in.has("rebuild")) {
-            com.legend.json.Json.Obj r = jsonObject(in, "rebuild");
+            com.legend.json.Json.Obj r = HostOperationsJson.object(in, "rebuild");
+            HostOperationsJson.only(r, "rebuild", java.util.Set.of("kind", "target", "from"));
             out.put("rebuild", db.conversions().isEmpty() ? java.util.List.of()
-                    : com.legend.sql.dialect.HostOperations.of(dialect).copyOf(relationKind(HostOperationsJson.string(r, "kind")),
-                            HostOperationsJson.name(jsonObject(r, "target")), HostOperationsJson.name(jsonObject(r, "from")),
+                    : com.legend.sql.dialect.HostOperations.of(dialect).copyOf(
+                            HostOperationsJson.kind(HostOperationsJson.string(r, "kind")),
+                            HostOperationsJson.name(HostOperationsJson.object(r, "target")),
+                            HostOperationsJson.name(HostOperationsJson.object(r, "from")),
                             db.conversions()));
         }
         return com.legend.json.Json.toCompact(out);
     }
 
-    private static com.legend.json.Json.Obj jsonObject(com.legend.json.Json.Obj o, String field) {
-        if (!(o.get(field) instanceof com.legend.json.Json.Obj obj)) {
-            throw new IllegalArgumentException("'" + field + "' is an object");
-        }
-        return obj;
-    }
-
-    private static com.legend.sql.dialect.HostOperation.Kind relationKind(String kind) {
-        return switch (kind) {
-            case "table" -> com.legend.sql.dialect.HostOperation.Kind.TABLE;
-            case "view" -> com.legend.sql.dialect.HostOperation.Kind.VIEW;
-            default -> throw new IllegalArgumentException("a relation's kind is table or view, not " + kind);
-        };
-    }
 
     /**
      * THE CATALOG QUESTION for one table of a DuckDB (DuckDb.CATALOG_COLUMNS_SQL), its schema and table filled in as
@@ -383,10 +375,16 @@ public final class Boundary {
         return com.legend.json.Json.toCompact(out);
     }
 
-    /** A JSON number field as an Integer, or null when absent or null. */
+    /** A JSON number field as an Integer, or null when absent or null; any other kind refused by name. */
     private static Integer intOrNull(com.legend.json.Json.Obj o, String field) {
-        com.legend.json.Json.Node n = o.has(field) ? o.get(field) : null;
-        return n instanceof com.legend.json.Json.Num num ? Integer.valueOf((int) num.longValue()) : null;
+        if (!o.has(field) || o.get(field) instanceof com.legend.json.Json.Null) {
+            return null;
+        }
+        // read by its kind, as every field: a number given as text ("18") refused by name, never a DECIMAL's lost
+        if (!(o.get(field) instanceof com.legend.json.Json.Num num)) {
+            throw new IllegalArgumentException("'" + field + "' is a number");
+        }
+        return Integer.valueOf((int) num.longValue());
     }
 
     /** A table's catalog rows, structured as the catalog question answers them (DuckDb.CATALOG_COLUMNS_SQL): no type
@@ -402,8 +400,8 @@ public final class Boundary {
             }
             columns.add(new com.legend.sql.dialect.CatalogModel.Column(HostOperationsJson.string(c, "name"),
                     HostOperationsJson.string(c, "dataType"),
-                    c.getStringOr("logicalType", null), intOrNull(c, "precision"), intOrNull(c, "scale"),
-                    c.getBoolOr("notNull", false)));
+                    HostOperationsJson.stringOrNull(c, "logicalType"), intOrNull(c, "precision"), intOrNull(c, "scale"),
+                    HostOperationsJson.bool(c, "notNull")));
         }
         return columns;
     }

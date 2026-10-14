@@ -41,7 +41,7 @@ export interface ArrowishConnection {
    * not a fallback anyone falls back to, and a guardrail test pins
    * that so it cannot quietly become one.
    */
-  send?(sql: string): Promise<AsyncIterable<ArrowishTable>>;
+  send?(sql: string, allowStreamResult?: boolean): Promise<AsyncIterable<ArrowishTable>>;
   /** Cancel a query started with `send()`. True if it was still pending. */
   cancelSent?(): Promise<boolean>;
   /**
@@ -53,8 +53,11 @@ export interface ArrowishConnection {
     buffer: Uint8Array,
     options: { name: string; schema?: string; create?: boolean },
   ): void | Promise<void>;
-  /** Load an answer's Arrow table into a table (DuckDB-WASM's own Arrow insert): how a snap of this store lands. */
-  insertArrowTable?(table: ArrowishTable, options: { name: string; schema?: string; create?: boolean }): void | Promise<void>;
+  /**
+   * Load Arrow rows into a table (DuckDB-WASM's own Arrow insert: its own Arrow writes what it is given -- tableToIPC,
+   * which takes a table or its batches): how a snap of this store lands, a batch at a time.
+   */
+  insertArrowTable?(rows: ArrowishTable | Iterable<ArrowishTable>, options: { name: string; schema?: string; create?: boolean }): void | Promise<void>;
   close?(): void | Promise<void>;
 }
 
@@ -291,9 +294,20 @@ export class DuckDbEngine implements QueryEngine {
   #chain: Promise<void> = Promise.resolve();
   /** Remote files a mounted source reads over HTTP (`readsRemote`), for the receipt. */
   readonly #reads: string[] = [];
+  /** Another connection of this database, set up as this one: made the first time a query's rows are loaded. */
+  readonly #loading: (() => Promise<DuckDbEngine>) | undefined;
+  #loader: Promise<DuckDbEngine> | undefined;
 
-  constructor(connection: ArrowishConnection) {
+  constructor(connection: ArrowishConnection, options: {
+    /**
+     * Another connection to the same database, set up as this one (duckdb-tab.ts `connect`): what a planned query's
+     * rows go into while this connection streams them (`loadQuery`). A DuckDB connection holds one pending query, so
+     * rows cannot go back in on the connection streaming them (measured: the insert cancels the stream).
+     */
+    readonly loading?: () => Promise<DuckDbEngine>;
+  } = {}) {
     this.#conn = connection;
+    this.#loading = options.loading;
   }
 
   /**
@@ -394,23 +408,84 @@ export class DuckDbEngine implements QueryEngine {
   }
 
   /**
-   * Make `target` of the rows of `sql`, a planned query on this connection (a snap of this store: D5b): its Arrow
-   * answer handed to DuckDB's own Arrow insert, no statement written around the query. `prepare`, the planner's
-   * statements (the target's schema made, a table there dropped), first. On the query queue, as loadArrow.
+   * Make `target` of the rows of `sql`, a planned query on this connection (a snap of this store: D5b): DuckDB streams
+   * the answer a batch at a time, and each batch goes into the table on the loading connection as it comes -- the
+   * first makes it (an empty answer is one empty batch: an empty table of its columns), the rest append -- so neither
+   * the page nor DuckDB holds the whole answer beside the table being made, and no statement is written around it.
+   * `prepare`, the planner's statements (the target's schema made, a table there dropped), first. On the query queue,
+   * as loadArrow. Measured: docs/one-platform/evidence/d5b-snap-peak-tab.out.txt.
    */
   async loadQuery(
     target: { readonly schema?: string; readonly table: string },
     sql: string,
     prepare: readonly string[] = [],
   ): Promise<void> {
-    const insert = this.#conn.insertArrowTable;
-    if (typeof insert !== 'function') {
-      throw new Error('this DuckDB connection cannot load Arrow data');
+    const send = this.#conn.send;
+    const loading = this.#loading;
+    if (typeof send !== 'function' || !loading) {
+      throw new Error('this DuckDB connection cannot stream a query\u2019s rows into a table');
     }
+    const into = await (this.#loader ??= loading().catch((e: unknown) => {
+      this.#loader = undefined;
+      throw e;
+    }));
     return this.#serialised(async () => {
       for (const statement of prepare) await this.#conn.query(statement);
-      const rows = await this.#conn.query(sql);
-      await insert.call(this.#conn, rows, { name: target.table, ...(target.schema ? { schema: target.schema } : {}), create: true });
+      // streamed as DuckDB makes it, never gathered first (send's allowStreamResult)
+      const batches = await send.call(this.#conn, sql, true);
+      let first = true;
+      try {
+        for await (const batch of batches) {
+          await into.#insert(target, batch, first);
+          first = false;
+        }
+      } catch (e) {
+        // the rest of the answer let go, so this connection's next query does not inherit it
+        try {
+          await this.#conn.cancelSent?.();
+        } catch {
+          /* it had finished */
+        }
+        throw e;
+      }
+      if (first) throw new Error(`no answer came back to load into ${target.schema ? `${target.schema}.` : ''}${target.table}`);
+    });
+  }
+
+  /** One batch of rows put into `target` on this connection: `create` makes the table, of the batch's columns. */
+  async #insert(target: { readonly schema?: string; readonly table: string }, batch: ArrowishTable, create: boolean): Promise<void> {
+    const insert = this.#conn.insertArrowTable;
+    if (typeof insert !== 'function') throw new Error('this DuckDB connection cannot load Arrow data');
+    // the batch as it came, written by DuckDB-WASM's own Arrow -- the copy that made it. Never wrapped in this page's
+    // Table: where the two are different copies (Node: DuckDB-WASM's CommonJS Arrow beside our ES module), a Table of
+    // ours reads a batch of theirs as rows, and the table it makes is EMPTY (measured in snap_test)
+    await this.#serialised(async () => {
+      await insert.call(this.#conn, [batch], { name: target.table, ...(target.schema ? { schema: target.schema } : {}), create });
+    });
+  }
+
+  /**
+   * `statements` -- a transaction's, its begin to its commit -- in one turn of the query queue, so no query runs
+   * between them (a snap's swap, snap.ts: the old snap dropped and the landing renamed, never a read between the two).
+   * When one fails, `rollback`, then the failure, with the rollback's too when that fails.
+   */
+  async runTransaction(statements: readonly string[], rollback: readonly string[]): Promise<void> {
+    return this.#serialised(async () => {
+      let at = '';
+      try {
+        for (const sql of statements) {
+          at = sql;
+          await this.#conn.query(sql);
+        }
+      } catch (cause) {
+        const message = cause instanceof Error ? cause.message : String(cause);
+        try {
+          for (const sql of rollback) await this.#conn.query(sql);
+        } catch (r) {
+          throw new QueryError(`${message} -- and rolling back failed: ${r instanceof Error ? r.message : String(r)}`, at, { cause });
+        }
+        throw new QueryError(message, at, { cause });
+      }
     });
   }
 
@@ -557,6 +632,9 @@ export class DuckDbEngine implements QueryEngine {
   }
 
   async close(): Promise<void> {
+    const loader = this.#loader;
+    this.#loader = undefined;
+    await (await loader?.catch(() => undefined))?.close();
     await this.#conn.close?.();
   }
 }

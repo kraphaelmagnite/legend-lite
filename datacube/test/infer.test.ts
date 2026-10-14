@@ -99,6 +99,16 @@ describe('the model for a table', () => {
     ], { table: 't', convertible: true, databaseType: 'DuckDB' }), /two columns named/);
   });
 
+  it('reads each catalog field by its kind: a number given as text, or a flag as null, is refused by name', async () => {
+    const decimal = { name: 'p', dataType: 'DECIMAL(18,2)', logicalType: 'DECIMAL', precision: 18, scale: 2, notNull: false };
+    assert.match((await writer.tableModel([decimal], { table: 't', convertible: true, databaseType: 'DuckDB' })).model,
+      /p DECIMAL\(18, ?2\)/);
+    await assert.rejects(writer.tableModel([{ ...decimal, precision: '18' } as never],
+      { table: 't', convertible: true, databaseType: 'DuckDB' }), /'precision' is a number/);
+    await assert.rejects(writer.tableModel([{ ...decimal, notNull: null } as never],
+      { table: 't', convertible: true, databaseType: 'DuckDB' }), /'notNull' is true or false/);
+  });
+
   it('names what a copy must convert, and keeps a type Pure cannot name on any source', async () => {
     const cols = [col_('id', 'BIGINT'), col_('at', 'TIMESTAMP WITH TIME ZONE'), col_('ref', 'UUID')];
     const rebuild = { kind: 'table' as const, target: { name: 't' }, from: { name: 't' } };
@@ -107,14 +117,13 @@ describe('the model for a table', () => {
     assert.deepEqual(upload.rebuild,
       [`CREATE OR REPLACE TABLE "t" AS SELECT * REPLACE (CAST(timezone('UTC', "at") AS TIMESTAMP) AS "at") FROM "t"`]);
     assert.match(upload.model, /at TIMESTAMP/);
-    // a zoned timestamp is read in place, as its UTC instant under the UTC session; its conversion is
-    // still the copy's (a Snap). A UUID is OTHER: read as its text wherever it is used, on every source.
+    // a zoned timestamp is read in place, as its UTC instant under the UTC session, and a read-only source is never
+    // rebuilt (a snap copies it as it is: D5b). A UUID is OTHER: read as its text wherever it is used, on every source.
     const warehouse = await writer.tableModel(cols, { table: 't', schema: 's', convertible: false, databaseType: 'DuckDB', rebuild });
     assert.deepEqual(warehouse.excluded, []);
     assert.match(warehouse.model, / at TIMESTAMP/);
     assert.match(warehouse.model, / ref OTHER/);
-    assert.deepEqual(warehouse.rebuild,
-      [`CREATE OR REPLACE TABLE "t" AS SELECT * REPLACE (CAST(timezone('UTC', "at") AS TIMESTAMP) AS "at") FROM "t"`]);
+    assert.deepEqual(warehouse.rebuild, []);
   });
 
   it('reads a Postgres table by Postgres\'s rules: an array and an inet are text, json a Variant, bytes left out', async () => {

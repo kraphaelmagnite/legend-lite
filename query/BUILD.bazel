@@ -186,7 +186,7 @@ js_binary(
 
 # `bazel run //query:warehouse_fixture -- <the warehouse's URL> [--user U --password P]`: the trading demo's tables
 # loaded into a warehouse as its owner, for config-warehouse.json (docs/ONE_PLATFORM_PROGRAM_2026_10_12.md D5b: no
-# page loads a server's data). A hand tool: manual, built by :tools_build_test.
+# page loads a server's data). A hand tool: manual (2026-10-13, the runbook's D5b), built by :tools_build_test.
 js_binary(
     name = "warehouse_fixture",
     data = [
@@ -213,7 +213,9 @@ _VERIFY_DATA = [
     # named itself: SITE is its runfiles path, from which the site's directory follows
     "demo/index.html",
     ":site",
-    # the warehouse's fixture, loaded as its owner before its suite (the page loads no server's data)
+    # the warehouse's fixture, loaded as its owner before its suite (the page loads no server's data), and the rows it
+    # reads beside itself (:site has them too; named here, as :warehouse_fixture names them)
+    "demo/models/trading-seed.sql",
     "demo/warehouse-fixture.mjs",
     ":node_modules/playwright",
     # legend-lite's server: its launcher's runfiles (the hermetic JDK, the jars) through the target itself, and the

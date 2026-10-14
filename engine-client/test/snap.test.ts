@@ -25,6 +25,7 @@ Database t::DB
   Table trades_frozen (region BIGINT, book BIGINT, year INTEGER, notional DOUBLE)
   Table huge (i BIGINT)
   Table zoned (region VARCHAR(8), at TIMESTAMP)
+  Table none (region BIGINT, book BIGINT, year INTEGER, notional DOUBLE)
 )
 
 ###Connection
@@ -73,7 +74,9 @@ before(async () => {
     duckdb.NODE_RUNTIME,
   );
   await db.instantiate();
-  engine = new DuckDbEngine(db.connect() as ArrowishConnection);
+  // a local snap streams into a second connection of the database, as the tab's does (duckdb-tab.ts)
+  engine = new DuckDbEngine(db.connect() as ArrowishConnection,
+    { loading: async () => new DuckDbEngine(db.connect() as ArrowishConnection) });
   await engine.run(
     `CREATE TABLE trades AS
        SELECT (i%5) AS region, (i%20) AS book,
@@ -82,6 +85,7 @@ before(async () => {
        FROM range(1000) t(i)`,
     0,
   );
+  await engine.run('CREATE TABLE none AS SELECT * FROM trades WHERE false', 0);
   // past the row ceiling, counted without being made (a view of a range)
   await engine.run('CREATE VIEW huge AS SELECT i FROM range(20000000) t(i)', 0);
   // the warehouse's table a pull reads (counted there: this DuckDB stands in for it)
@@ -215,6 +219,33 @@ describe('SnapManager', () => {
     await assert.rejects(planner.hostOperations('DuckDB', [{
       op: 'drop', kind: 'table', target: { name: 't', sql: 'DROP TABLE x' },
     } as never]), /name has no field 'sql'/);
+  });
+
+  it('snaps again over its last snap: the new rows swapped in, the landing gone, no copy made (D5b)', async () => {
+    const s = new SnapManager(engine, null, planner);
+    const into = { target: target('snap_again') };
+    assert.equal((await s.snap(snaps, pullOf('trades'), 1, into)).rowCount, 1000);
+    await engine.run('CREATE TABLE trades_moved AS SELECT * FROM trades WHERE region = 0', 2);
+    const moved = await snapPlannerFor(MODEL.replace('Table none', 'Table trades_moved (region BIGINT, book BIGINT, '
+      + 'year INTEGER, notional DOUBLE)\n  Table none'), 't::RT');
+    assert.equal((await s.snap(moved, pullOf('trades_moved'), 3, into)).rowCount, 200);
+    assert.equal(Number((await engine.run('SELECT count(*) AS n FROM snap_again', 4)).columns[0]?.values[0]), 200);
+    assert.equal(await tableNamed('snap_again__pulled'), 0);
+  });
+
+  it('freezes an empty pull as an empty snap of its columns', async () => {
+    const s = new SnapManager(engine, null, planner);
+    assert.equal((await s.snap(snaps, pullOf('none'), 1, { target: target('snap_none') })).rowCount, 0);
+    const columns = await engine.run("SELECT column_name AS c FROM duckdb_columns() WHERE table_name = 'snap_none' "
+      + 'ORDER BY column_index', 2);
+    assert.deepEqual(columns.columns[0]?.values, ['region', 'book', 'year', 'notional']);
+  });
+
+  it('runs a transaction with nothing between its statements, and rolls back a refused one: the table stays', async () => {
+    await engine.run('CREATE TABLE swap_kept AS SELECT 1 AS v', 0);
+    await assert.rejects(engine.runTransaction(['BEGIN TRANSACTION', 'DROP TABLE IF EXISTS swap_kept',
+      'ALTER TABLE swap_gone RENAME TO swap_kept', 'COMMIT'], ['ROLLBACK']), /swap_gone/);
+    assert.equal(Number((await engine.run('SELECT v FROM swap_kept', 1)).columns[0]?.values[0]), 1);
   });
 
   it('gives each snap its own table so two can coexist', async () => {

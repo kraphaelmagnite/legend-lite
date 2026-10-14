@@ -577,9 +577,9 @@ export class LitePlanner implements Planner, TableModels, ModelWriter {
   /**
    * THE MODEL FOR A TABLE, from the rows its CATALOG reports (structured: `catalogColumnsSql`):
    * legend-lite's one writer (planner.Boundary.tableModel, the module's tableModelOrError) -- the Database, read by the table's
-   * own dialect, its connection and runtime, and the snap runtime when asked; the conversions a copy
-   * applies, and the columns left out. The compiler decides every column; nothing here does. The
-   * same function answers Python's frames.
+   * own dialect, its connection and runtime, and the snap runtime when asked; the rebuild an upload
+   * applies when asked (its conversions in place, D5b), and the columns left out. The compiler
+   * decides every column; nothing here does. The same function answers Python's frames.
    */
   tableModel(
     columns: readonly CatalogColumn[],

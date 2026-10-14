@@ -170,6 +170,18 @@ class HostOperationsTest {
                 new HostOperation.Source.Relation(HostOperation.Name.declared("default", "T")))));
         assertEquals("DROP VIEW IF EXISTS \"main\".\"x\"", one(new HostOperation.Drop(HostOperation.Kind.VIEW,
                 new HostOperation.Name(null, "main", "x", false))));
+        // a snap's landing swapped in (D5b): the one there dropped, the landing given its name -- in its own schema
+        assertEquals(List.of("DROP TABLE IF EXISTS \"sales\".\"orders\"",
+                "ALTER TABLE \"sales\".\"orders__pulled\" RENAME TO \"orders\""),
+                DUCK.statements(new HostOperation.Rename(HostOperation.Kind.TABLE,
+                        new HostOperation.Name(null, "sales", "orders", false),
+                        new HostOperation.Name(null, "sales", "orders__pulled", false), true)));
+        assertEquals("ALTER VIEW \"a\" RENAME TO \"b\"", one(new HostOperation.Rename(HostOperation.Kind.VIEW,
+                HostOperation.Name.of("b"), HostOperation.Name.of("a"), false)));
+        IllegalArgumentException moved = assertThrows(IllegalArgumentException.class, () -> new HostOperation.Rename(
+                HostOperation.Kind.TABLE, new HostOperation.Name(null, "other", "orders", false),
+                new HostOperation.Name(null, "sales", "orders__pulled", false), true));
+        assertTrue(moved.getMessage().contains("renamed in its own schema"), moved.getMessage());
         assertEquals(List.of("INSTALL httpfs", "LOAD httpfs", "INSTALL iceberg", "LOAD iceberg"),
                 DUCK.statements(new HostOperation.Extensions(List.of("httpfs", "iceberg"))));
         assertEquals(List.of("SET custom_extension_repository = 'https://site/vendor/duckdb-extensions'",
@@ -218,6 +230,31 @@ class HostOperationsTest {
                 st.execute(sql);
             }
             assertEquals(List.of("0"), rows(st, one(new HostOperation.SchemaExists(null, "firm"))));
+            // a snap's swap, as snap.ts runs it: in one transaction the landing takes the snap's name; refused (no
+            // landing: a pull cut short), the transaction rolled back keeps the snap that was there
+            var snap = HostOperation.Name.of("snap");
+            var landing = HostOperation.Name.of("snap__pulled");
+            st.execute("CREATE TABLE snap AS SELECT 1 AS v");
+            st.execute("CREATE TABLE snap__pulled AS SELECT 2 AS v");
+            List<String> swap = new java.util.ArrayList<>();
+            swap.addAll(DUCK.statements(new HostOperation.Transaction(HostOperation.Transaction.Step.BEGIN)));
+            swap.addAll(DUCK.statements(new HostOperation.Rename(HostOperation.Kind.TABLE, snap, landing, true)));
+            swap.addAll(DUCK.statements(new HostOperation.Transaction(HostOperation.Transaction.Step.COMMIT)));
+            for (String sql : swap) {
+                st.execute(sql);
+            }
+            assertEquals(List.of("2"), rows(st, "SELECT v FROM snap"));
+            assertEquals(List.of("0"), rows(st, one(new HostOperation.RelationExists(landing))));
+            assertThrows(java.sql.SQLException.class, () -> {
+                for (String sql : swap) {
+                    st.execute(sql);
+                }
+            });
+            // DuckDB's driver closes a statement that failed: the rollback on another, as a host's next statement
+            try (Statement again = c.createStatement()) {
+                again.execute(one(new HostOperation.Transaction(HostOperation.Transaction.Step.ROLLBACK)));
+                assertEquals(List.of("2"), rows(again, "SELECT v FROM snap"));
+            }
         }
     }
 

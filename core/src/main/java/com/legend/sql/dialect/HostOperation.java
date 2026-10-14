@@ -88,6 +88,21 @@ public sealed interface HostOperation {
     record Drop(Kind kind, Name target) implements HostOperation {
     }
 
+    /**
+     * A relation renamed in its own schema: {@code from} takes {@code target}'s name, {@code replace} dropping one of
+     * that name first -- a snap's landing swapped in (D5b), in a transaction its host begins and commits, so the snap
+     * there goes only when the new rows have its name, and no rows are copied.
+     */
+    record Rename(Kind kind, Name target, Name from, boolean replace) implements HostOperation {
+        public Rename {
+            if (!java.util.Objects.equals(target.database(), from.database())
+                    || !java.util.Objects.equals(target.schema(), from.schema())) {
+                throw new IllegalArgumentException("a relation is renamed in its own schema: " + from.name()
+                        + " cannot become " + target.name() + " of another");
+            }
+        }
+    }
+
     /** A schema made, when it is not there. */
     record MakeSchema(@com.legend.base.Nullable String database, String name) implements HostOperation {
     }

@@ -67,6 +67,11 @@ interface QueryLoader {
   loadQuery(target: { readonly schema?: string; readonly table: string }, sql: string, prepare?: readonly string[]): Promise<void>;
 }
 
+/** A local store that runs a transaction's statements with nothing between them (DuckDbEngine.runTransaction). */
+interface TransactionRunner {
+  runTransaction(statements: readonly string[], rollback: readonly string[]): Promise<void>;
+}
+
 /** The count of `pull`'s rows, as Pure: its relation's size, a query the cube's planner plans as it plans any. */
 function sizeOf(pull: Lambda): Lambda {
   const [relation, ...rest] = pull.body;
@@ -78,6 +83,13 @@ function sizeOf(pull: Lambda): Lambda {
  * Memory ceiling. A ~500MB tab
  * budget holds about 10M rows across every data shape measured --
  * 9.3M for a UUID-bearing worst case, 33.8M for realistic shapes.
+ * A re-snap holds the old snap and the new rows at once, never a
+ * third copy: the rows stream into a landing that is then renamed
+ * the snap -- the same peak as before D5b (measured:
+ * docs/one-platform/evidence/d5b-snap-peak-tab.out.txt). At this
+ * limit the tab's DuckDB (3.1 GiB) refuses a re-snap of the
+ * UUID-bearing shape, as it did before D5b: an Out of Memory
+ * error, the old snap kept, not a tab that dies.
  */
 export const MAX_SNAP_ROWS = 10_000_000;
 
@@ -261,8 +273,9 @@ export class SnapManager implements Snaps {
   /**
    * Freeze `pull` (the live source's every column, as Pure) into a local table and switch to snapped (D5b): two
    * ordinary queries the cube's planner plans -- the pull's count first, a cheap check against the limit, then the
-   * pull -- each run where the rows are; the rows land beside the copy's name and are copied into it, the copy there
-   * replaced only once the new one is made, and the landing dropped whatever happens. Every other statement is a named
+   * pull -- each run where the rows are; the rows stream into a landing beside the snap's name, which then takes that
+   * name in one transaction (the snap there dropped only as the new rows take its place: no rows copied), and a
+   * landing a failure leaves is dropped. Every other statement is a named
    * operation of the store's (D5); none is written here. A pivot's values are found by the cube's own query (plan.ts)
    * on every refresh, snapped or not, so nothing about them is captured here.
    */
@@ -292,12 +305,18 @@ export class SnapManager implements Snaps {
       throw new SnapRefusal(estimate.refusal ?? 'snap refused');
     }
     const pulled = (await planner.plan(pull)).sql;
-    const [made, copy, dropped, counted] = await this.#operations(engine.databaseType, [
+    const [made, swap, rollback, dropped, counted] = await this.#operations(engine.databaseType, [
       [...(schema ? [{ op: 'schema' as const, name: schema }] : []), { op: 'drop', kind: 'table', target: landing }],
-      [{ op: 'relation', kind: 'table', target, replace: true, from: { relation: landing } }],
+      [{ op: 'transaction', step: 'begin' }, { op: 'rename', kind: 'table', target, from: landing, replace: true },
+        { op: 'transaction', step: 'commit' }],
+      [{ op: 'transaction', step: 'rollback' }],
       [{ op: 'drop', kind: 'table', target: landing }],
       [{ op: 'count', from: { relation: target } }],
     ]);
+    const swapper = engine as unknown as Partial<TransactionRunner>;
+    if (typeof swapper.runTransaction !== 'function') {
+      throw new SnapRefusal('the local store cannot run a transaction, so a snap cannot be swapped in');
+    }
 
     this.#counter += 1;
     let pulledBy: Receipt | undefined;
@@ -318,9 +337,12 @@ export class SnapManager implements Snaps {
         }
         await loader.loadQuery(at(landing.name), pulled, made);
       }
-      for (const sql of copy!) await engine.run(sql, epoch);
+      // the landing becomes the snap, the one there dropped in the same transaction (a failure rolls back: it stays)
+      await swapper.runTransaction(swap!, rollback!);
     } finally {
-      for (const sql of dropped!) await engine.run(sql, epoch);
+      // a landing a failure left goes (after the swap there is none); a drop that fails neither hides why a snap
+      // failed nor fails one that was made -- the next snap's first step drops it again
+      for (const sql of dropped!) await engine.run(sql, epoch).catch(() => undefined);
     }
     const rowCount = Number((await engine.run(counted![0]!, epoch)).columns[0]?.values[0] ?? 0);
 
@@ -403,7 +425,7 @@ export function describePlane(state: PlaneState, where: {
  * A SNAP ITS HOST MAKES (docs/ONE_PLATFORM_PROGRAM_2026_10_12.md C3): where the page has no store of its own (a page on
  * Python), the host pulls the live source's rows into its own database, and the copy's queries are the host's. The page
  * sends the pull as Pure (R4); the host plans it where the rows are, counts it against the same limit
- * (MAX_SNAP_ROWS), copies it with the model's conversions, and says what it froze.
+ * (MAX_SNAP_ROWS), copies it as it is (D5b), and says what it froze.
  */
 export interface HostSnapTarget {
   /** Freeze `pull` (the live source's every column, as Pure) into the host's copy: its count, and the pull's receipt. */

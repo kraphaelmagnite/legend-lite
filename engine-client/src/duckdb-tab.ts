@@ -53,13 +53,15 @@ export async function startDuckDbInTab(vendor: string, planner: TabDuckDbPlanner
   const db = new duckdb.AsyncDuckDB(new duckdb.ConsoleLogger(duckdb.LogLevel.WARNING), new Worker(bundle.mainWorker!));
   await db.instantiate(bundle.mainModule, bundle.pthreadWorker);
   // every connection set up alike: a setting of DuckDB's may be a session's, so none is left to the first's
-  const connect = async (): Promise<DuckDbEngine> => {
-    const connection = new DuckDbEngine((await db.connect()) as unknown as ArrowishConnection);
+  const connect = async (loading?: () => Promise<DuckDbEngine>): Promise<DuckDbEngine> => {
+    const connection = new DuckDbEngine((await db.connect()) as unknown as ArrowishConnection, loading ? { loading } : {});
     await ownExtensions(connection, planner, asset('duckdb-extensions'));
     await setUpSession(connection, (databaseType) => planner.sessionSetup(databaseType));
     return connection;
   };
-  const engine = await connect();
+  // the engine's snaps stream into a connection of their own, set up as it is (DuckDbEngine.loadQuery, D5b); a
+  // connection handed out (a project's, pointed at its own database) loads none
+  const engine = await connect(() => connect());
   return {
     engine,
     data: {
@@ -68,6 +70,6 @@ export async function startDuckDbInTab(vendor: string, planner: TabDuckDbPlanner
       run: (sql) => engine.run(sql, 0),
     },
     db,
-    connect,
+    connect: () => connect(),
   };
 }

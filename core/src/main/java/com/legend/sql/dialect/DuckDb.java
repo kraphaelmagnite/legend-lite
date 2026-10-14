@@ -157,7 +157,8 @@ public final class DuckDb extends AnsiSqlRenderer {
         m.put("TIMESTAMP_MS", CatalogType.asStored("TIMESTAMP"));
         m.put("TIMESTAMP_NS", CatalogType.asStored("TIMESTAMP"));
         // a zoned timestamp is its UTC instant: read in place under the UTC session (every reading
-        // session's, sessionSetup), and a copy holds its UTC wall time, whatever zone later reads it
+        // session's, sessionSetup), and an upload's or a frame's rebuild holds its UTC wall time, whatever
+        // zone later reads it; a snap's copy is taken as it is (equal to live under UTC: D5b's evidence)
         m.put("TIMESTAMP WITH TIME ZONE", CatalogType.copyConverted("TIMESTAMP", "CAST(timezone('UTC', %s) AS TIMESTAMP)"));
         m.put("TIME", other);
         m.put("TIME WITH TIME ZONE", other);

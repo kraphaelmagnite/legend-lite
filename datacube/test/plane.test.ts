@@ -111,6 +111,10 @@ class RecordingEngine extends FakeEngine {
     this.sql.push(...prepare, sql);
     this.loaded.push(target.table);
   }
+  /** A transaction's statements, with nothing between them (DuckDbEngine.runTransaction: a snap's swap). */
+  async runTransaction(statements: readonly string[]): Promise<void> {
+    this.sql.push(...statements);
+  }
   async answer(sql: string, epoch: number): Promise<ResultTable> {
     this.sql.push(sql);
     // `SELECT count(*)` is the snap preflight; it wants one number.
@@ -206,16 +210,23 @@ describe('snapping goes through the planner', () => {
     await c.run(at(ran));
     await c.snap(ran, 'test');
 
-    // the pull the planner wrote runs in the store; its rows land beside the copy, which is made of them
+    // the pull the planner wrote runs in the store; its rows land beside the snap, and the landing takes its name
     assert.ok(engine.sql.some((q) => /^SELECT \* FROM planned_/.test(q)), engine.sql.join(' ;; '));
     assert.deepEqual(engine.loaded, ['TRADES_SNAP__pulled']);
-    assert.ok(engine.sql.includes('CREATE OR REPLACE TABLE "TRADES_SNAP" AS SELECT * FROM "TRADES_SNAP__pulled"'),
-      engine.sql.join(' ;; '));
+    assertSwapped(engine.sql);
   });
 });
 
+/** The landing swapped in (D5b): in one transaction, the snap there dropped and the landing given its name. */
+function assertSwapped(sql: readonly string[]): void {
+  const swap = ['BEGIN TRANSACTION', 'DROP TABLE IF EXISTS "TRADES_SNAP"', 'ALTER TABLE "TRADES_SNAP__pulled" RENAME TO "TRADES_SNAP"', 'COMMIT'];
+  const at = sql.indexOf(swap[0]!);
+  assert.deepEqual(sql.slice(at, at + swap.length), swap, sql.join(' ;; '));
+  assert.ok(!sql.some((q) => /^CREATE OR REPLACE TABLE "TRADES_SNAP"/.test(q)), 'no rows copied');
+}
+
 describe('a snap is a copy of the rows as they are', () => {
-  it('counts first, then pulls, both the cube\'s own queries; the copy made of the landing and the landing dropped', async () => {
+  it('counts first, then pulls, both the cube\'s own queries; the landing swapped in and dropped if left', async () => {
     const planner = new RecordingPlanner();
     const engine = new RecordingEngine();
     const c = new CubeController(engine, planner, { snapTarget: snapInto() });
@@ -226,7 +237,8 @@ describe('a snap is a copy of the rows as they are', () => {
     const asked = planner.queries.map((q) => (q.body[0]?._type === 'func' ? q.body[0].function : '?'));
     assert.deepEqual(asked, ['size', 'select'], 'the pull\'s count, then the pull');
     assert.ok(engine.sql.includes('DROP TABLE IF EXISTS "TRADES_SNAP__pulled"'), engine.sql.join(' ;; '));
-    assert.ok(!engine.sql.some((q) => /REPLACE \(/.test(q)), 'nothing converted: the rows are copied as they are');
+    assertSwapped(engine.sql);
+    assert.ok(!engine.sql.some((q) => /REPLACE \(/.test(q)), 'nothing converted: the rows are taken as they are');
   });
 });
 
@@ -274,7 +286,7 @@ describe('the snapped plane actually redirects', () => {
     assert.ok(tab.sql.length > 0 && tab.sql.every((q) => /planned_/.test(q)), 'the copy\'s plans run in the tab');
   });
 
-  it('lands the pull in the tab and copies it there: the warehouse runs only the live plan and its count', async () => {
+  it('lands the pull in the tab and swaps it in there: the warehouse runs only the live plan and its count', async () => {
     const tab = new RecordingEngine();
     const warehouse = new PullingEngine();
     const c = new CubeController(tab, new RecordingPlanner(), { live: warehouse, snapTarget: snapInto() });
@@ -283,10 +295,9 @@ describe('the snapped plane actually redirects', () => {
     await c.snap(SNAPSHOT, 'test');
     assert.equal(warehouse.pulled.length, 1);
     assert.deepEqual(tab.loaded, ['TRADES_SNAP__pulled']);
-    assert.ok(tab.sql.includes('CREATE OR REPLACE TABLE "TRADES_SNAP" AS SELECT * FROM "TRADES_SNAP__pulled"'),
-      tab.sql.join(' ;; '));
+    assertSwapped(tab.sql);
     assert.equal(tab.sql.filter((q) => q === 'DROP TABLE IF EXISTS "TRADES_SNAP__pulled"').length, 2,
-      'the landing dropped before the rows land and after the copy');
+      'the landing dropped before the rows land, and any a failure left after');
   });
 
   it('goes back to the live source on release', async () => {

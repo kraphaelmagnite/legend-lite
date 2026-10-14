@@ -30,6 +30,9 @@ export type HostOperation =
   /** Rows put into a declared table, each declared column from the source's column of its name. */
   | { readonly op: 'insert'; readonly target: HostName; readonly columns: readonly { readonly target: string; readonly from: string }[]; readonly from: HostSource }
   | { readonly op: 'drop'; readonly kind: 'table' | 'view'; readonly target: HostName }
+  /** A relation renamed in its own schema: `from` takes `target`'s name, `replace` dropping one of it first -- a
+   *  snap's landing swapped in, inside a transaction (snap.ts, D5b): no rows copied. */
+  | { readonly op: 'rename'; readonly kind: 'table' | 'view'; readonly target: HostName; readonly from: HostName; readonly replace?: boolean }
   | { readonly op: 'schema'; readonly database?: string; readonly name: string }
   | { readonly op: 'dropSchema'; readonly database?: string; readonly name: string }
   /** How many rows: one row, one column `n`. */

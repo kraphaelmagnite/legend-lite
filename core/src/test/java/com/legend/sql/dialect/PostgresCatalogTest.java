@@ -108,8 +108,8 @@ class PostgresCatalogTest {
     void theProbeTablesModelCompiles_bytesLeftOut_andItsColumnsReadByPostgres() {
         CatalogModel.Database db = CatalogModel.database("t::DB", "probe", "kinds", PROBE, new Postgres(), false);
         assertEquals(List.of("by"), db.excluded());
-        assertEquals(List.of(new CatalogModel.Conversion("tstz", "CAST(timezone('UTC', \"tstz\") AS TIMESTAMP)")),
-                db.conversions());
+        // a read-only source: its zoned timestamp read as stored under the UTC session, nothing to convert
+        assertEquals(List.of(), db.conversions());
         ExprType root = com.legend.Compiler.query(com.legend.Compiler.compileModel(db.text() + WRAPPER), db.accessor()).resultType();
         Map<String, String> types = new LinkedHashMap<>();
         UpstreamRelationType.columns(root).forEach(c -> types.put(c.name(), UpstreamRelationType.typePath(c.type())));

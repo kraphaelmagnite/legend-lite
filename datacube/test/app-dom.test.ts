@@ -71,6 +71,10 @@ class CountingEngine extends FakeEngine {
   async loadQuery(_target: { readonly table: string }, sql: string, prepare: readonly string[] = []): Promise<void> {
     this.sql.push(...prepare, sql);
   }
+  /** A transaction's statements, with nothing between them (DuckDbEngine.runTransaction: a snap's swap). */
+  async runTransaction(statements: readonly string[]): Promise<void> {
+    this.sql.push(...statements);
+  }
   async answer(sql: string, epoch: number): Promise<ResultTable> {
     this.sql.push(sql);
     if (/count\(\*\)/i.test(sql)) {

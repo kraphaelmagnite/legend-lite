@@ -43,9 +43,11 @@ public final class CatalogModel {
 
     /**
      * The Database element's text; the relation accessor that reads the table
-     * ({@code #>{db.schema.table}#}); the conversions a COPY of the table applies so it holds
-     * the declared types (an upload's rewrite at ingest, a Snap into the tab); and the columns
-     * left out, because their source cannot convert them or no Database type holds them.
+     * ({@code #>{db.schema.table}#}); the conversions a rebuild of the table applies so it holds
+     * the declared types (an upload's rewrite at ingest, a frame's: {@link HostOperations#copyOf}) --
+     * none on a read-only source, which is never rebuilt (a snap of it copies it as it is, under the
+     * UTC session: docs/ONE_PLATFORM_PROGRAM_2026_10_12.md D5b); and the columns left out, because
+     * their source cannot convert them or no Database type holds them.
      */
     public record Database(String text, String accessor, List<Conversion> conversions, List<String> excluded) {
     }
@@ -59,11 +61,11 @@ public final class CatalogModel {
      *                    ingest can; a read-only table cannot). When it cannot, a column that
      *                    needs one to be read at all ({@link CatalogType.Read#CONVERTED}) is left
      *                    out of the Database and named in {@code excluded}; one that needs it only
-     *                    in a copy ({@link CatalogType.Read#COPY_CONVERTED}: a zoned timestamp,
-     *                    read under the UTC session) is declared and read as stored in place, its
-     *                    conversion still listed for a copy of the table to apply. A column no
-     *                    Database type holds ({@link CatalogType.Read#LEFT_OUT}) is left out and
-     *                    named on every source.
+     *                    in a rebuild ({@link CatalogType.Read#COPY_CONVERTED}: a zoned timestamp,
+     *                    read under the UTC session) is declared and read as stored in place, and no
+     *                    conversion is listed (a snap copies it as it is). A column no Database type
+     *                    holds ({@link CatalogType.Read#LEFT_OUT}) is left out and named on every
+     *                    source.
      */
     public static Database database(String path, @com.legend.base.Nullable String schema, String table,
             List<Column> columns, SqlDialect dialect, boolean convertible) {
@@ -98,9 +100,9 @@ public final class CatalogModel {
                 continue;
             }
             lines.add(ident(c.name()) + " " + t.declared() + (c.notNull() ? " NOT NULL" : ""));
-            // what a copy applies: every declared column's conversion (on a read-only source only the
-            // COPY_CONVERTED ones are declared; the source itself reads them as stored)
-            if (t.conversion() != null) {
+            // what a rebuild applies: every declared column's conversion, on a source that converts (a
+            // read-only one is never rebuilt: its COPY_CONVERTED columns read as stored, and a snap copies them so)
+            if (convertible && t.conversion() != null) {
                 conversions.add(new Conversion(c.name(), t.conversion().replace("%s", sqlIdent(c.name()))));
             }
         }

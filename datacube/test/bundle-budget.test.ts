@@ -91,8 +91,12 @@ function startup(bundle = join(DEMO, 'bundle.js')): string[] {
  *  394,000 -> 395,000 (2026-10-13, the program's D5: the page spells no SQL): the demo's trades made in the tab as
  *  Arrow data and put in by DuckDB's Arrow reader, where a SQL statement generated them (demo/boot.ts generateTrades;
  *  engine-client's arrow-ipc.ts arrowIpcStream -- Arrow's table and vector makers; its writer was already here,
- *  DuckDB-WASM's). Measured 394,429, D5's step 5 before it 393,598 (+831). */
-const BUDGET = 395_000;
+ *  DuckDB-WASM's). Measured 394,429, D5's step 5 before it 393,598 (+831).
+ *  395,000 -> 396,000 (2026-10-13, the program's D5b, Studio's review: a re-snap holds no third copy): a snap of the
+ *  tab's own rows streamed a batch at a time into a second connection, and its landing swapped in by one transaction
+ *  in one turn of the query queue (engine-client's duckdb.ts loadQuery and runTransaction, snap.ts). Measured 395,788,
+ *  D5b's step 7 before it 394,961 (+827). */
+const BUDGET = 396_000;
 
 /** The engine page's (demo/engine.html: DataCube on Python's engine, which runs its queries) startup download,
  *  gzipped: no DuckDB-WASM and no compiler. Set 2026-10-08 at its first measure (288,876 bytes) and the app's headroom
