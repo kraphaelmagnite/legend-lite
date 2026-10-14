@@ -136,12 +136,6 @@ public final class TabExports {
         return Folded.of(() -> Boundary.hostOperations(databaseType, operationsJson));
     }
 
-    /** {@link Boundary#snapHeld}. */
-    @JSExport
-    public static String snapHeldOrError(int handle, String lambdaJson, String runtime, String copyJson) {
-        return Folded.of(() -> Boundary.snapHeld(handle, lambdaJson, runtime, copyJson));
-    }
-
     /** {@link Boundary#projectData}. */
     @JSExport
     public static String projectDataOrError(String model, String databaseType) {

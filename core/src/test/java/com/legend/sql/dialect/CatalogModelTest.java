@@ -150,7 +150,7 @@ class CatalogModelTest {
                 catalog("id BIGINT, \"at\" TIMESTAMP WITH TIME ZONE, big UBIGINT"), new DuckDb(), true);
         HostOperations duck = HostOperations.of(new DuckDb());
         HostOperation.Name orders = HostOperation.Name.of("orders");
-        HostOperations.CopyFrom from = new HostOperations.CopyFrom.Relation(orders);
+        HostOperation.Name from = orders;
         assertEquals(List.of("CREATE OR REPLACE TABLE \"orders\" AS SELECT * REPLACE (CAST(timezone('UTC', \"at\") AS "
                 + "TIMESTAMP) AS \"at\", CAST(\"big\" AS DECIMAL(20,0)) AS \"big\") FROM \"orders\""),
                 duck.copyOf(HostOperation.Kind.TABLE, orders, from, db.conversions()));

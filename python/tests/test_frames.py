@@ -176,7 +176,7 @@ class Session(unittest.TestCase):
 
 
 class Conversions(unittest.TestCase):
-    """A column the model declares by a conversion (the writer's own: copySelectList) holds its value exactly."""
+    """A column the model declares by a conversion (the table model's own rebuild) holds its value exactly."""
 
     def test_an_unsigned_64_bit_integer_is_an_exact_decimal(self):
         frame = pa.table({'u': pa.array([2 ** 64 - 1, 1], pa.uint64())})

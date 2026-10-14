@@ -1,0 +1,14 @@
+# c5-timings-tab.mts then c5-timings.py, run 2026-10-13 (Apple silicon laptop)
+== the tab (engine-client's ProjectDatabases on DuckDB-WASM, the tab's planner module)
+trading (6 tables, 39 rows): made and filled 265.2 ms (its name read from the model, its tables filled), the model held for its queries 11.7 ms; first query 50.2 ms (12 rows); repeated (plan + run) 2.0 ms; opened again (its database kept) 7.8 ms
+party, 1,000 rows: made and filled 22.9 ms (its name read from the model, its tables filled), the model held for its queries 2.8 ms; first query 12.3 ms (500 rows); repeated (plan + run) 1.2 ms; opened again (its database kept) 7.5 ms
+party, 100,000 rows: made and filled 1402.7 ms (its name read from the model, its tables filled), the model held for its queries 70.2 ms; first query 19.4 ms (50,000 rows); repeated (plan + run) 11.9 ms; opened again (its database kept) 449.9 ms
+== Python (legend_lite.projects on Python's DuckDB)
+trading (6 tables, 39 rows): made and filled 127.7 ms (its name read from the model, its tables filled, the model held for its queries); first query 0.6 ms (12 rows); repeated (plan + run) 0.9 ms; opened again (its database kept) 2.8 ms
+party, 1,000 rows: made and filled 9.1 ms (its name read from the model, its tables filled, the model held for its queries); first query 0.2 ms (500 rows); repeated (plan + run) 0.4 ms; opened again (its database kept) 2.5 ms
+party, 100,000 rows: made and filled 750.7 ms (its name read from the model, its tables filled, the model held for its queries); first query 6.4 ms (50,000 rows); repeated (plan + run) 8.1 ms; opened again (its database kept) 192.2 ms
+== legend-lite's server (pure/v1 execute, as Query's page asks it)
+trading (6 tables, 39 rows): first execute (model compiled, its database made and filled, the query run) 1,609.4 ms; repeated 25.0 ms
+party, 1,000 rows: first execute (model compiled, its database made and filled, the query run) 44.2 ms; repeated 15.4 ms
+party, 100,000 rows: first execute (model compiled, its database made and filled, the query run) 1,037.5 ms; repeated 79.8 ms
+8 versions of party (1,000 rows each) open at once: first execute, median 23.4 ms; each again, median 9.2 ms

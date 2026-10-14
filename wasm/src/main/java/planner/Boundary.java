@@ -246,8 +246,8 @@ public final class Boundary {
     public static String databaseFromCatalog(String catalogJson) {
         com.legend.json.Json.Obj in = com.legend.json.Json.parseObject(catalogJson);
         com.legend.sql.dialect.CatalogModel.Database db = com.legend.sql.dialect.CatalogModel.database(
-                in.getString("path"), in.getStringOr("schema", null), in.getString("table"), catalogColumns(in),
-                dialectOf(in.getString("databaseType")), in.getBool("convertible"));
+                HostOperationsJson.string(in, "path"), in.getStringOr("schema", null), HostOperationsJson.string(in, "table"),
+                catalogColumns(in), dialectOf(HostOperationsJson.string(in, "databaseType")), in.getBool("convertible"));
         java.util.Map<String, Object> out = new java.util.LinkedHashMap<>();
         out.put("text", db.text());
         out.put("source", sourceOf(db));
@@ -275,12 +275,12 @@ public final class Boundary {
     public static String tableModel(String tableJson) {
         com.legend.json.Json.Obj in = com.legend.json.Json.parseObject(tableJson);
         String pkg = in.getStringOr("pkg", "local");
-        String databaseType = in.getString("databaseType");
+        String databaseType = HostOperationsJson.string(in, "databaseType");
         String snapDatabaseType = in.getStringOr("snapDatabaseType", null);
         java.util.List<com.legend.sql.dialect.CatalogModel.Column> columns = catalogColumns(in);
         com.legend.sql.dialect.SqlDialect dialect = dialectOf(databaseType);
         com.legend.sql.dialect.CatalogModel.Database db = com.legend.sql.dialect.CatalogModel.database(
-                pkg + "::DB", in.getStringOr("schema", null), in.getString("table"), columns, dialect,
+                pkg + "::DB", in.getStringOr("schema", null), HostOperationsJson.string(in, "table"), columns, dialect,
                 in.getBool("convertible"));
         String model = db.text() + "\n" + connectionAndRuntime(pkg, "Conn", "RT", databaseType)
                 + (snapDatabaseType == null ? "" : "\n" + connectionAndRuntime(pkg, "SnapConn", "SnapRT", snapDatabaseType));
@@ -303,69 +303,11 @@ public final class Boundary {
         if (in.has("rebuild")) {
             com.legend.json.Json.Obj r = jsonObject(in, "rebuild");
             out.put("rebuild", db.conversions().isEmpty() ? java.util.List.of()
-                    : com.legend.sql.dialect.HostOperations.of(dialect).copyOf(relationKind(r.getString("kind")),
-                            HostOperationsJson.name(jsonObject(r, "target")),
-                            new com.legend.sql.dialect.HostOperations.CopyFrom.Relation(
-                                    HostOperationsJson.name(jsonObject(r, "from"))),
+                    : com.legend.sql.dialect.HostOperations.of(dialect).copyOf(relationKind(HostOperationsJson.string(r, "kind")),
+                            HostOperationsJson.name(jsonObject(r, "target")), HostOperationsJson.name(jsonObject(r, "from")),
                             db.conversions()));
         }
         return com.legend.json.Json.toCompact(out);
-    }
-
-    /**
-     * A SNAP'S STATEMENTS (docs/ONE_PLATFORM_PROGRAM_2026_10_12.md D5b): the pull -- the cube's Pure, planned over the
-     * model held against its live runtime -- and every statement its copy takes, written here so that a host passes
-     * no SQL back: the count where the rows are, in the live database's SQL; the copy's schema made and its table there
-     * dropped, in the store's; the copy made with each of the source catalog's conversions in its column's place, from
-     * the pulled rows' landing (a pull from another database, its rows loaded there first) or from the pull itself
-     * (rows the store holds); and the landing dropped.
-     * {@code {"live", "store", "target", "landing"?, "catalog"?: {"databaseType", "columns": [catalog rows]}}} in, each
-     * name as a host operation's; {@code {"pull": {"sql","type"}, "count": [..], "converts", "prepare": [..],
-     * "copy": [..], "dropLanding": [..]}} out ({@code converts}: whether any column converts -- with none, a host that
-     * loads the pulled rows into a table may load them into the copy itself).
-     */
-    public static String snapHeld(int handle, String lambdaJson, String runtime, String copyJson) {
-        com.legend.json.Json.Obj in = com.legend.json.Json.parseObject(copyJson);
-        com.legend.sql.dialect.HostOperations live = com.legend.sql.dialect.HostOperations.of(dialectOf(in.getString("live")));
-        com.legend.sql.dialect.HostOperations store =
-                com.legend.sql.dialect.HostOperations.of(dialectOf(in.getString("store")));
-        com.legend.sql.dialect.HostOperation.Name target = HostOperationsJson.name(jsonObject(in, "target"));
-        com.legend.sql.dialect.HostOperation.Name landing = in.has("landing")
-                ? HostOperationsJson.name(jsonObject(in, "landing")) : null;
-        java.util.List<com.legend.sql.dialect.CatalogModel.Conversion> conversions = java.util.List.of();
-        if (in.has("catalog")) {
-            com.legend.json.Json.Obj catalog = jsonObject(in, "catalog");
-            // a source read in place (a warehouse's table): its copy converts what the store must hold converted
-            conversions = com.legend.sql.dialect.CatalogModel.database("snap::DB", target.schema(), target.name(),
-                    catalogColumns(catalog), dialectOf(catalog.getString("databaseType")), false).conversions();
-        }
-        java.util.List<com.legend.sql.dialect.CatalogModel.Conversion> converted = conversions;
-        return MODELS.with(handle, ctx -> {
-            com.legend.plan.QueryPlan pull = com.legend.Compiler.query(ctx,
-                    com.legend.protocol.ProtocolReader.lambda(lambdaJson)).plan(runtime);
-            java.util.List<String> prepare = new java.util.ArrayList<>();
-            if (target.schema() != null) {
-                prepare.addAll(store.statements(new com.legend.sql.dialect.HostOperation.MakeSchema(target.database(),
-                        target.schema())));
-            }
-            prepare.addAll(store.statements(new com.legend.sql.dialect.HostOperation.Drop(
-                    com.legend.sql.dialect.HostOperation.Kind.TABLE, target)));
-            java.util.Map<String, Object> out = new java.util.LinkedHashMap<>();
-            java.util.Map<String, Object> pulled = new java.util.LinkedHashMap<>();
-            pulled.put("sql", pull.sql());
-            pulled.put("type", com.legend.plan.UpstreamRelationType.of(pull.rootType()));
-            out.put("pull", pulled);
-            out.put("count", live.countOf(pull.sql()));
-            out.put("converts", !converted.isEmpty());
-            out.put("prepare", prepare);
-            out.put("copy", store.copyOf(com.legend.sql.dialect.HostOperation.Kind.TABLE, target, landing == null
-                    ? new com.legend.sql.dialect.HostOperations.CopyFrom.PlannedQuery(pull.sql())
-                    : new com.legend.sql.dialect.HostOperations.CopyFrom.Relation(landing), converted));
-            out.put("dropLanding", landing == null ? java.util.List.of()
-                    : store.statements(new com.legend.sql.dialect.HostOperation.Drop(
-                            com.legend.sql.dialect.HostOperation.Kind.TABLE, landing)));
-            return com.legend.json.Json.toCompact(out);
-        });
     }
 
     private static com.legend.json.Json.Obj jsonObject(com.legend.json.Json.Obj o, String field) {
@@ -451,9 +393,15 @@ public final class Boundary {
      *  string parsed. */
     private static java.util.List<com.legend.sql.dialect.CatalogModel.Column> catalogColumns(com.legend.json.Json.Obj in) {
         java.util.List<com.legend.sql.dialect.CatalogModel.Column> columns = new java.util.ArrayList<>();
-        for (com.legend.json.Json.Node n : in.getArr("columns").items()) {
-            com.legend.json.Json.Obj c = (com.legend.json.Json.Obj) n;
-            columns.add(new com.legend.sql.dialect.CatalogModel.Column(c.getString("name"), c.getString("dataType"),
+        if (!(in.get("columns") instanceof com.legend.json.Json.Arr rows)) {
+            throw new IllegalArgumentException("'columns' is an array of catalog rows");
+        }
+        for (com.legend.json.Json.Node n : rows.items()) {
+            if (!(n instanceof com.legend.json.Json.Obj c)) {
+                throw new IllegalArgumentException("a catalog row is an object");
+            }
+            columns.add(new com.legend.sql.dialect.CatalogModel.Column(HostOperationsJson.string(c, "name"),
+                    HostOperationsJson.string(c, "dataType"),
                     c.getStringOr("logicalType", null), intOrNull(c, "precision"), intOrNull(c, "scale"),
                     c.getBoolOr("notNull", false)));
         }

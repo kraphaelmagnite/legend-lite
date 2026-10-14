@@ -119,19 +119,10 @@ final class DuckDbHostOperations implements HostOperations {
     }
 
     @Override
-    public List<String> countOf(String plannedQuery) {
-        return List.of("SELECT count(*) AS n FROM (" + plannedQuery + ")");
-    }
-
-    @Override
-    public List<String> copyOf(HostOperation.Kind kind, HostOperation.Name target, CopyFrom from,
+    public List<String> copyOf(HostOperation.Kind kind, HostOperation.Name target, HostOperation.Name from,
             List<CatalogModel.Conversion> conversions) {
-        String source = switch (from) {
-            case CopyFrom.PlannedQuery q -> "(" + q.sql() + ")";
-            case CopyFrom.Relation r -> name(r.name());
-        };
         return List.of("CREATE OR REPLACE " + kind(kind) + " " + name(target) + " AS SELECT " + copied(conversions)
-                + " FROM " + source);
+                + " FROM " + name(from));
     }
 
     /** A copy's columns: every column, each converted one by DuckDB's star modifier in its place. */

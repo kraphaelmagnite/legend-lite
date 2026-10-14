@@ -4,9 +4,10 @@
 // repeated -- the planner the tab's module (//wasm:planner_dir), answering as the tab's worker does. The same three
 // models as c5-timings.py: the trading demo, and a party model of 1,000 and 100,000 rows.
 //
-// Run from the repository's root after `bazel build //engine-client:engine_client //wasm:planner_dir`, with Node 22:
+// Run from the repository's root after `bazel build --remote_download_all //engine-client:engine_client
+// //wasm:planner_dir` (Bazel 9 leaves a cache hit's files out of bazel-bin without the flag), with Node 22:
 //   node --experimental-strip-types --experimental-wasm-exnref docs/one-platform/evidence/c5-timings-tab.mts "$PWD/bazel-bin"
-// Measured 2026-10-13 (Apple silicon laptop): the runbook's C5 Built notes quote the numbers.
+// Measured 2026-10-13 (Apple silicon laptop): c5-timings.out.txt; the runbook's C5 Built notes quote it.
 
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -73,7 +74,10 @@ for (const [label, model, query, runtime] of [
   let begun = performance.now();
   const { engine } = await projects.engineFor(model, host);
   const filled = performance.now() - begun;
+  // the planner holding the model for its queries (the app's LitePlanner holds it so, beside the keeper)
+  begun = performance.now();
   const handle = Number(value(await ask({ kind: 'hold', model })));
+  const held = performance.now() - begun;
   begun = performance.now();
   const sql = JSON.parse(value(await ask({ kind: 'plan', handle, query, runtime }))).sql as string;
   const first = await engine.run(sql, 0);
@@ -93,7 +97,8 @@ for (const [label, model, query, runtime] of [
     await projects.engineFor(model, host);
     reopened.push(performance.now() - begun);
   }
-  console.log(`${label}: made and filled ${ms(filled)}; first query ${ms(firstMs)} (${first.rowCount.toLocaleString('en')} rows); `
-    + `repeated (plan + run) ${ms(median(repeats))}; opened again (its database kept) ${ms(median(reopened))}`);
+  console.log(`${label}: made and filled ${ms(filled)} (its name read from the model, its tables filled), the model held for `
+    + `its queries ${ms(held)}; first query ${ms(firstMs)} (${first.rowCount.toLocaleString('en')} rows); repeated (plan + run) `
+    + `${ms(median(repeats))}; opened again (its database kept) ${ms(median(reopened))}`);
   await host.close();
 }

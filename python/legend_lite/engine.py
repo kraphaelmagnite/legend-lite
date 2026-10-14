@@ -436,12 +436,10 @@ class _WarehouseTable:
     go."""
 
     def __init__(self, held: compiler.HeldModel, written: dict[str, Any], schema: str, name: str,
-                 where: warehouse.Warehouse, catalog: str, database_type: str, columns: list[dict[str, Any]]) -> None:
+                 where: warehouse.Warehouse, catalog: str, database_type: str = 'DuckDB') -> None:
         self.held = held
         # its catalog's database type (the catalog entry's): what a statement run on the warehouse is written for
         self.database_type = database_type
-        # its catalog rows, as its model was read from them: what the copy's conversions are read from (D5b)
-        self.columns = columns
         self.written = written
         self.schema = schema
         self.name = name
@@ -981,7 +979,7 @@ class Engine:
             if kept is None:
                 self._warehouse_tables[written['model']] = _WarehouseTable(
                     held, written, schema, name, warehouse.Warehouse(signed.session, catalog), catalog,
-                    found['databaseType'], spec['columns'])
+                    found['databaseType'])
                 spare = None
             elif not kept.reads(url, catalog):
                 refusal = (f'{schema}.{name} is open already, with the same columns, from {kept.warehouse.base_url} '
@@ -1029,30 +1027,35 @@ class Engine:
                 # held by another grid already: this one holds the same copy, as it is
                 table.holders += 1
                 return Answer(200, 'application/json', json.dumps(table.frozen).encode('utf-8'))
-            landing = '__legend_lite_snap'
             try:
-                # every statement the native library's (D5b): the copy is this host's, made in its DuckDB, so its
-                # pull is planned by the planner here, whichever plans the page's grids -- the source's every column,
-                # planned alike on each
-                statements = _workers().submit(compiler.snap_held, table.held.handle, asked['pull'], table.runtime, {
-                    'live': table.database_type, 'store': 'DuckDB', 'target': target, 'landing': _host.name(landing),
-                    'catalog': {'databaseType': table.database_type, 'columns': table.columns}}).result()
+                pull = json.loads(asked['pull'])
+            except ValueError:
+                return _said(400, 'a snap\'s pull is its lambda as JSON')
+            if not isinstance(pull, dict) or len(pull.get('body') or []) != 1:
+                return _said(400, 'a snap\'s pull is one relation')
+            # a snap is two ordinary queries, each planned by the page's planner and run where the rows are (D5b): the
+            # pull's count first, a cheap check against the limit (the pull's size), then the pull
+            counting = json.dumps({'_type': 'lambda', 'parameters': pull.get('parameters', []),
+                                   'body': [{'_type': 'func', 'function': 'size', 'parameters': pull['body']}]})
+            on = _on_planner_threads(self.planner)
+            try:
+                count_plan = on(self.planner.read, on(self.planner.plan, counting, table.held, table.runtime))
+                pull_plan = on(self.planner.read, on(self.planner.plan, asked['pull'], table.held, table.runtime))
             except LegendError as refused:
                 return _said(422, f'the snap could not be planned: {refused}')
             try:
-                # counted where the rows are, before anything is copied (the tab's preflight), in the catalog's own
-                # database's SQL (a Postgres catalog's, Postgres's)
-                counted = _arrow_of(table.warehouse.arrow_chunks(statements['count'][0]))
+                counted = _arrow_of(table.warehouse.arrow_chunks(count_plan.sql))
                 rows = int(counted.column(0)[0].as_py()) if counted.num_rows else 0
                 if rows > _MAX_SNAP_ROWS:
                     return _said(422, f'{rows:,} rows exceeds the {_MAX_SNAP_ROWS:,} row snap limit. Narrow the filter, '
                                       'or stay live.')
                 receipt: dict[str, Any] = {}
-                pulled = _arrow_of(table.warehouse.arrow_chunks(statements['pull']['sql'], receipt.update))
+                pulled = _arrow_of(table.warehouse.arrow_chunks(pull_plan.sql, receipt.update))
             except warehouse.SessionExpired as expired:
                 return _said(401, str(expired))
             except (warehouse.WarehouseError, pa.ArrowInvalid) as refused:
                 return _said(422, f'the snap could not be pulled: {refused}')
+            landing = '__legend_lite_snap'
             with self.frames.holding():
                 if not table.snapped and (table.schema.lower() == 'main' and self.frames.taken(table.name)
                                           or self._table_exists(database, table.schema, table.name)):
@@ -1061,15 +1064,14 @@ class Engine:
                 connection = self.frames.connection
                 try:
                     if not self._schema_exists(database, table.schema):
+                        _host.run(connection, {'op': 'schema', 'database': database, 'name': table.schema})
                         table.made_schema = True
-                    # the copy's schema made and the tables there dropped, then the pulled rows registered as its
-                    # landing and copied, each conversion in its column's place
-                    for statement in statements['prepare']:
-                        connection.execute(statement)
+                    # the pulled rows registered as the landing (DuckDB's own Arrow scan), the copy made of them --
+                    # the one there replaced only once it is made -- and the landing let go
                     connection.register(landing, pulled)
                     try:
-                        for statement in statements['copy']:
-                            connection.execute(statement)
+                        _host.run(connection, {'op': 'relation', 'kind': 'table', 'target': target, 'replace': True,
+                                               'from': {'relation': _host.name(landing)}})
                     finally:
                         connection.unregister(landing)
                 except duckdb.Error as refused:

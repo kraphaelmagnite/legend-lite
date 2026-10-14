@@ -35,7 +35,6 @@ import { relationColumns, type Plan, type PlanColumn } from '../../engine-client
 import type { SeedTable, TableSeed } from '../../engine-client/src/model-data.ts';
 import type { ProjectDataStatements } from '../../engine-client/src/project-data.ts';
 import type { HostOperation } from '../../engine-client/src/host-operations.ts';
-import type { SnapCopy, SnapStatements } from '../../engine-client/src/snap.ts';
 import { answer as answerOf, type PlannerModule } from '../../engine-client/src/legend/planner-answer.ts';
 import type { PlannerWorker, RequestBody, Response } from '../../engine-client/src/legend/planner-protocol.ts';
 
@@ -463,17 +462,6 @@ export class LitePlanner implements Planner, TableModels, ModelWriter {
   planRequest(query: Lambda): { readonly lambda: string; readonly model: string; readonly runtime: string } {
     const { model, runtime } = this.#options;
     return { lambda: toJson(this.#overMapping(query)), model, runtime };
-  }
-
-  /**
-   * A snap's statements (D5b, Boundary.snapHeld): `pull` planned over this planner's model as `plan` plans it, and its
-   * count's and its copy's, written for `copy` -- where the rows are and go, the copy's name, the source's catalog.
-   */
-  async snap(pull: Lambda, copy: SnapCopy): Promise<SnapStatements> {
-    const { lambda, runtime } = this.planRequest(pull);
-    const handle = await this.#handle();
-    const answer = await this.#call({ kind: 'snap', handle, lambda, runtime, copy: JSON.stringify(copy) });
-    return JSON.parse(decode(answer, pull)) as SnapStatements;
   }
 
   /** A plan's answer (planJson's, tagged) read as this planner reads its own: its SQL and the compiler's columns. */

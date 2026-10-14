@@ -33,7 +33,7 @@ final class HostOperationsJson {
         return out;
     }
 
-    /** Each operation's fields beside {@code op}: any other is refused by name -- an operation carries data, never SQL. */
+    /** Each operation's fields beside {@code op}: any other refused by name -- an operation carries data, never SQL. */
     private static final Map<String, java.util.Set<String>> FIELDS = Map.ofEntries(
             Map.entry("relation", java.util.Set.of("kind", "target", "replace", "from")),
             Map.entry("insert", java.util.Set.of("target", "columns", "from")),
@@ -68,6 +68,7 @@ final class HostOperationsJson {
                 throw new IllegalArgumentException("a host's " + op + " operation has no field '" + field + "'");
             }
         }
+        // what an operation holds is checked as deep as it goes: its names, its source and its columns (name, source)
         return switch (op) {
             case "relation" -> new HostOperation.MakeRelation(kind(string(o, "kind")), name(object(o, "target")),
                     bool(o, "replace"), source(object(o, "from")));
@@ -109,18 +110,24 @@ final class HostOperationsJson {
         };
     }
 
-    /** A relation's name, as an operation's JSON writes it (the snap question's names too: Boundary.snapHeld). */
+    /** A relation's name, as an operation's JSON writes it (the table model's rebuild's too: Boundary.tableModel). */
     static HostOperation.Name name(Json.Obj o) {
+        only(o, "name", java.util.Set.of("database", "schema", "name", "declared"));
         return new HostOperation.Name(stringOrNull(o, "database"), stringOrNull(o, "schema"), string(o, "name"),
                 bool(o, "declared"));
     }
 
     private static HostOperation.Source source(Json.Obj o) {
+        if (o.fields().size() != 1) {
+            throw new IllegalArgumentException("a source is one of a relation, a file or a remote file, not "
+                    + o.fields().keySet());
+        }
         if (o.has("relation")) {
             return new HostOperation.Source.Relation(name(object(o, "relation")));
         }
         if (o.has("file")) {
             Json.Obj f = object(o, "file");
+            only(f, "file", java.util.Set.of("at", "format"));
             String format = string(f, "format");
             return new HostOperation.Source.File(string(f, "at"), switch (format) {
                 case "csv" -> HostOperation.FileFormat.CSV;
@@ -132,6 +139,7 @@ final class HostOperationsJson {
         }
         if (o.has("remote")) {
             Json.Obj r = object(o, "remote");
+            only(r, "remote file", java.util.Set.of("url", "format"));
             String format = string(r, "format");
             return new HostOperation.Source.Remote(string(r, "url"), switch (format) {
                 case "csv" -> HostOperation.RemoteFormat.CSV;
@@ -150,6 +158,7 @@ final class HostOperationsJson {
         List<HostOperation.Column> out = new ArrayList<>();
         for (Json.Node n : arr.items()) {
             Json.Obj c = object(n, "a column");
+            only(c, "column", java.util.Set.of("target", "from"));
             out.add(new HostOperation.Column(string(c, "target"), string(c, "from")));
         }
         return out;
@@ -194,11 +203,26 @@ final class HostOperationsJson {
         return object(o.get(field), "an operation's " + field);
     }
 
-    private static String string(Json.Obj o, String field) {
-        if (!(o.has(field) && o.get(field) instanceof Json.Str s)) {
-            throw new IllegalArgumentException("an operation's " + field + " is a string");
+    /** A string field, read by its kind (a missing or other field refused by name, never a failed cast: the tab's
+     *  WebAssembly traps on one) -- the boundary's readers of a host's JSON use it too (Boundary.tableModel). */
+    static String string(Json.Obj o, String field) {
+        if (!o.has(field)) {
+            // said as the JSON reader says it of a missing field (a refusal's words a host may read)
+            throw new IllegalArgumentException("Missing required field: " + field);
+        }
+        if (!(o.get(field) instanceof Json.Str s)) {
+            throw new IllegalArgumentException("'" + field + "' is a string");
         }
         return s.value();
+    }
+
+    /** Refused by name: a field of {@code o} beside {@code fields} -- data the platform does not read is no data. */
+    static void only(Json.Obj o, String what, java.util.Set<String> fields) {
+        for (String field : o.fields().keySet()) {
+            if (!fields.contains(field)) {
+                throw new IllegalArgumentException("a host's " + what + " has no field '" + field + "'");
+            }
+        }
     }
 
     private static @com.legend.base.Nullable String stringOrNull(Json.Obj o, String field) {

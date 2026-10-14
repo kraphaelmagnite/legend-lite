@@ -378,15 +378,14 @@ legend_java_library(
     # not yet written to the null discipline (Bazel workplan P1-20: NullAway forced on everywhere, 2026-10-04, found 792 errors in the first wave)
     nullaway = False,
     testonly = True,
-    # PostgresArmTest, SqlIslandPostgresTest, SqlParityPostgresTest and HostOperationsPostgresTest are their own
-    # targets' alone: they need the embedded Postgres in their runfiles
+    # PostgresArmTest, SqlIslandPostgresTest and SqlParityPostgresTest are their own targets' alone: they need the
+    # embedded Postgres in their runfiles
     srcs = glob(
         ["src/test/java/**/*.java"],
         exclude = [
             "src/test/java/com/legend/server/PostgresArmTest.java",
             "src/test/java/com/legend/server/SqlIslandPostgresTest.java",
             "src/test/java/com/legend/server/SqlParityPostgresTest.java",
-            "src/test/java/com/legend/sql/dialect/HostOperationsPostgresTest.java",
             "src/test/java/com/legend/integration/SqlParityTest.java",
             # the shared test cases are :test_cases's
             "src/test/java/com/legend/testcases/*.java",
@@ -611,29 +610,6 @@ junit_test(
     deps = [
         ":core",
         ":test_cases",
-        "//testing",
-        "@maven_test//:org_junit_jupiter_junit_jupiter_api",
-    ],
-    visibility = ["//gates:__pkg__"],
-)
-
-# Snap's preflight count as Postgres's host operations write it (docs/ONE_PLATFORM_PROGRAM_2026_10_12.md D5), run on the
-# embedded Postgres 16: the count a warehouse whose catalog is Postgres answers before a copy
-junit_test(
-    name = "host_operations_postgres_test",
-    memory_mb = 768,
-    size = "medium",
-    srcs = ["src/test/java/com/legend/sql/dialect/HostOperationsPostgresTest.java"],
-    data = [
-        "@embedded_postgres//:pg/PG_ROOT",
-        "@embedded_postgres//:postgres",
-    ],
-    jvm_flags = ["-Dembedded.postgres.root=$(rlocationpath @embedded_postgres//:pg/PG_ROOT)"],
-    select = ["--select-class=com.legend.sql.dialect.HostOperationsPostgresTest"],
-    runtime_deps = [":drivers"],
-    target_compatible_with = EMBEDDED_POSTGRES_COMPATIBLE,
-    deps = [
-        ":core",
         "//testing",
         "@maven_test//:org_junit_jupiter_junit_jupiter_api",
     ],

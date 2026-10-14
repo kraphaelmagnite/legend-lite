@@ -9,7 +9,6 @@ import { JSDOM } from 'jsdom';
 import { CubeApp } from '../src/app.ts';
 import type { Planner } from '../src/cube.ts';
 import type { Plan, PlanColumn } from '../../engine-client/src/relation-type.ts';
-import type { SnapStatements } from '../../engine-client/src/snap.ts';
 import type { ResultTable } from '../../engine-client/src/result.ts';
 import { DEFAULT_CONFIGURATION } from '../src/config.ts';
 import type { CubeSnapshot } from '../src/snapshot.ts';
@@ -68,6 +67,10 @@ class StubEngine extends FakeEngine {
 class CountingEngine extends FakeEngine {
   readonly name = 'counting';
   readonly sql: string[] = [];
+  /** A query's rows loaded into a table of this store (DuckDbEngine.loadQuery: a snap of its own rows). */
+  async loadQuery(_target: { readonly table: string }, sql: string, prepare: readonly string[] = []): Promise<void> {
+    this.sql.push(...prepare, sql);
+  }
   async answer(sql: string, epoch: number): Promise<ResultTable> {
     this.sql.push(sql);
     if (/count\(\*\)/i.test(sql)) {
@@ -99,14 +102,6 @@ class StubPlanner implements Planner {
   async plan(query: Lambda): Promise<Plan> {
     this.queries.push(query);
     return { sql: 'SELECT 1', columns: [] };
-  }
-  /** A snap's statements, as a planner answers them (Boundary.snapHeld): the stand-in's own, for the screen's tests. */
-  async snap(pull: Lambda): Promise<SnapStatements> {
-    this.queries.push(pull);
-    return {
-      pull: { sql: 'SELECT 1' }, count: ['SELECT count(*) AS n FROM (SELECT 1)'], converts: false, prepare: [],
-      copy: ['CREATE OR REPLACE TABLE "TRADES_SNAP" AS SELECT * FROM (SELECT 1)'], dropLanding: [],
-    };
   }
   async relationType(): Promise<PlanColumn[]> {
     return [];

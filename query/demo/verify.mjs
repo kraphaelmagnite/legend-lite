@@ -20,6 +20,7 @@ import { dirname, extname, join, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { chromium } from 'playwright';
 import { runfileFromEnv, runfilesRoot } from '../../tools/js/runfiles.mts';
+import { loadWarehouseFixture } from './warehouse-fixture.mjs';
 
 // every input by its runfiles path from the BUILD file's env (Bazel workplan P1-24, tools/js/runfiles.mts; no `../..`
 // arithmetic): the site (its index.html names the package's directory), legend-lite's server launcher (one file,
@@ -110,22 +111,9 @@ const warehouseUrl = new Promise((ok, fail) => {
 });
 warehouseUrl.catch(() => {});
 
-/**
- * The warehouse's fixture (demo/models/trading-seed.sql), loaded as its owner through the warehouse's own API before
- * its suite -- a real server's data, never the page's to load (docs/ONE_PLATFORM_PROGRAM_2026_10_12.md D5b).
- */
+/** The warehouse's fixture loaded as its owner before its suite (warehouse-fixture.mjs: no page loads its data). */
 async function seedWarehouse() {
-  const url = await warehouseUrl;
-  const owner = (await (await fetch(`${url}/sql/v1/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ user: 'alice', password: 'alice-pw' }) })).json()).token;
-  for (const line of (await readFile(join(ROOT, 'demo', 'models', 'trading-seed.sql'), 'utf8')).split('\n')) {
-    const sql = line.trim();
-    if (sql === '' || sql.startsWith('--')) continue;
-    const said = await (await fetch(`${url}/sql/v1/statements`, { method: 'POST',
-      headers: { Authorization: `Bearer ${owner}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sql, catalog: 'main', waitMs: 30_000 }) })).json();
-    if (said.state !== 'succeeded') throw new Error(`the warehouse's fixture: ${sql}: ${JSON.stringify(said)}`);
-  }
+  await loadWarehouseFixture(await warehouseUrl, { user: 'alice', password: 'alice-pw' });
 }
 
 async function waitForEngine() {

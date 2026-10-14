@@ -10,7 +10,8 @@ import { DuckDbEngine, type ArrowishConnection } from '../src/duckdb.ts';
 import type { WasmGrammar } from '../src/legend/wasm-grammar.ts';
 import { loadPlanner, snapPlannerFor } from './planner.ts';
 import { accessor, element, from, type Lambda } from '../../pure-protocol/src/index.ts';
-import { SnapManager, SnapRefusal, type SnapPlanner } from '../src/snap.ts';
+import { SnapManager, SnapRefusal, type RemoteSource, type SnapPlanner } from '../src/snap.ts';
+import { Table, TimestampMillisecond, Utf8, tableToIPC, vectorFromArray } from 'apache-arrow';
 
 /** The live source, and where a snap goes: the model would declare both. */
 const LIVE = element('trades');
@@ -23,6 +24,7 @@ Database t::DB
   Table trades (region BIGINT, book BIGINT, year INTEGER, notional DOUBLE)
   Table trades_frozen (region BIGINT, book BIGINT, year INTEGER, notional DOUBLE)
   Table huge (i BIGINT)
+  Table zoned (region VARCHAR(8), at TIMESTAMP)
 )
 
 ###Connection
@@ -82,7 +84,32 @@ before(async () => {
   );
   // past the row ceiling, counted without being made (a view of a range)
   await engine.run('CREATE VIEW huge AS SELECT i FROM range(20000000) t(i)', 0);
+  // the warehouse's table a pull reads (counted there: this DuckDB stands in for it)
+  await engine.run("CREATE TABLE zoned AS SELECT * FROM (VALUES ('EMEA', TIMESTAMP '2024-01-01 10:00:00'), "
+    + "('AMER', TIMESTAMP '2024-01-02 11:00:00')) t(region, \"at\")", 0);
 });
+
+/** `zoned`'s rows as a warehouse streams them: one Arrow IPC stream a chunk. */
+const zonedRows = (): Uint8Array => tableToIPC(new Table({
+  region: vectorFromArray(['EMEA', 'AMER'], new Utf8()),
+  at: vectorFromArray([new Date('2024-01-01T10:00:00Z'), new Date('2024-01-02T11:00:00Z')], new TimestampMillisecond()),
+}), 'stream');
+
+/** A warehouse: its count run on this DuckDB, its pull's rows streamed -- or cut short after the first chunk. */
+class Warehouse implements RemoteSource {
+  readonly databaseType = 'DuckDB';
+  cut = false;
+  run(sql: string, epoch: number) {
+    return engine.run(sql, epoch);
+  }
+  async *arrowChunks(): AsyncIterable<Uint8Array> {
+    yield zonedRows();
+    if (this.cut) throw new Error('the connection dropped');
+  }
+}
+
+const tableNamed = async (name: string): Promise<number> => Number((await engine.run(
+  `SELECT count(*) AS n FROM duckdb_tables() WHERE table_name = '${name}'`, 0)).columns[0]?.values[0]);
 
 after(async () => {
   await engine?.close();
@@ -163,6 +190,31 @@ describe('SnapManager', () => {
     } as never]), /relation operation has no field 'selectList'/);
     await assert.rejects(planner.hostOperations('DuckDB', [{ op: 'count', from: { query: 'SELECT 1' } } as never]),
       /a source is a relation, a file or a remote file/);
+  });
+
+  it('a pull cut short keeps the last snap and leaves no landing behind: the next lands afresh', async () => {
+    const warehouse = new Warehouse();
+    const s = new SnapManager(engine, warehouse, planner);
+    const into = { target: target('snap_zoned') };
+    assert.equal((await s.snap(snaps, pullOf('zoned', ['region', 'at']), 1, into)).rowCount, 2);
+    warehouse.cut = true;
+    await assert.rejects(() => s.snap(snaps, pullOf('zoned', ['region', 'at']), 2, into), /the connection dropped/);
+    assert.equal(await tableNamed('snap_zoned__pulled'), 0, 'the landing a cut pull began is gone');
+    const kept = await engine.run('SELECT count(*) AS n FROM snap_zoned', 3);
+    assert.equal(Number(kept.columns[0]?.values[0]), 2, 'the last snap is still there');
+    warehouse.cut = false;
+    const info = await s.snap(snaps, pullOf('zoned', ['region', 'at']), 4, into);
+    assert.equal(info.rowCount, 2);
+    assert.equal(await tableNamed('snap_zoned__pulled'), 0);
+  });
+
+  it('refuses SQL in an operation\'s nested field (D5b)', async () => {
+    await assert.rejects(planner.hostOperations('DuckDB', [{
+      op: 'count', from: { relation: { name: 't' }, query: 'SELECT 1' },
+    } as never]), /a source is one of a relation, a file or a remote file/);
+    await assert.rejects(planner.hostOperations('DuckDB', [{
+      op: 'drop', kind: 'table', target: { name: 't', sql: 'DROP TABLE x' },
+    } as never]), /name has no field 'sql'/);
   });
 
   it('gives each snap its own table so two can coexist', async () => {

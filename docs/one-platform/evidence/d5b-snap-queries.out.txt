@@ -1,0 +1,18 @@
+# docs/one-platform/evidence/d5b-snap-queries.py, run 2026-10-13 (Apple silicon laptop; DuckDB 1.5.5; legend-engine 4.145 at 127.0.0.1:6300)
+== 1. a pull's count, on both planners (12 trades, one TRADER_ID NULL)
+the pull's size:
+  legend-lite   SELECT (SELECT COUNT(*) FROM "TRADING"."TRADE" AS t0) AS value  -> [12]
+  legend-engine select count(*) from TRADING.TRADE as "trade_0"  -> [12]
+a window count of a column (TRADER_ID has a NULL):
+  legend-lite   SELECT t0.TRADE_ID, t0.TRADER_ID, COUNT(t0.TRADER_ID) OVER () AS n FROM "TRADING"."TRADE" AS t0  -> [11]
+  legend-engine select "trade_0".TRADE_ID as "TRADE_ID", "trade_0".TRADER_ID as "TRADER_ID", count("trade_0".TRADER_ID) over () as "n" from TRADING.TRADE as "trade_0"  -> [11]
+a window count of a constant:
+  legend-lite   SELECT t0.TRADE_ID, t0.TRADER_ID, COUNT(*) OVER () AS n FROM "TRADING"."TRADE" AS t0  -> [12]
+  legend-engine select "trade_0".TRADE_ID as "TRADE_ID", "trade_0".TRADER_ID as "TRADER_ID", count(1) over () as "n" from TRADING.TRADE as "trade_0"  -> [12]
+== 2. a zoned timestamp, copied as is and converted, against the warehouse it came from
+the pull, as Arrow: timestamp[us, tz=UTC]
+every row: as is = live, converted = live; types live {'region': 'string', 'at': 'timestamp[us, tz=UTC]'}, as is {'region': 'string', 'at': 'timestamp[us, tz=UTC]'}, converted {'region': 'string', 'at': 'timestamp[us]'}
+filter by time: as is = live, converted = live; types live {'region': 'string', 'at': 'timestamp[us, tz=UTC]'}, as is {'region': 'string', 'at': 'timestamp[us, tz=UTC]'}, converted {'region': 'string', 'at': 'timestamp[us]'}
+date parts: as is = live, converted = live; types live {'region': 'string', 'y': 'int64', 'm': 'int64', 'd': 'int64', 'h': 'int64'}, as is {'region': 'string', 'y': 'int64', 'm': 'int64', 'd': 'int64', 'h': 'int64'}, converted {'region': 'string', 'y': 'int64', 'm': 'int64', 'd': 'int64', 'h': 'int64'}
+group by day: as is = live, converted = live; types live {'day': 'date32[day]', 'n': 'int64'}, as is {'day': 'date32[day]', 'n': 'int64'}, converted {'day': 'date32[day]', 'n': 'int64'}
+max and min: as is = live, converted = live; types live {'region': 'string', 'hi': 'timestamp[us, tz=UTC]', 'lo': 'timestamp[us, tz=UTC]'}, as is {'region': 'string', 'hi': 'timestamp[us, tz=UTC]', 'lo': 'timestamp[us, tz=UTC]'}, converted {'region': 'string', 'hi': 'timestamp[us]', 'lo': 'timestamp[us]'}

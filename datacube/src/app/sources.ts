@@ -403,8 +403,6 @@ export function pageSources(d: SourcesOf): PageSources {
   const snapOf = (l: LocalEngine, o: CatalogObject, m: InferredModel & { readonly snapRuntime: string }): { snapTarget: SnapTarget } => ({
     snapTarget: {
       schema: o.schema, table: o.name, source: m.source,
-      // the copy's conversions the planner's, from the table's catalog as its model was read (D5b)
-      catalog: { databaseType: o.databaseType, columns: o.columns.map((c) => ({ ...c, dataType: c.type })) },
       planner: l.another(m.model, m.snapRuntime, { bitColumns: m.bitColumns }),
       host: l.tables,
     },

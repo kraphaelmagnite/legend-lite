@@ -149,6 +149,8 @@ node_test(
     data = [
         ":engine_client",
         ":node_modules/@duckdb/duckdb-wasm",
+        # a warehouse's pulled rows, as Arrow (D5b: a pull cut short)
+        ":node_modules/apache-arrow",
         "test/planner.ts",
     ],
     entry_point = "test/snap.test.ts",

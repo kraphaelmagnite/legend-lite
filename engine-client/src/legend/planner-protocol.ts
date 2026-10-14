@@ -23,7 +23,6 @@ export const REQUEST_KINDS = [
   'sessionSetup',
   'projectData',
   'hostOperations',
-  'snap',
   'warm',
 ] as const;
 
@@ -49,7 +48,7 @@ export type RequestBody =
   // plan's answer from the one value the host's database wrote running it (C1)
   | { readonly kind: 'executePlan'; readonly body: string; readonly models: string }
   | { readonly kind: 'executeAnswer'; readonly plan: string; readonly wire: string }
-  // a model's test data as the statements the server seeds DuckDB with, and each table's names as they spell it
+  // a model's test data as the statements the server seeds DuckDB with, and each table's declared column names
   | { readonly kind: 'testData'; readonly model: string; readonly database: string; readonly tables: string }
   // what a session of a database runs before it is queried, so that it answers as the planner's SQL expects
   | { readonly kind: 'sessionSetup'; readonly databaseType: string }
@@ -57,9 +56,6 @@ export type RequestBody =
   | { readonly kind: 'projectData'; readonly model: string; readonly databaseType: string }
   // a host's named operations on its own database of that type (D5): a JSON array of them, each answered its statements
   | { readonly kind: 'hostOperations'; readonly databaseType: string; readonly operations: string }
-  // a snap's statements (D5b): its pull, a query's protocol JSON planned against a model held, and its count's and its
-  // copy's, the copy as JSON (where the rows are and go, the copy's name, the source's catalog)
-  | { readonly kind: 'snap'; readonly handle: number; readonly lambda: string; readonly runtime: string; readonly copy: string }
   // the planner's boot layer built for a model now, before a person waits on it
   | { readonly kind: 'warm'; readonly model: string };
 

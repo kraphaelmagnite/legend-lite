@@ -53,6 +53,8 @@ export interface ArrowishConnection {
     buffer: Uint8Array,
     options: { name: string; schema?: string; create?: boolean },
   ): void | Promise<void>;
+  /** Load an answer's Arrow table into a table (DuckDB-WASM's own Arrow insert): how a snap of this store lands. */
+  insertArrowTable?(table: ArrowishTable, options: { name: string; schema?: string; create?: boolean }): void | Promise<void>;
   close?(): void | Promise<void>;
 }
 
@@ -388,6 +390,27 @@ export class DuckDbEngine implements QueryEngine {
         return;
       }
       onChunk(typedByPlan(await this.#whole(plan.sql, epoch, signal, started), plan));
+    });
+  }
+
+  /**
+   * Make `target` of the rows of `sql`, a planned query on this connection (a snap of this store: D5b): its Arrow
+   * answer handed to DuckDB's own Arrow insert, no statement written around the query. `prepare`, the planner's
+   * statements (the target's schema made, a table there dropped), first. On the query queue, as loadArrow.
+   */
+  async loadQuery(
+    target: { readonly schema?: string; readonly table: string },
+    sql: string,
+    prepare: readonly string[] = [],
+  ): Promise<void> {
+    const insert = this.#conn.insertArrowTable;
+    if (typeof insert !== 'function') {
+      throw new Error('this DuckDB connection cannot load Arrow data');
+    }
+    return this.#serialised(async () => {
+      for (const statement of prepare) await this.#conn.query(statement);
+      const rows = await this.#conn.query(sql);
+      await insert.call(this.#conn, rows, { name: target.table, ...(target.schema ? { schema: target.schema } : {}), create: true });
     });
   }
 

@@ -216,10 +216,8 @@ async function run(): Promise<void> {
     const pure = levelLambda(snapshot, { level: 1, parent: [] });
     const liveOut = await new PlanThenRun(own, live).run(pure, snapshot);
     const snaps = new SnapManager(local, live, planner);
-    await snaps.snap(own, from(m.source).select(COLUMNS).lambda(), 0, { target: {
-      schema: trades.schema, table: trades.name, source: m.source,
-      catalog: { databaseType: 'DuckDB', columns: trades.columns.map((c) => ({ ...c, dataType: c.type })) },
-    } });
+    await snaps.snap(own, from(m.source).select(COLUMNS).lambda(), 0,
+      { target: { schema: trades.schema, table: trades.name, source: m.source } });
     const localOut = await new PlanThenRun(own, local).run(pure, snapshot);
     equal(shape(localOut.rows, true), shape(liveOut.rows, true), 'live and snapped:');
     equal(liveOut.rows.rowCount, 4, 'groups:');

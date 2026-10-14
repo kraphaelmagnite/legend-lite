@@ -4,11 +4,12 @@ filled the first time a query over its model asks, then that query, the first ti
 pure/v1 execute, as Query's page asks it). Three models: the trading demo (query/demo/models: six tables, 39 rows), and
 a party model whose one table holds 1,000 and 100,000 rows (a Data element as a person writes one, CSV text).
 
-Run from the repository's root after `bazel build //native:compiler //core:server`, on a Python with duckdb and pyarrow:
+Run from the repository's root after `bazel build --remote_download_all //native:compiler //core:server` (Bazel 9 leaves
+a cache hit's files out of bazel-bin without the flag), on a Python with duckdb and pyarrow:
   LEGEND_LITE_LIBRARY=<bazel-bin/native's libcompiler> PYTHONPATH=python python3 \\
     docs/one-platform/evidence/c5-timings.py bazel-bin/core/server
 It prints one line per measure (milliseconds, the median of five runs where a run repeats).
-Measured 2026-10-13 (Apple silicon laptop): the runbook's C5 Built notes quote the numbers.
+Measured 2026-10-13 (Apple silicon laptop): c5-timings.out.txt; the runbook's C5 Built notes quote it.
 """
 
 import json
@@ -126,7 +127,8 @@ def on_python() -> None:
                 project.cursor.execute(plan.sql).fetchall()
                 repeats.append(time.perf_counter() - opened)
             reopened.append(opened - begun)
-        print(f'{label}: held and its database made and filled {ms(filled)}; first query {ms(first)} ({len(rows):,} rows); '
+        print(f'{label}: made and filled {ms(filled)} (its name read from the model, its tables filled, the model held '
+              f'for its queries); first query {ms(first)} ({len(rows):,} rows); '
               f'repeated (plan + run) {ms(statistics.median(repeats))}; opened again (its database kept) '
               f'{ms(statistics.median(reopened))}')
         connection.close()

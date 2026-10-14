@@ -1069,7 +1069,8 @@ class WarehouseOnPython(unittest.TestCase):
                 if on_receipt is not None:
                     on_receipt({'statementId': 's1', 'serverRows': 3, 'as': self.principal, 'where': 'the warehouse at wh'})
                 outer.pulls += 1
-                rows = (pa.table({'n': pa.array([outer.count], pa.int64())}) if sql.startswith('SELECT count(*)')
+                # a snap's count, as the planner writes the pull's size (COUNT(*) over it), or the pull's rows
+                rows = (pa.table({'n': pa.array([outer.count], pa.int64())}) if 'COUNT(*)' in sql.upper()
                         else pa.table({'desk': ['FX', 'EQ', 'FX'], 'qty': pa.array([10, 5, 3], pa.int32())}))
                 sink = pa.BufferOutputStream()
                 with pyarrow.ipc.new_stream(sink, rows.schema) as w:
@@ -1168,13 +1169,16 @@ class WarehouseOnPython(unittest.TestCase):
 
     def test_a_copy_that_fails_leaves_nothing(self):
         m = self.opened()
-        # a copy DuckDB refuses: it fails after its schema is made (the planner's statements, one made to fail here)
-        from legend_lite import compiler
-        real = compiler.snap_held
+        # a copy DuckDB refuses: it fails after its schema is made (the copy's operation made to fail here)
+        import duckdb
+        from legend_lite import _host
+        real = _host.run
 
-        def failing(*args):
-            return {**real(*args), 'copy': ['CREATE TABLE "trading"."POSITIONS" AS SELECT no_such_function(1)']}
-        with mock.patch.object(compiler, 'snap_held', failing):
+        def failing(connection, *operations):
+            if any(o.get('op') == 'relation' and o['target'].get('name') == 'POSITIONS' for o in operations):
+                raise duckdb.Error('the copy failed')
+            return real(connection, *operations)
+        with mock.patch.object(_host, 'run', failing):
             status, body = self.call({'op': 'snap', 'model': m['model'], 'pull': self.query(m)})
         self.assertEqual(status, 422, body)
         self.assertIn('could not be copied', body.decode())

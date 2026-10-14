@@ -855,27 +855,28 @@ they land), an audit.
     with no Data rows;
   - all of `//gates:datacube`, `//gates:ui` and `//gates:sdlc` after step 3 (182 tests), `//core:core_tests`,
     `//core:guardrails` and both stress suites after step 6.
-- **Timed 2026-10-13 (D5b's step 6; Apple silicon laptop; `docs/one-platform/evidence/c5-timings.py` for Python and
-  the server, `c5-timings-tab.mts` for the tab, each run as its header says):**
+- **Timed 2026-10-13 (D5b; Apple silicon laptop; `docs/one-platform/evidence/c5-timings.py` for Python and the server,
+  `c5-timings-tab.mts` for the tab, each run as its header says; their output `c5-timings.out.txt`):**
 
   | model | where | made and filled | first query | repeated | opened again |
   |---|---|---|---|---|---|
-  | trading demo (6 tables, 39 rows) | Python | 132 ms | 0.6 ms | 0.7 ms | 2.6 ms |
-  | | the tab | 266 ms | 51 ms | 2.0 ms | 7.5 ms |
-  | | the server | 2,110 ms (its first request) | | 32 ms | |
-  | party, 1,000 rows | Python | 9 ms | 0.3 ms | 0.4 ms | 2.5 ms |
-  | | the tab | 25 ms | 13 ms | 1.2 ms | 7.3 ms |
-  | | the server | 41 ms | | 16 ms | |
-  | party, 100,000 rows | Python | 742 ms | 6.7 ms | 7.8 ms | 181 ms |
-  | | the tab | 1,365 ms | 19 ms | 11 ms | 438 ms |
-  | | the server | 946 ms | | 71 ms | |
+  | trading demo (6 tables, 39 rows) | Python | 128 ms | 0.6 ms | 0.9 ms | 2.8 ms |
+  | | the tab | 265 ms (+12 ms the model held) | 50 ms | 2.0 ms | 7.8 ms |
+  | | the server | 1,609 ms (its first request) | | 25 ms | |
+  | party, 1,000 rows | Python | 9 ms | 0.2 ms | 0.4 ms | 2.5 ms |
+  | | the tab | 23 ms (+3 ms) | 12 ms | 1.2 ms | 7.5 ms |
+  | | the server | 44 ms | | 15 ms | |
+  | party, 100,000 rows | Python | 751 ms | 6.4 ms | 8.1 ms | 192 ms |
+  | | the tab | 1,403 ms (+70 ms) | 19 ms | 12 ms | 450 ms |
+  | | the server | 1,038 ms | | 80 ms | |
 
-  "Made and filled" holds the model's compile and the CSV's insert (one multi-row INSERT a table); the server's
-  first execute is all three, the JVM's warm-up in the trading row. Eight versions of the 1,000-row party open at once
-  on the server: 22 ms each the first time, 9 ms again. One cost found: opening a project again whose database is kept
-  asks the planner its name, which reads the whole model -- 2 to 8 ms for the demos, 181 ms (Python) and 438 ms (the
-  tab) for 100,000 rows of Data. Query asks it as a project opens, never per query; a keeper remembering a model text's
-  name would take it away, if a project that large is ever opened often.
+  "Made and filled": the project's name read from its model and its tables made and filled (one multi-row INSERT a
+  table) -- on Python with the model held for its queries too (its keeper holds it); the tab's planner holds it apart
+  (the "+"). The server's first execute is all of it and the query, the JVM's warm-up in the trading row. Eight
+  versions of the 1,000-row party open at once on the server: 23 ms each the first time, 9 ms again. One cost found:
+  opening a project again whose database is kept asks the planner its name, which reads the whole model -- 2.5 to 8 ms
+  for the demos, 192 ms (Python) and 450 ms (the tab) for 100,000 rows of Data. Query asks it as a project opens, never
+  per query; a keeper remembering a model text's name would take it away, if a project that large is ever opened often.
 - **Not measured yet:** the corpus onto the same operation (the dialect program's Phase 6).
 
 #### D5. No SQL text in TypeScript or Python's host (claimed from the dialect program; C5's step 4)
@@ -979,22 +980,24 @@ question; it runs the statements the planner answers, as given.** Then no operat
 nothing needs marking.
 
 **The design.**
-1. **Snap is Pure, one planner question.** Today the tab's Snap plans the cube's pull, then sends the plan's SQL back
-   to be counted and copied (`snap.ts`); Python's does the same inside the host (`engine.py` `_warehouse_snap`). Both
-   ask instead one question, `snap` (Boundary, its native twin), with data only:
-   - asked: the cube's model and its live runtime, the pull (the Pure lambda: the source's every column), the live
-     database's type, the copy's store's type (the tab's DuckDB, Python's), the copy's name (database, schema, table)
-     and, for a copy that converts, the source table's catalog columns (what the table model is written from);
-   - answered: the pull (a plan, typed, as every plan is), the count in the live database's own SQL, the copy's
-     statements in the store's (its schema made, the table there dropped, the copy made from the pulled rows, each
-     conversion the planner's own), and the landing's drop.
-   The tab's `SnapManager.snap` takes the Pure pull (as `HostSnaps` already does: the page sends Pure, R4); the split
-   between the two (where the copy lives) stays.
+1. **Snap is two ordinary queries** (the user, 2026-10-13, after a first try of one special planner question that only
+   legend-lite's planner could answer, which broke Snap when a server plans -- and a fallback to the page's own planner,
+   withdrawn: one planner per cube). The cube's own planner, whichever it is (the tab's, Python's, legend-lite's server,
+   legend-engine), plans both, and each runs where the rows are:
+   - **the count first**, a cheap check against the limit: the pull's size, `pull->size()` (a streaming aggregate;
+     a window count with the rows was weighed and not taken: the database holds the whole result before the first row,
+     so a refused pull costs the warehouse it all);
+   - **the pull**, the source's every column.
+   The rows land beside the copy's name -- a warehouse's Arrow chunks by DuckDB's Arrow reader, the store's own rows by
+   its Arrow insert, Python's registered -- and the copy is made of the landing (the `relation` operation), replacing
+   the one there only once it is made; the landing is dropped whatever happens. **No conversion:** since the tab's
+   DuckDB runs in UTC (C1), a zoned timestamp copied as it is answers as the warehouse does, value and type -- the
+   conversion was the browser's zone's (`docs/one-platform/evidence/d5b-snap-queries.py`, its output beside it).
 2. **A table's conversions are a statement the planner writes whole.** The table-model answer (`Boundary.tableModel`,
    `compiler.table_model`) already knows the table's name and database type; it answers `rebuild` -- the statements
    that rebuild the table with its conversions, none when nothing converts -- in place of `copySelectList` and the
-   conversions' SQL. An upload (`upload.ts`) and a Python frame (`frames.py`) run `rebuild`; Snap's conversions are
-   its own question's (1).
+   conversions' SQL. An upload (`upload.ts`) and a Python frame (`frames.py`) run `rebuild`: their stored types do
+   change (an unsigned 64-bit number held as DECIMAL, a UUID as text).
 3. **The operations lose their SQL fields.** `HostOperation.Source.Query`, `MakeRelation.selectList`,
    `MakeRelation.replacing` and `Conversion` go, with their JSON (`HostOperationsJson`), types (`host-operations.ts`)
    and Python's twin; a test holds that no operation record has a field that holds SQL. The guard's note about the
@@ -1015,34 +1018,40 @@ rows with a person's own tables; the warehouse's own SQL (D4) and core's hand-wr
 a warehouse table's snap), the uploads' and frames' tests, Query's browser test on the warehouse, the guard, the new
 no-SQL-field test; the warehouse lane on all three platforms.
 
-**Reviews:** Plan Gen (the `snap` question, the table-model answer), the Compiler Rewrite line (core, the BUILD files),
-the Studio line (engine-client, Query), an audit. Announced in IN_FLIGHT before its core files land.
+**Next, after D5b (the user, 2026-10-13):** the catalog of what is not portable -- everything a host does that would
+not work if DuckDB were swapped for another engine (the housekeeping statements, DuckDB's file and remote readers, its
+extension and session settings, its secrets), each with what it would take.
+
+**Reviews:** Plan Gen (the table-model answer, the planner's field checks), the Compiler Rewrite line (core, the BUILD
+files), the Studio line (engine-client, Query), an audit. Announced in IN_FLIGHT before its core files land.
 
 **Built 2026-10-13 (branch `datacube/d5b-pure-snap`, on main's C5 and D5, fbd216a3f):**
-- **1, the question and the tab:** `HostOperations.countOf` and `copyOf` (Java's, taking the planner's own SQL: a
-  plan counted, a relation made from a plan or a relation with each catalog conversion in place; DuckDB's both,
-  Postgres's count); `Boundary.snapHeld` (the planner-protocol kind `snap`, `lite_snap_held`, Python's kinds table:
-  the pull planned over the model held, its count in the live database's SQL, the copy's preparation, the copy from
-  the landing or from the pull, the landing's drop, the conversions read from the source's catalog rows); the table
-  model's `rebuild`. The tab's `SnapManager.snap(planner, pull, ...)` runs the answer; `SnapTable` carries the source's
-  catalog, never SQL; the cube asks its live planner (`Planner.snap`, `LitePlanner.snap`); an upload runs its rebuild.
-- **2, Python:** its snap asks `compiler.snap_held` with the Pure pull, the copy's name and landing and the table's
-  catalog rows (kept on the table as its model was read), and runs the answer; a frame runs its rebuild. One change of
-  behaviour: with a server chosen as the page's planner, a snap's pull is planned by Python's own (the copy is this
-  host's, and the pull -- the source's every column -- plans alike on each).
-- **3, the fields go:** `HostOperation.Source.Query`, `MakeRelation`'s `selectList` and `replacing`, `Conversion`;
-  the table model's `conversions` and `copySelectList` (`CatalogModel.Database.copySelectList`). The planner refuses a
-  field an operation does not read, by name; `HostOperationsTest.noOperationHasAFieldThatHoldsSql` holds every text
-  field of every operation to the named data fields.
-- **4, the warehouse's fixture:** Query's browser test loads `trading-seed.sql` as the warehouse's owner before its
-  warehouse suite (`verify.mjs` `seedWarehouse`); the page's `seed`, the config's, and the execution type's go.
-- **5, dead output:** the test-data answer's `table`, `drop` and each column's `sql`.
-- **6, C5's timings:** above, in C5's Built notes.
-- **Measured:** engine-client's snap test (a real model, pulls as Pure, the 20,000,000-row refusal before anything is
-  made, SQL sent in a deleted field refused); DataCube's plane test (the real planner's snap statements over a trades
-  model, a zoned timestamp converted from the catalog, the warehouse's pull the plan it was given); the live-snap page;
-  the uploads' and the frames' converted columns; Python's engine test (a warehouse table's snap, a failing copy leaving
-  nothing); Query's browser test on the warehouse.
+- **Snap, the tab:** `SnapManager.snap(planner, pull, ...)` asks the cube's live planner for the count's plan and the
+  pull's (`sizeOf(pull)`, the pull), runs each where the rows are, lands the rows (`DuckDbEngine.loadArrow` for a
+  warehouse's, the new `loadQuery` for the store's own: DuckDB-WASM's `insertArrowTable`) and copies the landing; the
+  copy's row count is the store's count of it. The cube passes its live planner; nothing else knows of a snap.
+- **Snap, Python:** `_warehouse_snap` plans the count (`size` over the pull) and the pull with the page's planner,
+  runs both on the warehouse, registers the rows and copies them (`relation` over the registration).
+- **Conversions:** the table model answers `rebuild` (an upload's, a frame's), its `conversions` and `copySelectList`
+  gone (`CatalogModel.Database.copySelectList` too); `HostOperations.copyOf` writes it from the table's own
+  conversions. A snap converts nothing.
+- **The fields go:** `HostOperation.Source.Query`, `MakeRelation`'s `selectList` and `replacing`, `Conversion`;
+  `PostgresHostOperations` (D5's count, now a planned query), its test and lane entry. The planner refuses any field an
+  operation, a name, a source or a column does not read, by name, and reads every field by its kind (never a cast: the
+  tab's WebAssembly traps on one). `HostOperationsTest.noOperationHasAFieldThatHoldsSql` holds every field of every
+  operation to the named kinds (a list of conversions, an Object, a CharSequence fail it; proven red with one added).
+- **Query's warehouse fixture:** `query/demo/warehouse-fixture.mjs` loads it as the owner through the warehouse's API:
+  Query's browser test before its warehouse suite, and a person by `bazel run //query:warehouse_fixture -- <url>`
+  (the README says so); the page's `seed`, the config's and the execution type's go.
+- **Dead output:** the test-data answer's `table`, `drop` and each column's `sql`.
+- **C5's timings:** above, in C5's notes (`c5-timings.py`, `c5-timings-tab.mts`, their output).
+- **Measured:** engine-client's snap test (a real model; the count and the pull planned; 20,000,000 rows refused before
+  anything is made; a warehouse pull cut short keeps the last snap and leaves no landing, and the next lands afresh;
+  SQL sent in an operation's field, or a nested one, refused); DataCube's plane test (the count then the pull, both the
+  live planner's; the landing copied as it is; a server's planner snapping with its plans alone); the live-snap page;
+  the uploads' and frames' converted columns; Python's engine test (a warehouse table's snap through the page's
+  planner; a failing copy leaving nothing); Query's browser test on the warehouse; `d5b-snap-queries.py` (the count on
+  legend-lite and legend-engine; a zoned timestamp copied as it is).
 
 #### C4. The small copies
 

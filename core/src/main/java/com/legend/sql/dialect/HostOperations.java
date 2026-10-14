@@ -40,39 +40,18 @@ public interface HostOperations {
     List<String> statements(HostOperation operation);
 
     /**
-     * A planner's query counted (Snap's preflight; docs/ONE_PLATFORM_PROGRAM_2026_10_12.md D5b): one row, one column
-     * {@code n}. {@code plannedQuery} is a plan's SQL, written by the planner for this database -- never a host's text:
-     * no host operation carries SQL.
+     * A table's rebuild (an upload's, a frame's; docs/ONE_PLATFORM_PROGRAM_2026_10_12.md D5b): {@code target} made from
+     * the relation {@code from} of this database, the one there replaced, each of the catalog's conversions
+     * ({@link CatalogModel.Database#conversions}) applied in its column's place -- the table model's own answer, the
+     * conversions the writer's, never a host's text.
      */
-    List<String> countOf(String plannedQuery);
-
-    /**
-     * A relation made by a copy (Snap's, an upload's or a frame's rebuild; D5b): {@code target} made from the planner's
-     * query or from a relation of this database, the one there replaced, each of the catalog's conversions
-     * ({@link CatalogModel.Database#conversions}) applied in its column's place.
-     */
-    List<String> copyOf(HostOperation.Kind kind, HostOperation.Name target, CopyFrom from,
+    List<String> copyOf(HostOperation.Kind kind, HostOperation.Name target, HostOperation.Name from,
             List<CatalogModel.Conversion> conversions);
 
-    /** Where a copy reads its rows: a planner's query (a plan's SQL), or a relation of the database. */
-    sealed interface CopyFrom {
-        /** A plan's SQL, the planner's own. */
-        record PlannedQuery(String sql) implements CopyFrom {
-        }
-
-        /** A relation of the database. */
-        record Relation(HostOperation.Name name) implements CopyFrom {
-        }
-    }
-
-    /** The host operations of {@code dialect}'s database: DuckDB's, Postgres's count (a warehouse's catalog), or each
-     *  refused, naming the database. */
+    /** The host operations of {@code dialect}'s database: DuckDB's, or each refused, naming the database. */
     static HostOperations of(SqlDialect dialect) {
         if (dialect instanceof DuckDb) {
             return DuckDbHostOperations.INSTANCE;
-        }
-        if (dialect instanceof Postgres) {
-            return PostgresHostOperations.INSTANCE;
         }
         return new Refused(dialect.getClass().getSimpleName());
     }
@@ -112,12 +91,7 @@ public interface HostOperations {
         }
 
         @Override
-        public List<String> countOf(String plannedQuery) {
-            throw HostOperations.refusal("Count", database);
-        }
-
-        @Override
-        public List<String> copyOf(HostOperation.Kind kind, HostOperation.Name target, CopyFrom from,
+        public List<String> copyOf(HostOperation.Kind kind, HostOperation.Name target, HostOperation.Name from,
                 List<CatalogModel.Conversion> conversions) {
             throw HostOperations.refusal("Copy", database);
         }

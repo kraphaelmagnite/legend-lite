@@ -142,8 +142,8 @@ export interface FileSink extends DataSink {
  * column from the file's column of that name, a CSV's as text and a Parquet's as typed, DuckDB converting each value to
  * its column's type -- so a refused file (a column missing, a value its type cannot take) leaves the table as it was.
  * The file's name says which kind it is. It is registered as `<as>.csv` or `<as>.parquet`, never by the person's own
- * name: read_csv and read_parquet read a name as a glob (`sales[2024].csv` matches nothing). The table's names are the
- * planner's (`seed`); returned, to drop it by later.
+ * name: read_csv and read_parquet read a name as a glob (`sales[2024].csv` matches nothing). The table's statements
+ * and its declared columns are the planner's (`seed`), returned.
  */
 export async function loadFileTable(sink: FileSink, source: SeedSource & HostOperationsSource, databaseType: string, model: string,
   target: { readonly database: string; readonly schema: string; readonly table: string; readonly columns: readonly { readonly name: string }[] },

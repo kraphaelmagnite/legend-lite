@@ -184,6 +184,19 @@ js_binary(
     tags = ["manual"],
 )
 
+# `bazel run //query:warehouse_fixture -- <the warehouse's URL> [--user U --password P]`: the trading demo's tables
+# loaded into a warehouse as its owner, for config-warehouse.json (docs/ONE_PLATFORM_PROGRAM_2026_10_12.md D5b: no
+# page loads a server's data). A hand tool: manual, built by :tools_build_test.
+js_binary(
+    name = "warehouse_fixture",
+    data = [
+        "demo/models/trading-seed.sql",
+        "demo/warehouse-fixture.mjs",
+    ],
+    entry_point = "demo/load-warehouse-fixture.mjs",
+    tags = ["manual"],
+)
+
 # THE APP END TO END, AS A TEST (the build rebuild's L1b, 2026-10-07): in the pinned Chromium, in the browser, against a
 # legend-lite server and against a warehouse the test starts, both on port 0. CI runs it on Linux only (the tag;
 # gates-run.yml filters it on macOS and Windows: the browser part is the same on every platform, and live-vs-snap
@@ -200,6 +213,8 @@ _VERIFY_DATA = [
     # named itself: SITE is its runfiles path, from which the site's directory follows
     "demo/index.html",
     ":site",
+    # the warehouse's fixture, loaded as its owner before its suite (the page loads no server's data)
+    "demo/warehouse-fixture.mjs",
     ":node_modules/playwright",
     # legend-lite's server: its launcher's runfiles (the hermetic JDK, the jars) through the target itself, and the
     # one launcher file to start through :legend_server
@@ -251,6 +266,7 @@ build_test(
     targets = [
         ":serve",
         ":verify",
+        ":warehouse_fixture",
     ],
 )
 

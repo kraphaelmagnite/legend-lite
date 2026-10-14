@@ -17,7 +17,6 @@ import { CubeController, type Planner } from '../src/cube.ts';
 import type { Plan, PlanColumn } from '../../engine-client/src/relation-type.ts';
 import type { ResultTable } from '../../engine-client/src/result.ts';
 import type { SnapTarget } from '../src/cube.ts';
-import type { SnapCatalog, SnapCopy, SnapStatements } from '../../engine-client/src/snap.ts';
 import type { CubeSnapshot } from '../src/snapshot.ts';
 import { PlanThenRun } from '../src/runner.ts';
 import { TreeState } from '../src/tree.ts';
@@ -52,69 +51,20 @@ function result(epoch: number, n = 2): ResultTable {
   };
 }
 
-/**
- * The trades model the snaps pull from, for legend-lite's planner: the pull and every statement of a snap are its own
- * (D5b, Boundary.snapHeld), a zoned timestamp among the columns.
- */
-const TRADES_MODEL = `###Relational
-Database trades::DB
-(
-  Table TRADES (region VARCHAR(32), notional DOUBLE, at TIMESTAMP, "trade date" DATE)
-  Table TRADES_SNAP (region VARCHAR(32), notional DOUBLE, at TIMESTAMP, "trade date" DATE)
-)
-
-###Connection
-RelationalDatabaseConnection trades::Conn
-{
-  type: DuckDB;
-  specification: DuckDB { };
-  auth: Test;
-}
-
-###Runtime
-Runtime trades::RT
-{
-  mappings: [];
-  connections: [ trades::DB: [ c: trades::Conn ] ];
-}
-`;
-const snapWriter = plannerFor(TRADES_MODEL, 'trades::RT');
-
-/** The source table's catalog, as a warehouse lists it: a zoned timestamp the copy must convert. */
-const ZONED: SnapCatalog = {
-  databaseType: 'DuckDB',
-  columns: [
-    { name: 'region', dataType: 'VARCHAR', logicalType: 'VARCHAR', precision: null, scale: null, notNull: false },
-    { name: 'notional', dataType: 'DOUBLE', logicalType: 'DOUBLE', precision: null, scale: null, notNull: false },
-    { name: 'at', dataType: 'TIMESTAMP WITH TIME ZONE', logicalType: 'TIMESTAMP WITH TIME ZONE', precision: null,
-      scale: null, notNull: false },
-  ],
-};
-
-/**
- * Records every query it is asked to plan (as its JSON), and every SQL it emits; a snap's pull recorded too, its
- * statements legend-lite's planner's over the trades model (`snapWriter`).
- */
+/** Records every query it is asked to plan (as its JSON), and every SQL it emits. */
 class RecordingPlanner implements Planner {
   readonly pure: string[] = [];
   readonly queries: Lambda[] = [];
-  /** Each snap's statements, as the planner answered them. */
-  readonly snapped: SnapStatements[] = [];
-  async snap(pull: Lambda, copy: SnapCopy): Promise<SnapStatements> {
-    this.queries.push(pull);
-    this.pure.push(toJson(pull));
-    const statements = await snapWriter.snap(pull, copy);
-    this.snapped.push(statements);
-    return statements;
-  }
   async plan(query: Lambda): Promise<Plan> {
     this.queries.push(query);
     this.pure.push(toJson(query));
     // Deliberately does NOT echo the query: a test here asserts that
     // no Pure reaches the engine, and a stub that pasted the
     // query into its own output would fail that for the wrong
-    // reason.
-    return { sql: `SELECT * FROM planned_${this.pure.length}`, columns: [] };
+    // reason. A snap's count (its pull's size) is planned as a count, which the engines answer with a number.
+    const first = query.body?.[0];
+    const counting = first?._type === 'func' && first.function === 'size';
+    return { sql: `${counting ? 'SELECT count(*) FROM' : 'SELECT * FROM'} planned_${this.pure.length}`, columns: [] };
   }
   async relationType(): Promise<PlanColumn[]> {
     return [];
@@ -153,6 +103,12 @@ class RecordingEngine extends FakeEngine {
     prepare: readonly string[] = []): Promise<void> {
     this.sql.push(...prepare);
     for await (const _ of chunks) void _;
+    this.loaded.push(target.table);
+  }
+  /** A query's rows loaded into a table of this store (DuckDbEngine.loadQuery: a snap of the store's own rows). */
+  async loadQuery(target: { readonly schema?: string; readonly table: string }, sql: string,
+    prepare: readonly string[] = []): Promise<void> {
+    this.sql.push(...prepare, sql);
     this.loaded.push(target.table);
   }
   async answer(sql: string, epoch: number): Promise<ResultTable> {
@@ -250,38 +206,27 @@ describe('snapping goes through the planner', () => {
     await c.run(at(ran));
     await c.snap(ran, 'test');
 
-    const pull = planner.snapped[0]!.pull.sql;
-    assert.ok(
-      engine.sql.some(
-        (q) => /CREATE OR REPLACE TABLE/i.test(q) && q.includes(pull),
-      ),
-      engine.sql.join(' ;; '),
-    );
+    // the pull the planner wrote runs in the store; its rows land beside the copy, which is made of them
+    assert.ok(engine.sql.some((q) => /^SELECT \* FROM planned_/.test(q)), engine.sql.join(' ;; '));
+    assert.deepEqual(engine.loaded, ['TRADES_SNAP__pulled']);
+    assert.ok(engine.sql.includes('CREATE OR REPLACE TABLE "TRADES_SNAP" AS SELECT * FROM "TRADES_SNAP__pulled"'),
+      engine.sql.join(' ;; '));
   });
 });
 
-describe('a snap is a copy: it holds the declared types', () => {
-  it('reads the source through the copy conversions, where the rows are read', async () => {
-    // A zoned timestamp is read in place under the source's UTC session; the tab's store has
-    // no such session, so the copy holds its UTC wall time (leg B, docs/DATACUBE_APP_PLAN_2026_10_02.md)
+describe('a snap is a copy of the rows as they are', () => {
+  it('counts first, then pulls, both the cube\'s own queries; the copy made of the landing and the landing dropped', async () => {
+    const planner = new RecordingPlanner();
     const engine = new RecordingEngine();
-    const c = new CubeController(engine, new RecordingPlanner(), { snapTarget: { ...snapInto(), catalog: ZONED } });
+    const c = new CubeController(engine, planner, { snapTarget: snapInto() });
     await c.run(at(SNAPSHOT));
+    planner.queries.length = 0;
     engine.sql.length = 0;
     await c.snap(SNAPSHOT, 'test');
-    const created = engine.sql.find((q) => /CREATE OR REPLACE TABLE "TRADES_SNAP"/.test(q));
-    assert.ok(created, engine.sql.join(' ;; '));
-    assert.match(created, /AS SELECT \* REPLACE \(CAST\(timezone\('UTC', "at"\) AS TIMESTAMP\) AS "at"\) FROM \(/);
-  });
-
-  it('copies the rows as they are when nothing needs converting', async () => {
-    const engine = new RecordingEngine();
-    const c = new CubeController(engine, new RecordingPlanner(), { snapTarget: snapInto() });
-    await c.run(at(SNAPSHOT));
-    engine.sql.length = 0;
-    await c.snap(SNAPSHOT, 'test');
-    assert.ok(engine.sql.some((q) => /CREATE OR REPLACE TABLE "TRADES_SNAP" AS /.test(q) && !q.includes('REPLACE (')),
-      engine.sql.join(' ;; '));
+    const asked = planner.queries.map((q) => (q.body[0]?._type === 'func' ? q.body[0].function : '?'));
+    assert.deepEqual(asked, ['size', 'select'], 'the pull\'s count, then the pull');
+    assert.ok(engine.sql.includes('DROP TABLE IF EXISTS "TRADES_SNAP__pulled"'), engine.sql.join(' ;; '));
+    assert.ok(!engine.sql.some((q) => /REPLACE \(/.test(q)), 'nothing converted: the rows are copied as they are');
   });
 });
 
@@ -317,32 +262,31 @@ describe('the snapped plane actually redirects', () => {
     live.queries.length = 0;
     live.pure.length = 0;
     await c.snap(SNAPSHOT, 'test');
-    assert.equal(live.queries.length, 1, `the pull is planned once, live: ${live.pure.join(' ;; ')}`);
-    assert.equal(selectOf(live.queries[0]!)?.source, toJson(accessor('trades::DB', 'TRADES')));
-    assert.deepEqual(warehouse.pulled, [live.snapped[0]!.pull.sql], 'the live plan is what the warehouse ran');
+    assert.equal(live.queries.length, 2, `the count and the pull, each planned once, live: ${live.pure.join(' ;; ')}`);
+    assert.equal(selectOf(live.queries[1]!)?.source, toJson(accessor('trades::DB', 'TRADES')));
+    assert.deepEqual(warehouse.pulled, ['SELECT * FROM planned_2'], 'the live plan is what the warehouse ran');
+    assert.ok(warehouse.sql.includes('SELECT count(*) FROM planned_1'), 'the count ran where the rows are');
     assert.equal(copy.pure.length, 0, 'nothing is planned for the copy before it exists');
     tab.sql.length = 0;
     await c.run(at(SNAPSHOT));
     assert.ok(copy.pure.length > 0 && copy.pure.every((p) => p.includes('TRADES_SNAP')), copy.pure.join(' ;; '));
-    assert.equal(live.pure.length, 1, 'the live planner plans nothing on the copy');
+    assert.equal(live.pure.length, 2, 'the live planner plans nothing on the copy: its count and its pull alone');
     assert.ok(tab.sql.length > 0 && tab.sql.every((q) => /planned_/.test(q)), 'the copy\'s plans run in the tab');
   });
 
-  it('converts the pulled copy in the tab, after the pull: the warehouse runs only the live plan', async () => {
-    // A copy conversion is SQL in the catalog's (DuckDB's) terms; the pull may run in another
-    // database's SQL (a Postgres catalog), so the tab rewrites what landed
+  it('lands the pull in the tab and copies it there: the warehouse runs only the live plan and its count', async () => {
     const tab = new RecordingEngine();
     const warehouse = new PullingEngine();
-    const c = new CubeController(tab, new RecordingPlanner(), { live: warehouse, snapTarget: { ...snapInto(), catalog: ZONED } });
+    const c = new CubeController(tab, new RecordingPlanner(), { live: warehouse, snapTarget: snapInto() });
     await c.run(at(SNAPSHOT));
     tab.sql.length = 0;
     await c.snap(SNAPSHOT, 'test');
     assert.equal(warehouse.pulled.length, 1);
-    assert.doesNotMatch(warehouse.pulled[0]!, /REPLACE|timezone/);
     assert.deepEqual(tab.loaded, ['TRADES_SNAP__pulled']);
-    assert.ok(tab.sql.some((q) => q === 'CREATE OR REPLACE TABLE "TRADES_SNAP" AS SELECT * REPLACE (CAST(timezone(\'UTC\', "at") AS TIMESTAMP) AS "at") FROM "TRADES_SNAP__pulled"'),
+    assert.ok(tab.sql.includes('CREATE OR REPLACE TABLE "TRADES_SNAP" AS SELECT * FROM "TRADES_SNAP__pulled"'),
       tab.sql.join(' ;; '));
-    assert.ok(tab.sql.some((q) => q === 'DROP TABLE IF EXISTS "TRADES_SNAP__pulled"'), tab.sql.join(' ;; '));
+    assert.equal(tab.sql.filter((q) => q === 'DROP TABLE IF EXISTS "TRADES_SNAP__pulled"').length, 2,
+      'the landing dropped before the rows land and after the copy');
   });
 
   it('goes back to the live source on release', async () => {
@@ -362,6 +306,19 @@ describe('the snapped plane actually redirects', () => {
       ),
       planner.pure.join(' ;; '),
     );
+  });
+
+  it('snaps a cube a server plans, with the server\'s own plans: a snap is ordinary queries (D5b)', async () => {
+    // a server's planner answers plans and nothing else; the count and the pull are two of them
+    const live = new RecordingPlanner();
+    const server: Planner = { plan: (q) => live.plan(q), relationType: () => live.relationType(), parse: fakeParse, print: fakePrint };
+    const engine = new RecordingEngine();
+    const c = new CubeController(engine, server, { snapTarget: snapInto() });
+    await c.run(at(SNAPSHOT));
+    live.queries.length = 0;
+    await c.snap(SNAPSHOT, 'test');
+    assert.equal(c.snaps.isSnapped, true);
+    assert.equal(live.queries.length, 2, live.pure.join(' ;; '));
   });
 
   it('refuses to snap when the host names no table to snap into', async () => {

@@ -41,8 +41,6 @@ import {
   type HostSnapTarget,
   type PlaneState,
   type RemoteSource,
-  type SnapCopy,
-  type SnapStatements,
   type SnapTable,
   type Snaps,
 } from '../../engine-client/src/snap.ts';
@@ -120,11 +118,6 @@ export interface Planner {
   /** Where its queries are planned from: its model and the runtime they run on -- what a class made of its rows reads
    *  its source from (model-writer.ts). */
   source?(): GridSource;
-  /**
-   * A snap's statements (D5b, Boundary.snapHeld): its pull, `pull` planned as `plan` plans, and its count's and its
-   * copy's -- what a snap into the page runs, given no SQL. A planner that has none cannot snap a cube.
-   */
-  snap?(pull: Lambda, copy: SnapCopy): Promise<SnapStatements>;
 }
 
 export interface CubeView {
@@ -666,13 +659,9 @@ export class CubeController {
     if (!target) {
       throw new CubeRefusal('this cube names no table to freeze a snapshot into.');
     }
-    // the PULL is the live plan: it runs where the rows are, in that database's SQL -- every statement the live
-    // planner's, the page sending it Pure (D5b)
-    const planner = this.#livePlanner;
-    if (!planner.snap) {
-      throw new CubeRefusal('this cube\u2019s planner writes no snap\u2019s statements: it cannot be snapped.');
-    }
-    await this.#snaps.snap({ snap: (pull, copy) => planner.snap!(pull, copy) }, query, this.#guard.current, {
+    // the PULL and its count are the live planner's queries, whichever planner it is: each runs where the rows are, in
+    // that database's SQL (D5b)
+    await this.#snaps.snap(this.#livePlanner, query, this.#guard.current, {
       ...(label !== undefined ? { label } : {}),
       target,
     });

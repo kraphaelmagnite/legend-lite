@@ -255,20 +255,6 @@ public final class Compiler {
         return answer(a);
     }
 
-    /** A snap's statements: its pull over a model held, its count and its copy's ({@code Boundary.snapHeld}). */
-    @CEntryPoint(name = "lite_snap_held")
-    static CCharPointer snapHeld(IsolateThread thread, CCharPointer handle, CCharPointer lambdaJson, CCharPointer runtime,
-            CCharPointer copyJson) {
-        String a;
-        try {
-            String h = text(handle), l = text(lambdaJson), r = text(runtime), c = text(copyJson);
-            a = Folded.of(() -> Boundary.snapHeld(Integer.parseInt(h), l, r, c));
-        } catch (Throwable failure) {
-            a = Folded.failure(failure);
-        }
-        return answer(a);
-    }
-
     /** A project's own database on a database of the given type ({@code Boundary.projectData}). */
     @CEntryPoint(name = "lite_project_data")
     static CCharPointer projectData(IsolateThread thread, CCharPointer model, CCharPointer databaseType) {

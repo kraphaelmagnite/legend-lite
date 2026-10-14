@@ -11,9 +11,9 @@ import java.util.Map;
  * dialect program's decision D5): what the tab and Python's host used to spell as SQL themselves -- a file read into a
  * table, a remote file mounted, a copy made, rows counted, an extension, a secret, a catalog question. A host names the
  * operation and its data; the database's {@link HostOperations} writes the statements (names quoted, values written as
- * literals), and a database without one refuses it by name. Data only: no field holds SQL (D5b) -- a statement around
- * a planner's own SQL (a snap's count and copy, a table's rebuild) is the planner's to write, asked as a question of its
- * own ({@link HostOperations#countOf}, {@link HostOperations#copyOf}).
+ * literals), and a database without one refuses it by name. Data only: no field holds SQL (D5b) -- a snap's count and
+ * pull are Pure queries its planner plans, and a table's rebuild is the table model's own answer
+ * ({@link HostOperations#copyOf}).
  */
 public sealed interface HostOperation {
 
