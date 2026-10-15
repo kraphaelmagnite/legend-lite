@@ -60,7 +60,8 @@ jobs:
   # path — how the first version of this file failed). So the workflows are linted by a test in the checks lane,
   # //tools/guards:workflows_test (actionlint, pinned in MODULE.bazel), which runs locally before a push too.
   linux:
-    if: ${{ github.event_name != 'workflow_dispatch' || inputs.platforms == 'all' || inputs.platforms == 'linux' }}
+    # DIAGNOSTIC, throwaway branch: the Windows core lane alone
+    if: false
     uses: ./.github/workflows/gates-run.yml
     # the repository's secrets reach the called workflow (BUILDBUDDY_API_KEY, the remote cache: L1e)
     secrets: inherit
@@ -73,7 +74,8 @@ jobs:
   macos:
     # macos-14 and later are arm64. Pinned rather than -latest so a runner
     # image flip is a deliberate commit, like the upstream pins.
-    if: ${{ github.event_name != 'workflow_dispatch' || inputs.platforms == 'all' || inputs.platforms == 'macos' }}
+    # DIAGNOSTIC, throwaway branch: the Windows core lane alone
+    if: false
     uses: ./.github/workflows/gates-run.yml
     # the repository's secrets reach the called workflow (BUILDBUDDY_API_KEY, the remote cache: L1e)
     secrets: inherit
@@ -94,13 +96,15 @@ jobs:
       runs-on: windows-2022
       platform: windows
       linux-only-tests: ${{ inputs.linux_only_tests || 'ci-policy' }}
-      gates: ${{ inputs.gates }}
+      # DIAGNOSTIC, throwaway branch: the core lane alone
+      gates: core
 
   # LINUX ARM64 (Bazel workplan P1-13): the native warehouse on a real arm64 runner, with the hermetic C
   # toolchain. CI had never run Linux arm64; the native-image crash seen under Docker Desktop on Apple silicon
   # does not happen on real hardware (run 37139357779). The warehouse lane only.
   linux-arm:
-    if: ${{ github.event_name != 'workflow_dispatch' || inputs.platforms == 'all' || inputs.platforms == 'linux-arm' }}
+    # DIAGNOSTIC, throwaway branch: the Windows core lane alone
+    if: false
     uses: ./.github/workflows/gates-run.yml
     # the repository's secrets reach the called workflow (BUILDBUDDY_API_KEY, the remote cache: L1e)
     secrets: inherit
