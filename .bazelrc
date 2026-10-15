@@ -45,6 +45,8 @@ build:windows --shell_executable="C:/Program Files/Git/usr/bin/bash.exe"
 # CI: `--config=ci` — every test's log on failure, and no progress-bar noise.
 common:ci --color=no --curses=no --show_progress_rate_limit=30
 test:ci --test_output=errors --test_summary=terse
+# DIAGNOSTIC, throwaway branch: every test JVM in CI on the C1 JIT only, to measure the lane without C2's CPU
+test:ci --jvmopt=-XX:TieredStopAtLevel=1
 # CI runs every test, every time (L1e, 2026-10-07): with a remote cache Bazel would otherwise answer an unchanged test
 # with its last result, so a push would get no verdict of its own and a flaky test that passed once would stay passed.
 # The cache's gain is the build: the native image, the planner, the bundles.

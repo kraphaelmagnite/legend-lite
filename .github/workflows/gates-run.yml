@@ -293,13 +293,15 @@ jobs:
           }
           Get-Content profile/machine.txt
       - name: "profile: core_tests_integration alone"
-        if: always() && matrix.lane.key == 'core'
+        # DIAGNOSTIC: measured in run 38685811130; off for the lane-wide C1 run
+        if: false
         env:
           PLATFORM: ${{ inputs.platform }}
           VARIANT: alone
         run: bash tools/ci/diag-profile.sh
       - name: "profile: core_tests_integration alone, C1 JIT only"
-        if: always() && matrix.lane.key == 'core'
+        # DIAGNOSTIC: measured in run 38685811130; off for the lane-wide C1 run
+        if: false
         env:
           PLATFORM: ${{ inputs.platform }}
           VARIANT: c1
