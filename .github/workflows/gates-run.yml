@@ -273,6 +273,55 @@ jobs:
                 || { echo "::error ::the argument did not reach the server intact"; exit 1; }
             fi
           fi
+      # ===== DIAGNOSTIC, throwaway branch claude/diag-windows-core-hang: profile core_tests_integration =====
+      - name: "profile: the machine"
+        if: always() && matrix.lane.key == 'core'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path profile | Out-Null
+          if ($IsWindows) {
+            Get-CimInstance Win32_Processor | Format-List Name,NumberOfCores,NumberOfLogicalProcessors,MaxClockSpeed | Out-File profile/machine.txt
+            Get-CimInstance Win32_ComputerSystem | Format-List TotalPhysicalMemory | Out-File -Append profile/machine.txt
+            Get-PhysicalDisk | Format-Table FriendlyName,MediaType,BusType,Size -AutoSize | Out-File -Append profile/machine.txt
+            Get-Volume | Format-Table DriveLetter,FileSystem,Size,SizeRemaining -AutoSize | Out-File -Append profile/machine.txt
+            "TEMP=$env:TEMP" | Out-File -Append profile/machine.txt
+            try { Get-MpComputerStatus | Format-List AMServiceEnabled,AntivirusEnabled,RealTimeProtectionEnabled,OnAccessProtectionEnabled,IoavProtectionEnabled,BehaviorMonitorEnabled,IsTamperProtected | Out-File -Append profile/machine.txt } catch { "Get-MpComputerStatus: $_" | Out-File -Append profile/machine.txt }
+            try { (Get-MpPreference).ExclusionPath | Out-File -Append profile/machine.txt } catch { "Get-MpPreference: $_" | Out-File -Append profile/machine.txt }
+            powercfg /getactivescheme | Out-File -Append profile/machine.txt
+          } else {
+            bash -c 'lscpu; free -m; df -h; lsblk -d -o NAME,ROTA,SIZE,MODEL' > profile/machine.txt 2>&1
+          }
+          Get-Content profile/machine.txt
+      - name: "profile: core_tests_integration alone"
+        if: always() && matrix.lane.key == 'core'
+        env:
+          PLATFORM: ${{ inputs.platform }}
+          VARIANT: alone
+        run: bash tools/ci/diag-profile.sh
+      - name: "profile: Windows Defender's real-time scanning off, the build's directories excluded"
+        if: always() && matrix.lane.key == 'core' && inputs.platform == 'windows'
+        shell: pwsh
+        run: |
+          try { Set-MpPreference -DisableRealtimeMonitoring $true -ErrorAction Stop; "real-time monitoring: off requested" } catch { "Set-MpPreference: $_" }
+          foreach ($p in @('C:\bzl', 'D:\a', $env:TEMP, $env:USERPROFILE, 'C:\hostedtoolcache')) {
+            try { Add-MpPreference -ExclusionPath $p -ErrorAction Stop; "excluded $p" } catch { "Add-MpPreference $p : $_" }
+          }
+          try { Get-MpComputerStatus | Format-List RealTimeProtectionEnabled,OnAccessProtectionEnabled,IsTamperProtected } catch { "$_" }
+          try { (Get-MpPreference).ExclusionPath } catch { "$_" }
+      - name: "profile: core_tests_integration alone, Defender off"
+        if: always() && matrix.lane.key == 'core' && inputs.platform == 'windows'
+        env:
+          PLATFORM: ${{ inputs.platform }}
+          VARIANT: noav
+        run: bash tools/ci/diag-profile.sh
+      - name: "profile: upload"
+        if: always() && matrix.lane.key == 'core'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.platform }}-profile
+          path: profile/**
+          if-no-files-found: warn
+      # ===== end DIAGNOSTIC =====
       - name: test logs
         if: always()
         uses: actions/upload-artifact@v4

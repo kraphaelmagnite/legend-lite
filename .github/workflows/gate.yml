@@ -60,8 +60,7 @@ jobs:
   # path — how the first version of this file failed). So the workflows are linted by a test in the checks lane,
   # //tools/guards:workflows_test (actionlint, pinned in MODULE.bazel), which runs locally before a push too.
   linux:
-    # DIAGNOSTIC, throwaway branch: the Windows core lane alone
-    if: false
+    # DIAGNOSTIC, throwaway branch: the core lane, the comparison with Windows
     uses: ./.github/workflows/gates-run.yml
     # the repository's secrets reach the called workflow (BUILDBUDDY_API_KEY, the remote cache: L1e)
     secrets: inherit
@@ -69,7 +68,8 @@ jobs:
       runs-on: ubuntu-latest
       platform: linux
       linux-only-tests: ${{ inputs.linux_only_tests || 'ci-policy' }}
-      gates: ${{ inputs.gates }}
+      # DIAGNOSTIC, throwaway branch: the core lane alone
+      gates: core
 
   macos:
     # macos-14 and later are arm64. Pinned rather than -latest so a runner

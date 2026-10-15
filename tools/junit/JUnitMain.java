@@ -496,11 +496,45 @@ public final class JUnitMain {
         return p;
     }
 
-    /** DIAGNOSTIC, throwaway branch claude/diag-windows-core-hang: a test trace and a thread-dump watchdog. */
+    /** DIAGNOSTIC, throwaway branch claude/diag-windows-core-hang: a test trace (wall and CPU per test), a thread-dump
+     *  watchdog, a resource summary, and with DIAG_JFR set a Java Flight Recording (CPU, file and socket I/O at every
+     *  size, native samples, parks and monitors, processes) into the test's undeclared outputs. */
     static final class Diagnostics implements TestExecutionListener {
         private final long t0 = System.nanoTime();
-        private final java.util.concurrent.ConcurrentHashMap<String, Long> running = new java.util.concurrent.ConcurrentHashMap<>();
+        private final java.util.concurrent.ConcurrentHashMap<String, long[]> running = new java.util.concurrent.ConcurrentHashMap<>();
+        private final java.lang.management.ThreadMXBean threads = ManagementFactory.getThreadMXBean();
         private volatile boolean done;
+        private long testCpu;
+        private long testWall;
+        private jdk.jfr.Recording recording;
+
+        Diagnostics() {
+            String outputs = System.getenv("TEST_UNDECLARED_OUTPUTS_DIR");
+            if (System.getenv("DIAG_JFR") != null && outputs != null) {
+                try {
+                    var rec = new jdk.jfr.Recording(jdk.jfr.Configuration.getConfiguration("profile"));
+                    for (String io : List.of("jdk.FileRead", "jdk.FileWrite", "jdk.SocketRead", "jdk.SocketWrite")) {
+                        rec.enable(io).withThreshold(java.time.Duration.ZERO).withStackTrace();
+                    }
+                    for (String wait : List.of("jdk.ThreadPark", "jdk.JavaMonitorEnter", "jdk.JavaMonitorWait",
+                            "jdk.ThreadSleep")) {
+                        rec.enable(wait).withThreshold(java.time.Duration.ofMillis(1)).withStackTrace();
+                    }
+                    rec.enable("jdk.ExecutionSample").withPeriod(java.time.Duration.ofMillis(10));
+                    rec.enable("jdk.NativeMethodSample").withPeriod(java.time.Duration.ofMillis(10));
+                    rec.enable("jdk.ProcessStart").withStackTrace();
+                    rec.enable("jdk.FileForce").withThreshold(java.time.Duration.ZERO).withStackTrace();
+                    String target = String.valueOf(System.getenv("TEST_TARGET")).replaceAll("[^A-Za-z0-9_]+", "_");
+                    rec.setToDisk(true);
+                    rec.setDestination(Path.of(outputs, target + ".jfr"));
+                    rec.start();
+                    recording = rec;
+                    log("JFR recording to " + rec.getDestination());
+                } catch (Exception e) {
+                    log("JFR not started: " + e);
+                }
+            }
+        }
 
         private double elapsed() {
             return (System.nanoTime() - t0) / 1e9;
@@ -519,7 +553,7 @@ public final class JUnitMain {
         @Override
         public void executionStarted(TestIdentifier id) {
             if (id.isTest()) {
-                running.put(name(id), System.nanoTime());
+                running.put(name(id), new long[] {System.nanoTime(), threads.getCurrentThreadCpuTime()});
                 log("START " + name(id));
             }
         }
@@ -527,9 +561,16 @@ public final class JUnitMain {
         @Override
         public void executionFinished(TestIdentifier id, org.junit.platform.engine.TestExecutionResult result) {
             if (id.isTest()) {
-                Long s = running.remove(name(id));
-                log("END " + result.getStatus() + " " + name(id)
-                        + (s == null ? "" : String.format(java.util.Locale.ROOT, " %.2fs", (System.nanoTime() - s) / 1e9)));
+                long[] s = running.remove(name(id));
+                String times = "";
+                if (s != null) {
+                    long wall = System.nanoTime() - s[0];
+                    long cpu = threads.getCurrentThreadCpuTime() - s[1];
+                    testWall += wall;
+                    testCpu += cpu;
+                    times = String.format(java.util.Locale.ROOT, " %.2fs cpu %.2fs", wall / 1e9, cpu / 1e9);
+                }
+                log("END " + result.getStatus() + " " + name(id) + times);
             }
         }
 
@@ -549,12 +590,13 @@ public final class JUnitMain {
                     next += 60;
                     StringBuilder b = new StringBuilder();
                     b.append(String.format(java.util.Locale.ROOT, "%n===== [diag %.1fs] THREAD DUMP =====%n", now));
-                    running.forEach((t, s) -> b.append(String.format(java.util.Locale.ROOT, "running %.1fs: %s%n", (System.nanoTime() - s) / 1e9, t)));
-                    var mx = ManagementFactory.getThreadMXBean();
-                    long[] dead = mx.findDeadlockedThreads();
+                    running.forEach((t, s) -> b.append(String.format(java.util.Locale.ROOT, "running %.1fs: %s%n",
+                            (System.nanoTime() - s[0]) / 1e9, t)));
+                    long[] dead = threads.findDeadlockedThreads();
                     b.append("deadlocked threads: ").append(dead == null ? "none" : java.util.Arrays.toString(dead)).append('\n');
-                    for (var ti : mx.dumpAllThreads(true, true)) {
-                        b.append(String.format(java.util.Locale.ROOT, "%n\"%s\" id=%d %s", ti.getThreadName(), ti.getThreadId(), ti.getThreadState()));
+                    for (var ti : threads.dumpAllThreads(true, true)) {
+                        b.append(String.format(java.util.Locale.ROOT, "%n\"%s\" id=%d %s", ti.getThreadName(),
+                                ti.getThreadId(), ti.getThreadState()));
                         if (ti.getLockName() != null) {
                             b.append(" on ").append(ti.getLockName());
                         }
@@ -577,6 +619,30 @@ public final class JUnitMain {
 
         void stop() {
             done = true;
+            if (recording != null) {
+                try {
+                    recording.stop();
+                    recording.close();
+                    log("JFR written");
+                } catch (Exception e) {
+                    log("JFR not written: " + e);
+                }
+            }
+            long gcCount = 0;
+            long gcMs = 0;
+            for (GarbageCollectorMXBean gc : ManagementFactory.getGarbageCollectorMXBeans()) {
+                gcCount += Math.max(0, gc.getCollectionCount());
+                gcMs += Math.max(0, gc.getCollectionTime());
+            }
+            var os = (com.sun.management.OperatingSystemMXBean) ManagementFactory.getOperatingSystemMXBean();
+            var jit = ManagementFactory.getCompilationMXBean();
+            var cl = ManagementFactory.getClassLoadingMXBean();
+            log(String.format(java.util.Locale.ROOT, "SUMMARY wall %.1fs | tests: wall %.1fs, test-thread cpu %.1fs"
+                    + " | process cpu %.1fs on %d processors | gc %d collections %.1fs | jit %.1fs | classes loaded %d"
+                    + " | peak threads %d | uptime %.1fs",
+                    elapsed(), testWall / 1e9, testCpu / 1e9, os.getProcessCpuTime() / 1e9, os.getAvailableProcessors(),
+                    gcCount, gcMs / 1e3, jit.getTotalCompilationTime() / 1e3, cl.getTotalLoadedClassCount(),
+                    threads.getPeakThreadCount(), ManagementFactory.getRuntimeMXBean().getUptime() / 1e3));
         }
     }
 }
