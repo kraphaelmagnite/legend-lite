@@ -230,7 +230,12 @@ public final class JUnitMain {
                 }
             }
         };
-        launcher.execute(request, summary, legacy, guard);
+        // DIAGNOSTIC, throwaway branch claude/diag-windows-core-hang (never for main): every test's start and end
+        // with the elapsed time, and from 150 s a full thread dump every 60 s, so a hang names its test and its stack
+        Diagnostics diag = new Diagnostics();
+        diag.startWatchdog();
+        launcher.execute(request, summary, legacy, guard, diag);
+        diag.stop();
 
         TestExecutionSummary result = summary.getSummary();
         StringWriter text = new StringWriter();
@@ -489,5 +494,89 @@ public final class JUnitMain {
             Files.createFile(p);
         }
         return p;
+    }
+
+    /** DIAGNOSTIC, throwaway branch claude/diag-windows-core-hang: a test trace and a thread-dump watchdog. */
+    static final class Diagnostics implements TestExecutionListener {
+        private final long t0 = System.nanoTime();
+        private final java.util.concurrent.ConcurrentHashMap<String, Long> running = new java.util.concurrent.ConcurrentHashMap<>();
+        private volatile boolean done;
+
+        private double elapsed() {
+            return (System.nanoTime() - t0) / 1e9;
+        }
+
+        private static String name(TestIdentifier id) {
+            return id.getSource().filter(MethodSource.class::isInstance).map(MethodSource.class::cast)
+                    .map(m -> m.getClassName() + "#" + m.getMethodName()).orElse(id.getDisplayName());
+        }
+
+        private void log(String line) {
+            System.err.printf(java.util.Locale.ROOT, "[diag %7.1fs] %s%n", elapsed(), line);
+            System.err.flush();
+        }
+
+        @Override
+        public void executionStarted(TestIdentifier id) {
+            if (id.isTest()) {
+                running.put(name(id), System.nanoTime());
+                log("START " + name(id));
+            }
+        }
+
+        @Override
+        public void executionFinished(TestIdentifier id, org.junit.platform.engine.TestExecutionResult result) {
+            if (id.isTest()) {
+                Long s = running.remove(name(id));
+                log("END " + result.getStatus() + " " + name(id)
+                        + (s == null ? "" : String.format(java.util.Locale.ROOT, " %.2fs", (System.nanoTime() - s) / 1e9)));
+            }
+        }
+
+        void startWatchdog() {
+            Thread w = new Thread(() -> {
+                long next = 150;
+                while (!done) {
+                    try {
+                        Thread.sleep(5_000);
+                    } catch (InterruptedException e) {
+                        return;
+                    }
+                    double now = elapsed();
+                    if (now < next) {
+                        continue;
+                    }
+                    next += 60;
+                    StringBuilder b = new StringBuilder();
+                    b.append(String.format(java.util.Locale.ROOT, "%n===== [diag %.1fs] THREAD DUMP =====%n", now));
+                    running.forEach((t, s) -> b.append(String.format(java.util.Locale.ROOT, "running %.1fs: %s%n", (System.nanoTime() - s) / 1e9, t)));
+                    var mx = ManagementFactory.getThreadMXBean();
+                    long[] dead = mx.findDeadlockedThreads();
+                    b.append("deadlocked threads: ").append(dead == null ? "none" : java.util.Arrays.toString(dead)).append('\n');
+                    for (var ti : mx.dumpAllThreads(true, true)) {
+                        b.append(String.format(java.util.Locale.ROOT, "%n\"%s\" id=%d %s", ti.getThreadName(), ti.getThreadId(), ti.getThreadState()));
+                        if (ti.getLockName() != null) {
+                            b.append(" on ").append(ti.getLockName());
+                        }
+                        if (ti.getLockOwnerName() != null) {
+                            b.append(" owned by \"").append(ti.getLockOwnerName()).append('"');
+                        }
+                        b.append('\n');
+                        for (StackTraceElement f : ti.getStackTrace()) {
+                            b.append("    at ").append(f).append('\n');
+                        }
+                    }
+                    b.append(String.format(java.util.Locale.ROOT, "===== [diag] END THREAD DUMP =====%n"));
+                    System.err.print(b);
+                    System.err.flush();
+                }
+            }, "diag-watchdog");
+            w.setDaemon(true);
+            w.start();
+        }
+
+        void stop() {
+            done = true;
+        }
     }
 }

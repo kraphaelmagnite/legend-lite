@@ -523,7 +523,8 @@ _CORE_TEST_EXCLUDED_TAGS = [
 [junit_test(
     name = "core_tests_" + p,
     memory_mb = _CORE_TEST_MEMORY_MB,
-    size = "medium",
+    # DIAGNOSTIC, throwaway branch claude/diag-windows-core-hang: 900 s for integration, to tell a hang from a slow run
+    size = "large" if p == "integration" else "medium",
     select = ["--select-package=com.legend." + p] + (
         # A7: the differential runs in //core:corpus_differential_test alone, where its data is declared
         ["--exclude-classname=.*CorpusDifferentialTest"] if p == "integration" else []
