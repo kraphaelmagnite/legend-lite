@@ -298,21 +298,12 @@ jobs:
           PLATFORM: ${{ inputs.platform }}
           VARIANT: alone
         run: bash tools/ci/diag-profile.sh
-      - name: "profile: Windows Defender's real-time scanning off, the build's directories excluded"
-        if: always() && matrix.lane.key == 'core' && inputs.platform == 'windows'
-        shell: pwsh
-        run: |
-          try { Set-MpPreference -DisableRealtimeMonitoring $true -ErrorAction Stop; "real-time monitoring: off requested" } catch { "Set-MpPreference: $_" }
-          foreach ($p in @('C:\bzl', 'D:\a', $env:TEMP, $env:USERPROFILE, 'C:\hostedtoolcache')) {
-            try { Add-MpPreference -ExclusionPath $p -ErrorAction Stop; "excluded $p" } catch { "Add-MpPreference $p : $_" }
-          }
-          try { Get-MpComputerStatus | Format-List RealTimeProtectionEnabled,OnAccessProtectionEnabled,IsTamperProtected } catch { "$_" }
-          try { (Get-MpPreference).ExclusionPath } catch { "$_" }
-      - name: "profile: core_tests_integration alone, Defender off"
-        if: always() && matrix.lane.key == 'core' && inputs.platform == 'windows'
+      - name: "profile: core_tests_integration alone, C1 JIT only"
+        if: always() && matrix.lane.key == 'core'
         env:
           PLATFORM: ${{ inputs.platform }}
-          VARIANT: noav
+          VARIANT: c1
+          EXTRA_JVMOPT: -XX:TieredStopAtLevel=1
         run: bash tools/ci/diag-profile.sh
       - name: "profile: upload"
         if: always() && matrix.lane.key == 'core'

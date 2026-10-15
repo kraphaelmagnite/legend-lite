@@ -4,7 +4,11 @@
 set -uo pipefail
 out="profile/$VARIANT"
 mkdir -p "$out"
+# lane-flags.sh reads the lane step's env (the first run of this script stopped on the unset LOW_MEMORY)
+: "${LOW_MEMORY:=false}" "${LINUX_ONLY_TESTS:=ci-policy}" "${EXTRA_JVMOPT:=}"
 . tools/ci/lane-flags.sh
+extra=()
+[ -n "$EXTRA_JVMOPT" ] && extra+=("--jvmopt=$EXTRA_JVMOPT")
 if [ "$PLATFORM" = windows ]; then
   # Windows performance counters, one sample a second, as CSV; stopped below
   cat > "$out/counters.txt" <<'COUNTERS'
@@ -38,7 +42,7 @@ else
 fi
 start=$(date +%s)
 bazel test "${tflags[@]}" //core:core_tests_integration --cache_test_results=no --local_test_jobs=1 \
-  --test_env=DIAG_JFR=1 2>&1 | tail -15 | tee "$out/bazel.txt"
+  --test_env=DIAG_JFR=1 ${extra[@]+"${extra[@]}"} 2>&1 | tail -15 | tee "$out/bazel.txt"
 echo "bazel test took $(( $(date +%s) - start ))s" | tee -a "$out/bazel.txt"
 if [ "$PLATFORM" = windows ]; then
   pwsh -NoProfile -Command "Stop-Process -Id (Get-Content '$out/sampler.pid') -ErrorAction SilentlyContinue"
