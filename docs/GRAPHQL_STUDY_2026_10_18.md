@@ -76,7 +76,7 @@ it; §9 the harness; §10 the slices; §11 the risks; §12 the sources; §13 the
    against the endpoint unchanged, because it is GraphQL.
 7. **Size.** Smaller than the Cypher line by a wide margin: the reader exists (720 lines), the tree egress exists, and
    the dialect is a generator over `ModelContext` plus a structural walk over typed input objects. The new pieces are
-   the generator, the validator's rules beyond graphql-js, the translator, the tree-node clauses lite's tree lacks
+   the generator, the validator's rules beyond graphql-js, the translator, the inline derived-property spelling lite's tree lacks
    (§6.2), and the harness: six landings (§10).
 8. **The one-line rule of the line,** inherited: zero FAIL, zero BUG, zero ERROR, always; a refusal by name beats a
    possibly wrong answer; Java computes no value.
@@ -449,16 +449,57 @@ document ─▶ GqlParser (exists) ─▶ Gql.Document ─▶ GqlValidator: grap
 | named fragments | inlined before typing |
 | several root fields in one document | one Pure expression per root field, one request, the endpoint carrying each answer under its alias (`extensions` names the plan per root) |
 
-### 6.2 What lite's tree lacks, and the extension
+### 6.2 What is a desugar, and what lite's tree lacks
 
-`GraphFetchLiteral.Node` (`protocol/spec`) carries a property, parameters, an alias, a subtype view and children.
-What it cannot say: a filter, an ordered sort with directions, a limit and an offset **on a to-many node**, and an
-**aggregate node**. legend-engine's tree cannot either (its GraphQL supports `where` at the root only). With upstream
-compatibility off the table, the node gains typed clause fields: `where` (a lambda over the node's class), `orderBy`
-(a list of key lambda plus direction), `limit`, `offset`, and a node kind `aggregate` whose children are `count`,
-`sum`, `avg`, `min`, `max` with their property leaves. The record is the point; its Pure spelling is for the
-composer, so that the dumped Pure of a case reads and round-trips. The proposed spelling mirrors the GraphQL, which
-keeps the dump readable beside the query that produced it:
+The user's challenge (2026-10-18): is a nested `where` not just property navigation, `Firm.employees.name == 'John'`?
+Two different things hide under "nested where", and the code answers each.
+
+**(a) Navigation inside a condition on the parent.** `Firm(where: { employees: { some: { fullName: { equals:
+"John" } } } })` is `Firm.all()->filter(f | $f.employees->exists(e | $e.fullName == 'John'))`: plain Pure, deep
+navigation in a filter, lowered today through the resolver's correlated subselects (`CorrelatedSubselects`). Every
+firm with such an employee comes back, with all of its employees under it. Nothing to add.
+
+**(b) A clause on the collection in the result.** `Firm { legalName employees(where: { fullName: { equals: "John"
+} }) { fullName } }` keeps every firm and filters what is serialized under each. Pure's spelling for an expression at
+a tree node is a **derived property**: `johns() { $this.employees->filter(e | $e.fullName == 'John') }: Person[*]`,
+fetched as `johns { fullName }`; with parameters, `employeesOver(age: Integer[1]) { $this.employees->filter(e |
+$e.age >= $age) }: Person[*]`, fetched as `employeesOver(50) { fullName }`. lite handles both today, end to end:
+`GraphFetchChecker` types a node's arguments and they ride the tree; `GraphEmission.derivedChild` compiles the
+derived body, substitutes the arguments, recognises the body's navigation head and its filter (and a chained two-hop
+body), and builds the correlated child pipeline from it; `derivedLeaf` does the same for a scalar derived property
+such as `headcount() { $this.employees->size() }`, emitting the correlated scalar subquery that `GraphAggDecorrelate`
+then turns into a join. So **every nested clause and every aggregate of this line desugars to a derived property**:
+
+| GraphQL | the derived body it is |
+|---|---|
+| `employees(where: W, orderBy: K, limit: n, offset: m) { … }` | `$this.employees->filter(W)->sortBy(K)->drop(m)->limit(n)` |
+| `employeesAggregate(where: W) { count }` | `$this.employees->filter(W)->size()` |
+| `employeesAggregate { sum { salary } max { born } }` | `$this.employees.salary->sum()`, `$this.employees.born->max()` |
+| `__typename` | the class of the row's set implementation, a spelled constant per union arm |
+
+The semantics are Pure's, typed as any derived body is typed, with `$this` bound to the node's object. Pure as an
+object language expresses all of it; the earlier wording of this section overstated what was missing.
+
+What the tree lacks is only the place to write such a body **in the query**: a node is a property name plus arguments
+(`GraphFetchLiteral.Node`: property, parameters, alias, subtype view, children), and the body it inlines must be
+declared on the class. A query-time `where` cannot be pre-declared. The extension is therefore **an anonymous,
+query-scoped derived property on a node, spelled inline**, plus the lowering increments the table names:
+
+| Increment | Where | Size |
+|---|---|---|
+| the spelling: a node may carry an inline body over `$this` (a filter, sort keys with directions, a limit, an offset); the composer prints it, the parser reads it, the checker types it as a derived body | `GraphFetchLiteral.Node`, `SpecParser`, `PureComposer`, `GraphFetchChecker` | small; no new typing rule |
+| sort, limit and offset inside a derived child | `derivedChild` recognises a body's navigation head and its filter today, not a sort or a limit; the child's subselect must carry `ORDER BY`, `LIMIT` and `OFFSET`, which `SqlSelect` has and which `GraphAggDecorrelate` already steps around when present | the one real lowering increment; PR2's first probe is a model-declared `top3() { $this.employees->sortBy(e \| $e.salary)->reverse()->take(3) }` fetched in a tree, to see exactly where today's path stops |
+| the aggregate object `{ count, sum { salary } }` | a hop-less object node whose leaves are expressions over the parent row, grouping several derived leaves under one key; nothing navigates | small; the serializer gains one node kind |
+| `__typename` | a leaf whose value is the set implementation's class name | small; the emitter knows the arm (`ClassConcatenates`) |
+| several sort keys with mixed directions at the root | the same key list on the root node, one `ORDER BY` | small |
+
+Not an extension, because Pure spells it and lite lowers it today: (a) above; `some`, `every`, `none`; subtype
+selection (`->subType(@X)`); derived properties with arguments; milestoning arguments; root filter, limit and
+offset; the root aggregate and the root groups (the Relation API); `truncate` (the `firstDayOf…` natives); `cast`;
+the insensitive match; the null tests.
+
+The inline spelling, for the composer and the dumped Pure of a case, mirrors the GraphQL so the dump reads beside the
+query that produced it:
 
 ```
 Firm.all()->graphFetch(#{
@@ -471,11 +512,8 @@ Firm.all()->graphFetch(#{
 ```
 
 The `LEGEND_ENGINE` parser surface keeps refusing it; the own-corpus census declares it (LITE-DESIGN-graphql-tree,
-`docs/OWN_CORPUS_DECISIONS.md`); `PureComposer` prints it; `SpecParser` reads it; the Typer types a node's clauses
-against the node's class as it types the root's filter. Lowering: `GraphEmission` already builds each class-typed
-child as a correlated per-hop subselect with to-many children array-wrapped; a node's clauses are `WHERE`, `ORDER BY`,
-`LIMIT` and `OFFSET` on that subselect, and an aggregate node is that subselect with aggregates and no array. The SQL
-side exists; the Pure side is this extension; Java still computes nothing.
+`docs/OWN_CORPUS_DECISIONS.md`). Java still computes nothing: the database runs the filter, the sort, the limit and
+the aggregate inside the subselect the emitter already builds per node.
 
 ### 6.3 Validation beyond graphql-js
 
