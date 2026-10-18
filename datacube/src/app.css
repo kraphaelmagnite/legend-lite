@@ -2596,10 +2596,28 @@
 
 .dc-chartpanel-form {
   flex: 0 0 220px;
+  /* its width as measured is its width as set (ui/chart-panel.ts #resizeForm) */
+  box-sizing: border-box;
+  /* a tile made smaller after the divider was dragged: the chart keeps some room */
+  max-width: max(120px, calc(100% - 160px));
   overflow: auto;
   padding: var(--dc-pad-2);
-  border-right: 1px solid var(--dc-line);
 }
+
+/* the divider between the options and the chart (ui/chart-panel.ts #buildSash): a line, the active colour when
+   pointed at, dragged or focused */
+.dc-chartpanel-sash {
+  flex: none;
+  width: 5px;
+  box-sizing: border-box;
+  border-left: 1px solid var(--dc-line);
+  cursor: col-resize;
+  touch-action: none;
+}
+.dc-chartpanel-sash:hover,
+.dc-chartpanel-sash:focus-visible,
+.dc-chartpanel-sash.dc-chartpanel-sash-dragging { background: var(--dc-active); outline: none; }
+.dc-chartpanel-sash[hidden] { display: none; }
 
 /* a narrow column: each label above its control, the control full width */
 .dc-chartpanel-form .dc-field {
@@ -3039,19 +3057,6 @@
 .dc-chartpanel-heading {
   margin: var(--dc-pad-2) 0 var(--dc-pad-1); padding-top: var(--dc-pad-2); border-top: 1px solid var(--dc-line);
   color: var(--dc-muted-strong); font-size: var(--dc-text-sm-size); font-weight: 600;
-}
-
-/* In a tile the options float over the chart, from its left edge, rather
-   than taking width from it: a small tile keeps its chart whole. */
-.dc-chart-tile .dc-chartpanel { position: relative; }
-.dc-chart-tile .dc-chartpanel-form {
-  position: absolute;
-  inset: 0 auto 0 0;
-  width: 220px;
-  max-width: 85%;
-  z-index: 1;
-  background: var(--dc-bg);
-  box-shadow: var(--dc-popup-shadow);
 }
 
 /* THE RECEIPT: what answered the view, as the engine that ran it said. */

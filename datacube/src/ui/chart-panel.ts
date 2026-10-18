@@ -47,6 +47,13 @@ let kindsRegistered = false;
 /** How long a click on a chart that drills waits for a second click (a double-click drills instead of filtering). */
 const DOUBLE_CLICK_MS = 250;
 
+/** The options' narrowest, as the divider between them and the chart is dragged... */
+const FORM_MIN_PX = 160;
+/** ...and the chart's narrowest beside them: a drag never takes the chart's last room. */
+const CHART_MIN_PX = 160;
+/** How far an arrow key moves the divider. */
+const SASH_STEP_PX = 16;
+
 export interface ChartPanelOptions {
   /** The cube as it is NOW (the chart follows it). */
   readonly snapshot: () => CubeSnapshot;
@@ -80,6 +87,8 @@ export class ChartPanel {
   readonly #options: ChartPanelOptions;
   #spec: ChartSpec | null;
   #form!: HTMLElement;
+  /** The divider between the options and the chart, shown with the options: dragged to give either more room. */
+  #sash!: HTMLElement;
   #canvas!: HTMLElement;
   #status!: HTMLElement;
   /** A drilled chart's path, above it (batch 2 item 10). */
@@ -159,6 +168,7 @@ export class ChartPanel {
   /** Show or hide the options; answers whether they are now shown. */
   toggleForm(): boolean {
     this.#form.hidden = !this.#form.hidden;
+    this.#sash.hidden = this.#form.hidden;
     if (!this.#form.hidden && this.#formStale) this.#paintForm();
     return !this.#form.hidden;
   }
@@ -195,9 +205,64 @@ export class ChartPanel {
     this.#crumbs.setAttribute('aria-label', 'Drill path');
     this.#crumbs.hidden = true;
     right.append(this.#crumbs, this.#canvas, this.#status);
-    this.#root.append(this.#form, right);
+    this.#sash = this.#buildSash();
+    this.#root.append(this.#form, this.#sash, right);
     this.#form.hidden = this.#options.formOpen === false;
+    this.#sash.hidden = this.#form.hidden;
     this.#paintForm();
+  }
+
+  /**
+   * The options and the chart side by side, as two panes (the user, 2026-10-18: the options floated over the chart
+   * hid its value axis, and so the effect of the very option being changed); the divider between them dragged, or
+   * moved by its arrow keys, to give either more room. The chart redraws at its new width (chart-render.ts's
+   * ResizeObserver).
+   */
+  #buildSash(): HTMLElement {
+    const sash = this.#doc.createElement('div');
+    sash.className = 'dc-chartpanel-sash';
+    sash.setAttribute('role', 'separator');
+    sash.setAttribute('aria-orientation', 'vertical');
+    sash.setAttribute('aria-label', 'Resize the options');
+    sash.tabIndex = 0;
+    sash.addEventListener('pointerdown', (event) => {
+      if (event.button !== 0) return;
+      event.preventDefault();
+      const from = this.#form.getBoundingClientRect().width;
+      const start = event.clientX;
+      sash.setPointerCapture?.(event.pointerId);
+      sash.classList.add('dc-chartpanel-sash-dragging');
+      const move = (e: PointerEvent): void => this.#resizeForm(from + e.clientX - start);
+      const end = (): void => {
+        sash.removeEventListener('pointermove', move);
+        sash.removeEventListener('pointerup', end);
+        sash.removeEventListener('pointercancel', end);
+        sash.classList.remove('dc-chartpanel-sash-dragging');
+      };
+      sash.addEventListener('pointermove', move);
+      sash.addEventListener('pointerup', end);
+      sash.addEventListener('pointercancel', end);
+    });
+    sash.addEventListener('keydown', (event) => {
+      const width = this.#form.getBoundingClientRect().width;
+      const to = event.key === 'ArrowLeft' ? width - SASH_STEP_PX
+        : event.key === 'ArrowRight' ? width + SASH_STEP_PX
+        : event.key === 'Home' ? FORM_MIN_PX
+        : event.key === 'End' ? Infinity
+        : null;
+      if (to === null) return;
+      event.preventDefault();
+      this.#resizeForm(to);
+    });
+    return sash;
+  }
+
+  /** The options `width` wide, kept between their narrowest and the chart's last room. */
+  #resizeForm(width: number): void {
+    const room = this.#root.getBoundingClientRect().width - this.#sash.getBoundingClientRect().width - CHART_MIN_PX;
+    const kept = Math.round(Math.max(FORM_MIN_PX, Math.min(width, room)));
+    this.#form.style.flexBasis = `${kept}px`;
+    this.#sash.setAttribute('aria-valuenow', String(kept));
   }
 
   #set(change: ChartChange, redrawForm = false): void {

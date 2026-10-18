@@ -533,6 +533,45 @@ describe('a chart\'s right-click menu: Options..., and Open in grid offered only
     assert.equal(form().hidden, true);
   });
 
+  it('Options... opens a pane beside the chart, not over it: the divider between them moves', async () => {
+    newPage();
+    const a = pg().addGrid(over('trades.csv'));
+    await settle();
+    const chart = await chartOf(a);
+    const panel = tile(chart).querySelector('.dc-chartpanel') as HTMLElement;
+    const form = panel.querySelector('.dc-chartpanel-form') as HTMLElement;
+    const sash = panel.querySelector('.dc-chartpanel-sash[role="separator"]') as HTMLElement;
+    assert.deepEqual([...panel.children].map((c) => c.className),
+      ['dc-chartpanel-form', 'dc-chartpanel-sash', 'dc-chartpanel-main'], 'the options, the divider, the chart: in a row');
+    assert.equal(sash.hidden, true, 'no divider without the options');
+    chartMenu(chart).find((i) => label(i) === 'Options...')!.click();
+    assert.equal(sash.hidden, false);
+    // jsdom lays nothing out: a 600px panel, its options 220px wide
+    const width = (el: HTMLElement, px: () => number): void => {
+      el.getBoundingClientRect = () => ({ width: px() }) as DOMRect;
+    };
+    width(panel, () => 600);
+    width(sash, () => 5);
+    width(form, () => parseFloat(form.style.flexBasis) || 220);
+    const key = (k: string): void => {
+      sash.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true }));
+    };
+    key('ArrowRight');
+    assert.equal(form.style.flexBasis, '236px');
+    key('End');
+    assert.equal(form.style.flexBasis, '435px', 'never past the chart\'s last 160px');
+    key('Home');
+    assert.equal(form.style.flexBasis, '160px');
+    sash.dispatchEvent(new dom.window.PointerEvent('pointerdown', { bubbles: true, button: 0, clientX: 300 }));
+    sash.dispatchEvent(new dom.window.PointerEvent('pointermove', { bubbles: true, clientX: 350 }));
+    assert.equal(form.style.flexBasis, '210px', 'dragged 50px right');
+    sash.dispatchEvent(new dom.window.PointerEvent('pointerup', { bubbles: true, clientX: 350 }));
+    sash.dispatchEvent(new dom.window.PointerEvent('pointermove', { bubbles: true, clientX: 500 }));
+    assert.equal(form.style.flexBasis, '210px', 'let go, it stays');
+    chartMenu(chart).find((i) => label(i) === 'Options...')!.click();
+    assert.equal(sash.hidden, true);
+  });
+
   it('a frozen KPI with no column across: Open in grid is not offered when it would open nothing', async () => {
     // A KPI may have no column across (its trend: chart-spec.ts chartProblems). Open in grid groups the editing grid by
     // the chart's column across (#openEditor returns without one), so the menu should not offer it -- as it does not

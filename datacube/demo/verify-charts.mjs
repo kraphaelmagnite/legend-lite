@@ -202,6 +202,38 @@ try {
     return `${gridId} removed: ${followingId} went with it, ${frozenId} detached`;
   });
 
+  // A chart's Options beside it, not over it (the user, 2026-10-18: the floating form hid the value axis): the form,
+  // the divider and the chart side by side, and the divider dragged gives the form room the chart gives up
+  await check('a chart\'s Options open in a pane beside the chart; its divider drags', async () => {
+    await addChart();
+    const id = await page.locator('[data-tile^="chart-"]').last().getAttribute('data-tile');
+    await chartMenu(id, 'Options...');
+    const form = page.locator(`[data-tile="${id}"] .dc-chartpanel-form`);
+    const sash = page.locator(`[data-tile="${id}"] .dc-chartpanel-sash`);
+    const chart = page.locator(`[data-tile="${id}"] .dc-chartpanel-chart`);
+    await form.locator('.dc-field').first().waitFor({ timeout: 10_000 });
+    await frames(page, 4);
+    const [f, s, c] = [await form.boundingBox(), await sash.boundingBox(), await chart.boundingBox()];
+    if (f.x + f.width > s.x + 0.5 || s.x + s.width > c.x + 0.5) {
+      throw new Error(`overlap: form ${f.x}+${f.width}, divider ${s.x}+${s.width}, chart at ${c.x}`);
+    }
+    await page.mouse.move(s.x + s.width / 2, s.y + s.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(s.x + s.width / 2 + 60, s.y + s.height / 2, { steps: 4 });
+    await page.mouse.up();
+    await frames(page, 4);
+    const [f2, c2] = [await form.boundingBox(), await chart.boundingBox()];
+    if (Math.abs(f2.width - f.width - 60) > 1 || Math.abs(c.width - c2.width - 60) > 1) {
+      throw new Error(`dragged 60px: form ${f.width} -> ${f2.width}, chart ${c.width} -> ${c2.width}`);
+    }
+    // the chart drew again at its new width
+    const canvas = await chart.locator('canvas').first().boundingBox();
+    if (Math.abs(canvas.width - c2.width) > 1) throw new Error(`the canvas is ${canvas.width} wide in a ${c2.width} chart`);
+    if (process.env.SHOTS) await page.screenshot({ path: outPath('options-pane.png') });
+    await chartMenu(id, 'Options...');
+    return `form ${f.width} -> ${f2.width}, chart ${c.width} -> ${c2.width}`;
+  });
+
   // A KPI (docs/DATACUBE_CHARTS_DESIGN_2026_10_09.md, batch 1): a chart's kind set to KPI in its Options -- its
   // number as the grid writes it, a target to say it against, its trend's line under it
   await check('a chart made a KPI: its number, against a target it is above, its trend\'s line under it', async () => {
