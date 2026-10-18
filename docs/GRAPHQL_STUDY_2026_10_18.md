@@ -1,0 +1,841 @@
+# GraphQL in Pure: the typed object query over the class model, generated from the model, valid everywhere
+
+**Status: study with the user's decisions (2026-10-18). Nothing is scheduled or announced in `docs/IN_FLIGHT.md`;
+§4's decisions are the user's rulings of 2026-10-18 and are locked; the slices of §10 are proposals.** This is the
+fourth study of its kind, after `docs/LEGEND_SQL_STUDY_2026_10_11.md` (Postgres SQL, `#SQL{...}#`),
+`docs/IQ_SQL_STUDY_2026_10_13.md` (SAP IQ, `#IQ{...}#`) and `docs/CYPHER_STUDY_2026_10_15.md` (Neo4j Cypher,
+`#Cypher{...}#`). It answers the user's ask of 2026-10-18: after a relational frontend and a graph frontend, an
+**object** frontend, standards-based, returning trees, that humans and agents will understand and like.
+
+Two things make this line different from the three before it, and both were the user's call:
+
+- **No upstream compatibility.** legend-engine has a GraphQL extension (`legend-engine-xts-graphQL`, the `#GQL{...}#`
+  island, a Query class whose functions are root fields, Hasura's `where` operators, `@totalCount`). lite already
+  parses that island byte-exactly for the wire (`parser/GqlParser.java`, `protocol/spec/GqlIsland.java`) and refuses
+  to compile it (`compiler/spec/Typer.java`, the `GqlIsland` arm). The user ruled on 2026-10-18 that the engine's
+  design constrains nothing here: the goal is the best protocol, not the compatible one. The engine's extension is
+  read as prior art only (§3.4).
+- **The language is standard; the dialect is the schema.** The user wanted three things at once: typed, not strings;
+  valid GraphQL; nice. GraphQL has exactly one typed, valid extension mechanism, the input objects, enums and custom
+  scalars a schema declares. So every convention of this line (filters, sorting, paging, aggregates, groups,
+  inheritance) is a rule of the **schema generator** that reads a Pure model, and every query is plain GraphQL that
+  graphql-js parses, any GraphQL tool validates against the generated SDL, and lite's compiler types against the model.
+  Nothing in a query is a string that lite parses; nothing in a query is an expression.
+
+§0 is the answer; §1 the method; §2 what the frontend is; §3 the spec, the prior art and the oracles; §4 the
+decisions; §5 the generated schema, rule by rule; §6 the translator; §7 the worked example; §8 the protocol around
+it; §9 the harness; §10 the slices; §11 the risks; §12 the sources; §13 the record of landings.
+
+---
+
+## 0. Start here
+
+1. **What it is.** A GraphQL endpoint per data space, whose schema is generated from the Pure model, and the same
+   document inside Pure as the `#GQL{...}#` island. A query selects a tree of objects with typed filters, sorting,
+   paging, aggregates and (later) groups at every level; the answer is nested JSON the database builds:
+
+   ```graphql
+   {
+     Firm(where: { legalName: { startsWith: "A" } }, orderBy: [{ legalName: ASC }], limit: 10) {
+       legalName
+       employees(where: { age: { gt: 30 } }, orderBy: [{ salary: DESC }], limit: 3) { fullName salary }
+       headcount: employeesAggregate { count }
+     }
+   }
+   ```
+
+   The translator turns the document into Pure (`Firm.all()->graphFetch(tree)->serialize(tree)` with the clauses on
+   the tree's nodes, §6); the compiler types it once, like any query; the graph emitter lowers each node to a
+   correlated subselect and the database returns the JSON (`resolver/GraphEmission.java`, which exists).
+2. **Why GraphQL, and why not GraphQL as the vendors extend it.** The research (§3) found that LLM accuracy at writing
+   a query language tracks its volume in training data, not its typedness; that text beats JSON query objects; that
+   validation before execution is the single biggest accuracy lever; and that GraphQL has no standard for filtering,
+   sorting, paging or aggregation, so each vendor bolts on its own object dialect, Hasura's underscored one being the
+   most copied and the least liked. The selection set is the one tree syntax every human and every agent already
+   reads. The bolt-on is where the choice lies, and the user chose the most-seen typed filter shape in training data,
+   Prisma's, over Hasura's (G2).
+3. **The dialect is a generator, not a parser.** Per class the generator emits the object type, `XWhere`, `XOrderBy`,
+   `XAggregate` with its `XSum`/`XAvg`/`XMin`/`XMax`, `XGroups` with `XGroup`/`XGroupKey`/`XGroupHaving`/
+   `XGroupOrderBy`, and `XInterface` where the class has subclasses; per collection property the `pAggregate` and
+   `pGroups` siblings; per subclass the `asY` downcast in the inputs. The names are reserved; a model whose property
+   collides is refused by name (G11). Agents learn one rule: everything about `Person` is `Person` plus a suffix.
+4. **Inheritance is GraphQL's one real mismatch with Pure, and it is settled.** GraphQL interfaces are abstract and
+   every name in a schema is unique, so a concrete base class cannot be both the interface and the object type. The
+   ruling (G8, G9, G10): a class with subclasses gets `XInterface`; its concrete type keeps the class name, so
+   `__typename` is always the exact class; inputs carry `asY` downcasts since interfaces are never inputs; and lite's
+   validator refuses the one silent trap GraphQL leaves open (an inline fragment on a non-leaf concrete type inside an
+   ancestor-typed selection), with the fix in the message.
+5. **Two free oracles, both real.** graphql-js (MIT) judges validity: a differential over random documents against the
+   generated SDLs, lite's acceptance a subset of graphql-js's, never more. Prisma (Apache 2.0) over the Postgres the
+   lanes already embed judges semantics: because the filter, sort, paging, aggregate and group vocabularies are
+   Prisma's, each case carries a mechanical Prisma twin, snapped locally and committed, with the IQ line's STALE,
+   UNSNAPPED and GONE guards. Inheritance, which Prisma lacks, is judged by SQL twins on the Postgres lane.
+6. **The agent surface is four tools.** `describe` (the SDL for the classes asked about), `validate` (the typed result
+   shape, or every error with phase, position, message and the nearest valid name), `query` (read-only, row-capped,
+   a warning when `limit` lacks `orderBy`) and `explain` (the Pure and the SQL). Apollo's MCP server and GraphiQL work
+   against the endpoint unchanged, because it is GraphQL.
+7. **Size.** Smaller than the Cypher line by a wide margin: the reader exists (720 lines), the tree egress exists, and
+   the dialect is a generator over `ModelContext` plus a structural walk over typed input objects. The new pieces are
+   the generator, the validator's rules beyond graphql-js, the translator, the tree-node clauses lite's tree lacks
+   (§6.2), and the harness: six landings (§10).
+8. **The one-line rule of the line,** inherited: zero FAIL, zero BUG, zero ERROR, always; a refusal by name beats a
+   possibly wrong answer; Java computes no value.
+
+---
+
+## 1. The method this line inherits
+
+From the three studies before it (their §1s, the Cypher study's §8 and §9):
+
+- **One translator into one target.** The document becomes a Pure `ValueSpecification` the Typer types once; nothing
+  is re-spelled as text and nothing is typed twice (AGENTS.md invariant 1). The generated Pure is dumped per case so a
+  review reads it.
+- **The spec is real; the oracle is real; CI judges from a file.** Here the spec is the GraphQL specification
+  (September 2025 edition) for the language and this document for the generated schema; the oracles are graphql-js
+  and Prisma over Postgres (§3.3); answers are committed with the STALE, UNSNAPPED and GONE guards.
+- **Statuses that move only with a dated entry:** PASS, FAIL, BUG, ERROR, REFUSED, BOTH_ERROR, SKIP per case per lane,
+  in a ledger the test ratchets.
+- **Java never computes a value.** Every comparison has one SQL lowering; every aggregate is the database's; the
+  endpoint carries JSON, it does not build it.
+- **Randomized differentials and independent reviews.** A generator of type-correct documents over a generated
+  schema; each landing reviewed by an agent that wrote none of it.
+
+What is new in method: **no corpus exists for this frontend** (GraphQL has no conformance suite beyond graphql-js's
+own tests, and the dialect is ours), so the cases are lite's own from the first landing, as the Postgres line's
+`lite/*.yaml` were, and the randomized generator carries more of the weight than it did for Cypher, whose TCK had
+1,615 scenarios.
+
+---
+
+## 2. What the frontend is
+
+### 2.1 Valid GraphQL, exactly
+
+A document is what the September 2025 edition of the specification calls an executable document: operations
+(anonymous or named, `query` only; no mutations or subscriptions in this line), variables with declared types,
+selection sets, aliases, arguments, named and inline fragments, `@include` and `@skip`, `__typename`, and the
+introspection fields. lite's `GqlParser` reads all of it today. What a query may NOT contain is anything the
+specification does not: no expressions, no operators, no paths in field names. The whole dialect is in the arguments'
+input types and the fields' names, which the schema declares and introspection shows.
+
+The request and the response are the GraphQL-over-HTTP specification's: `POST` with `{ "query", "variables",
+"operationName" }`, an answer of `{ "data", "errors", "extensions" }`. Studio, the Query app, DataCube, Python and any
+agent speak to the endpoint as to any GraphQL API, with any client.
+
+### 2.2 What a person or an agent sees
+
+- **A root field per class**, named as the class: `Person(where: PersonWhere, orderBy: [PersonOrderBy!], limit: Int,
+  offset: Int): [PersonInterface!]!`, and a root per Pure function of the data space with its parameters typed.
+- **Filters that read like Prisma's:** `where: { age: { gt: 30 }, firm: { legalName: { startsWith: "A" } },
+  employees: { some: { salary: { gte: 100000 } } }, OR: [...] }`.
+- **The same four arguments on every collection field**, root or to-many property.
+- **Aggregates and groups beside every collection**, `employeesAggregate { count sum { salary } }`,
+  `PersonGroups { key { address { country } } count avg { age } }`.
+- **Inheritance in GraphQL's own idiom on the way out** (`... on Employee { salary }`, `__typename`) and as typed
+  downcasts on the way in (`where: { asEmployee: { salary: { gt: 100000 } } }`).
+- **The model's power as fields:** a derived property with parameters is a field with typed arguments
+  (`salaryOn(date: $d)`); a milestoned class takes its business and processing dates as typed arguments; constraints
+  come back as checked defects when asked; Pure's `doc.doc` tagged values are the SDL descriptions agents read.
+- **Errors with a fix in them,** from a compiler that knows the model: the phase, the line and column, the message,
+  and the nearest valid name.
+
+### 2.3 What it is not
+
+- Not legend-engine's GraphQL: no Query class to write by hand, no `_eq`, no `@totalCount` (a count is a sibling
+  field), no plan-per-root-field quirks. The island keeps the name `#GQL{...}#` because the name is good, not for
+  compatibility.
+- Not an expression language. A computed value, a cross-field comparison, a bucket beyond `truncate` is a derived
+  property in the Pure model, exposed as a typed field or argument. That is the division of labour the research
+  argued for: the model author writes Pure once, agents and people compose fields (§3.2, G12).
+- Not Relay: no `edges { node }`, no cursors in this line. `limit`, `offset` and the sibling `count` page a list.
+- Not a write path. Mutations wait on the writes program (F1 of `docs/BI_AND_ETL_PLAN_2026_09_29.md`).
+
+---
+
+## 3. The spec, the prior art and the oracles
+
+Taken on 2026-10-18 from three research passes whose reports, with every URL, are kept beside this study's working
+notes; the sources are listed in §12.
+
+### 3.1 The GraphQL specification
+
+- The **September 2025 edition** is the latest, the first since October 2021: OneOf input objects, schema
+  coordinates, descriptions on executable documents, full Unicode. The working draft is the living text. The
+  specification is licensed under the Open Web Foundation agreement (OWFa 1.0); the GraphQL Foundation (Linux
+  Foundation) governs it, with a budget that shrank in 2026 and a conference "right-sized".
+- **graphql-js** (MIT) is the reference implementation, v17 GA 2026-06-15; its `src/__tests__` corpus is the de facto
+  conformance suite for parsing, validation and execution. The language-independent `graphql-cats` suite (Unlicense)
+  has been dormant since 2018. There is no Foundation conformance suite.
+- **The gaps that matter here**: the specification defines no filtering, sorting, pagination or aggregation. The
+  Composite Schemas working group covers federation only. OpenCRUD is dormant. Every vendor invents its own input
+  dialect, and the dialects disagree on the one thing an agent must guess, the operator spellings: Hasura `_eq`,
+  Prisma `equals`, PostGraphile `equalTo`, Neo4j `eq` (and three incompatible generations between its versions 3
+  and 7), AppSync `eq`.
+
+### 3.2 What the research found about humans and agents
+
+- **Adoption plateaued, not dead.** Postman's 2025 survey: REST 93%, GraphQL 33% (29% in 2023). Shopify went
+  GraphQL-only for new public apps in 2025; GitHub's v4 continues; the State of GraphQL survey has not run since 2022.
+- **LLM accuracy tracks training volume, not typedness.** The one benchmark that asks identical questions in four
+  languages (SM3-Text-to-Query, NeurIPS 2024) finds zero-shot SQL 47%, Cypher 34%, MongoDB 22%, SPARQL 3%, and
+  attributes MongoDB's gap to verbosity: a JSON query dialect costs tokens. A novel syntax starts near zero and
+  recovers only with a reference page and examples (a vendor benchmark took its own language from 25% to 75% with a
+  skill document, and to 92% with a validate-and-retry loop, because the typed language rejects wrong queries before
+  they run while SQL answers them wrongly and silently). IBM's text-to-GraphQL dataset (EMNLP 2024 Industry) reports
+  about 50% at best with one example, and names few public schemas in training data as the cause.
+- **The ecosystem converged on three or four tools**: a schema tool, a validate tool, one read-only query tool taking
+  the language as text, optionally explain. Supabase, Neo4j, BigQuery and Apollo's MCP servers all have this shape;
+  Anthropic's and OpenAI's tool-design guidance says fewer, broader tools with strict schemas.
+- **Hence the design:** GraphQL for the shape (the strongest tree prior); Prisma's vocabulary for the typed inputs
+  (the strongest typed-filter prior: Prisma's client is downloaded about 11 million times a week); validation as the
+  product; no expressions, since the typed inputs and the model carry them.
+
+### 3.3 The oracles
+
+| Oracle | Judges | License | Where it runs |
+|---|---|---|---|
+| **graphql-js** | validity: does a document validate against the generated SDL; introspection's shape | MIT | a Node test target (rules_js is in `MODULE.bazel` already for DataCube) in the heavy lane; the differential is a committed JSONL of documents and verdicts, judged in every lane |
+| **Prisma** over Postgres 16 | semantics of `where`, `orderBy`, `limit`, `offset`, `aggregate`, `groupBy`, `having`: null handling, `mode: insensitive`, `some`/`every`/`none` on empty collections, ordering with nulls | Apache 2.0 | locally, `tools/prisma-oracle/snap.mjs` over the embedded Postgres the lanes use, a Prisma schema generated from the same Pure model; answers committed as `prisma-answers.jsonl`; STALE, UNSNAPPED, GONE |
+| **Postgres 16** by SQL twin | everything Prisma cannot express: inheritance (`__typename`, `... on`, `asY`), derived properties, milestoning, `truncate`, checked defects | PostgreSQL | the Postgres lane, as the SQL island's cases |
+| **legend-engine** | nothing. Its GraphQL extension is prior art read for its SDL binding and its root-field design, never loaded | | |
+
+A case's status is judged by exactly one oracle, named in the ledger (`prisma`, `sql`, `validity`).
+
+### 3.4 Prior art, read and not copied
+
+- **legend-engine's `legend-engine-xts-graphQL`**: ANTLR grammar; `#GQL{}#` island; a synthetic Query class whose
+  functions are root fields; `graphQLExecutableToPure` builds a `RootGraphFetchTree` per root field;
+  `addDynamicFilter` maps a `where` argument with `_and, _or, _eq, _exists, _in, _contains, _lt, _lte, _gt, _gte,
+  _eqIgnoreCase`; introspection generates `<Class>_bool_exp`; `@totalCount` as a second plan; limit only after sort;
+  no `order_by`, no nested arguments, no aggregates, no mutations. Its SDL binding (`binding/toPure/sdl`) is the
+  reference for the easy half of the generator: multiplicities to nullability, enums, scalars.
+- **Hasura v2/v3**, **PostGraphile v5**, **Prisma**, **Neo4j GraphQL v7**, **AppSync**: the dialects compared in §3.1.
+  Prisma is the model for inputs; Hasura's `_aggregate { aggregate { } }` double wrapper is what `XAggregate` avoids;
+  PostGraphile v5's `@interface mode:relational` is the one generator that models inheritance, and it makes the user
+  name every concrete type, which is the suffix-on-the-concrete-type design this line rejected (G8).
+- **OData 4.01** (OASIS, ISO): the only ratified standard with inheritance, navigation, `$expand` trees and `$apply`
+  aggregation; a reader of it onto the same translator is the obvious second input spelling if enterprise consumers
+  ask (§10, Later). Its oracle situation is poor (Olingo retired to the Apache Attic in December 2025), which is one
+  reason it is second.
+- **EdgeQL** (Apache 2.0): the best semantic match to a class model (object types, inheritance, links, nested shapes
+  with filter, order and limit at every level, computed fields, `group`); its vendor shut down in December 2025 and
+  it has almost no training-data presence. Its nested-clause design is what §5 and §6 give GraphQL.
+
+---
+
+## 4. Decisions (the user's rulings, 2026-10-18)
+
+`G` for GraphQL, distinct from the Postgres study's `D`, the IQ study's `I` and the Cypher study's `C`.
+
+- **G1. The query language is valid GraphQL** (September 2025 edition). Every document parses with graphql-js and
+  validates against the generated SDL. lite's validator may be stricter than graphql-js (G10), never looser: the
+  differential (§9.3) requires lite's acceptance to be a subset of graphql-js's.
+- **G2. The filter vocabulary is Prisma's, exactly:** `equals`, `not` (the nested form only), `in`, `notIn`, `lt`,
+  `lte`, `gt`, `gte`, `contains`, `startsWith`, `endsWith`, `mode: insensitive` (an enum `QueryMode { default,
+  insensitive }`); for to-one relations `is`, `isNot`; for to-many `some`, `every`, `none`; `AND`, `OR`, `NOT`. An
+  explicit `equals: null` is `IS NULL` and `not: null` is `IS NOT NULL`, as Prisma reads them. No bare-value shorthand
+  (a GraphQL input field has one type). No `like`. The user's reason, over the `eq` of the GraphQL-world convention:
+  Prisma is the most-seen typed filter in training data and one consistent set.
+- **G3. The four arguments** on every collection field, root or to-many: `where`, `orderBy` (a list of single-key
+  objects, `[{ lastName: ASC }, { age: DESC }]`, because GraphQL input objects are unordered maps), `limit: Int`,
+  `offset: Int`.
+- **G4. Roots are the classes, named as the classes.** `Person`, not `persons` or `people`: no pluralization to get
+  wrong, and the name is the one the model and `describe` show. Pure functions of the data space are extra roots,
+  camelCase as Pure spells them, with typed parameters.
+- **G5. Scalars.** Pure `Integer` is a custom `BigInt` (64-bit; JSON number); GraphQL's `Int` is 32-bit by
+  specification and appears only for `limit` and `offset`. `Float` is `Float`; `Decimal` a custom `Decimal`; `String`,
+  `Boolean` themselves; `StrictDate` a custom `Date`; `DateTime` and Pure's abstract `Date` a custom `DateTime`;
+  `StrictTime` a custom `Time`; Pure enumerations are GraphQL enums. The custom scalars accept the literal an agent
+  writes (`"2024-01-01"`, `30`); the schema types it. Typed by the schema is not defaulting (AGENTS.md invariant 4).
+- **G6. Aggregates are a sibling field per collection:** `PersonAggregate` beside the `Person` root,
+  `employeesAggregate` beside `employees`, taking the collection's `where`, returning `{ count: BigInt!, sum: XSum,
+  avg: XAvg, min: XMin, max: XMax }` whose sub-objects have one field per numeric (sum, avg) or comparable (min,
+  max) property. The sub-objects exist because one scalar field cannot carry a Float sum and a Date minimum.
+- **G7. Groups, designed now and built in PR5.** A sibling `PersonGroups` / `employeesGroups`. **The selection under
+  `key` is the grouping**; there is no `by` argument to keep in sync. `XGroupKey` holds the groupable fields only
+  (scalars, enums, to-one paths through their own key types, derived properties without parameters; never a
+  to-many); a date key takes `truncate: DateUnit` (`YEAR, QUARTER, MONTH, WEEK, DAY, HOUR`), the place a typed
+  bucket belongs, where a numeric `bucket:` can join later. Arguments: `where`, `having: XGroupHaving` (filters on
+  count, sum, avg, min, max, with `AND`/`OR`/`NOT`), `orderBy: [XGroupOrderBy!]` (count, key, sum, avg, min, max),
+  `limit`, `offset`. `XAggregate` is the degenerate group with an empty key and stays as the convenient form.
+- **G8. Inheritance, output side.** A class with subclasses gets `interface XInterface` carrying its fields; its
+  concrete type keeps the class name `X` and implements it. A leaf class is a plain object type and nothing else. An
+  abstract class (Pure's `typemodifiers.abstract` stereotype) gets the interface only, still named `XInterface` so
+  the rule is predictable. lite reads the stereotype by name, as it reads `<<equality.Key>>`
+  (`PlatformTypes.EQUALITY_PROFILE`) and the `doc.doc` tag (`protocol/Documentation`); nothing reads it today, so
+  PR3 adds the read. Multi-level hierarchies use interfaces implementing interfaces, with the transitive
+  `implements` list GraphQL requires written out; Pure's multiple inheritance is `implements A & B`. Every position
+  typed `X[*]` or `X[0..1]` in Pure is `XInterface` in the schema where it exists, else `X`. `__typename` is always
+  the exact class, decided by the mapping's set implementation (a constant per union arm, as `ClassConcatenates`
+  already builds). **The suffix is `Interface`, not the `I` prefix:** `PersonInterface` sorts beside `Person`,
+  `PersonAggregate` and `PersonWhere`, reads as one rule, and cannot be mistaken for a class name.
+- **G9. Inheritance, input side.** Inputs never mention interfaces. `XWhere` and `XOrderBy` carry `asY: YWhere` /
+  `asY: YOrderBy` for every transitive subclass `Y`; `asY: { isNot: null }` is membership, as `firm: { isNot: null }`
+  is "has a firm". No `subtype` enum: `__typename` covers the output side.
+- **G10. The fragment trap is refused.** An inline fragment matches an object type exactly, so `... on Employee {
+  salary }` inside a `Person` selection silently skips a `Manager`, and graphql-js accepts it. lite refuses an inline
+  fragment on a concrete type that has subclasses when the selection is typed at an ancestor, naming the fix: `... on
+  EmployeeInterface`, or `... on Employee` beside `... on Manager` if the exact split is wanted.
+- **G11. Reserved generated names.** Per class `XInterface`, `XWhere`, `XOrderBy`, `XAggregate`, `XSum`, `XAvg`,
+  `XMin`, `XMax`, `XGroups`, `XGroup`, `XGroupKey`, `XGroupHaving`, `XGroupOrderBy`; per collection property
+  `pAggregate`, `pGroups`; per subclass `asY`; the scalar and enum names of G5 and G7. The generator refuses a model
+  whose own element collides, naming it. Nothing is renamed silently.
+- **G12. No expressions in a query.** Computed values, cross-field comparisons and buckets beyond `truncate` are
+  derived properties in the Pure model, exposed as typed fields and arguments.
+- **G13. Oracles:** graphql-js for validity, Prisma over Postgres for the dialect's semantics, SQL twins on the
+  Postgres lane for what Prisma lacks (§3.3).
+- **G14. The agent surface is four tools:** `describe`, `validate`, `query`, `explain` (§8.4).
+
+Open, to be decided by the landing that meets them: the compact form `describe` returns beside the SDL (§8.4); whether
+the island's typed result is `String[1]` (the serialized JSON, as `serialize` answers) or a Variant (§8.3).
+
+---
+
+## 5. The generated schema, rule by rule
+
+The generator reads a data space's `ModelContext` (`compiler/element`) and emits a schema as data: an SDL text for
+`describe` and goldens, and the introspection answer the endpoint serves. It is deterministic: Pure declaration order
+for fields, class-name order for types; a golden per test model pins it (§9).
+
+### 5.1 Types and fields
+
+| Pure | GraphQL |
+|---|---|
+| `Class demo::Person` (leaf) | `type Person { ... }` |
+| `Class demo::Person` with subclasses | `interface PersonInterface { ... }` and `type Person implements PersonInterface { ... }` (G8) |
+| `Class <<typemodifiers.abstract>> demo::Shape` | `interface ShapeInterface { ... }` only |
+| `Class demo::Manager extends demo::Employee` (Employee extends Person) | `type Manager implements EmployeeInterface & PersonInterface { ... }`; `interface EmployeeInterface implements PersonInterface` |
+| property `name: String[1]` | `name: String!` |
+| property `age: Integer[0..1]` | `age: BigInt` |
+| property `firm: Firm[0..1]` | `firm: Firm` (or `FirmInterface`) |
+| property `employees: Person[*]` or `[1..*]` | `employees(where: PersonWhere, orderBy: [PersonOrderBy!], limit: Int, offset: Int): [PersonInterface!]!`, plus `employeesAggregate(where: PersonWhere): PersonAggregate!` and `employeesGroups(...)` |
+| derived property `fullName(): String[1]` | `fullName: String!`; also a `fullName: StringFilter` in `PersonWhere` and `fullName: SortDirection` in `PersonOrderBy` (no parameters, so it lowers like a property) |
+| derived property `salaryOn(d: Date[1]): Float[1]` | `salaryOn(d: Date!): Float!`; output only (a filter cannot supply its arguments) |
+| milestoned class | `businessDate: Date` and/or `processingDate: DateTime` as arguments on its root and on every navigation into it |
+| `Enum demo::Country { UK, US }` | `enum Country { UK US }` |
+| `doc.doc` tagged value | the SDL description, `"""..."""`, on the type or field |
+| `doc.deprecated` stereotype | `@deprecated` |
+| the package | not in the name: `demo::Person` is `Person`; two classes of one simple name in one data space are refused by name (G11), never disambiguated by package |
+
+Names: Pure's spelling, unchanged. GraphQL names are `[_A-Za-z][_0-9A-Za-z]*`; a Pure name outside that set is refused
+by name.
+
+### 5.2 Roots
+
+```graphql
+type Query {
+  Person(where: PersonWhere, orderBy: [PersonOrderBy!], limit: Int, offset: Int): [PersonInterface!]!
+  PersonAggregate(where: PersonWhere): PersonAggregate!
+  PersonGroups(where: PersonWhere, having: PersonGroupHaving, orderBy: [PersonGroupOrderBy!], limit: Int, offset: Int): [PersonGroup!]!
+  ...                                   # one triple per class of the data space
+  topFirms(n: BigInt!): [Firm!]!        # a Pure function of the data space
+}
+```
+
+A Pure function root takes its parameters as typed arguments and returns its declared type; a function returning a
+class collection gets no `where`/`orderBy` of its own in this line (its body is the query).
+
+### 5.3 Filters
+
+```graphql
+input PersonWhere {
+  fullName: StringFilter   age: BigIntFilter   born: DateFilter   country: CountryFilter
+  firm: FirmWhere                          # to-one: nested conditions; `is` / `isNot` on the relation object
+  employees: PersonListFilter              # to-many: { some: PersonWhere, every: PersonWhere, none: PersonWhere }
+  asEmployee: EmployeeWhere  asManager: ManagerWhere      # G9
+  AND: [PersonWhere!]  OR: [PersonWhere!]  NOT: PersonWhere
+}
+input StringFilter { equals: String  not: StringFilter  in: [String!]  notIn: [String!]  lt: String  lte: String  gt: String  gte: String  contains: String  startsWith: String  endsWith: String  mode: QueryMode }
+input BigIntFilter { equals: BigInt  not: BigIntFilter  in: [BigInt!]  notIn: [BigInt!]  lt: BigInt  lte: BigInt  gt: BigInt  gte: BigInt }
+input FirmWhere { ...  is: FirmWhere  isNot: FirmWhere }   # Prisma's relation filters; `isNot: null` and `is: null` take an explicit null
+enum QueryMode { default insensitive }
+```
+
+Semantics are SQL's and Prisma's: three-valued logic, `in: []` is false, `mode: insensitive` applies to the string
+comparisons of that object, `some` over an empty collection is false and `every` is true, `not` nests. Each operator
+has one lowering; the Prisma oracle pins each on Postgres.
+
+### 5.4 Sorting and paging
+
+```graphql
+input PersonOrderBy { fullName: SortDirection  age: SortDirection  born: SortDirection  firm: FirmOrderBy  asEmployee: EmployeeOrderBy  employeesAggregate: PersonAggregateOrderBy }
+enum SortDirection { ASC DESC }
+input PersonAggregateOrderBy { count: SortDirection  sum: PersonSumOrderBy  avg: PersonAvgOrderBy  min: PersonMinOrderBy  max: PersonMaxOrderBy }
+```
+
+A list of single-key objects gives key order; an object with more than one key is refused by name (the order would be
+unspecified). Nulls sort as the database sorts them, recorded per dialect in the register, not corrected. `limit`
+without `orderBy` is a warning from `validate`, never an error: a person may want any ten.
+
+### 5.5 Aggregates
+
+```graphql
+type PersonAggregate { count: BigInt!  sum: PersonSum  avg: PersonAvg  min: PersonMin  max: PersonMax }
+type PersonSum { age: BigInt  salaryOnRecord: Float }     # numeric properties and parameterless numeric derived properties
+type PersonAvg { age: Float  ... }
+type PersonMin { age: BigInt  born: Date  fullName: String  ... }   # every comparable property
+type PersonMax { ... }
+```
+
+`sum` and `avg` over an empty or all-null collection are null; `count` is the row count, never null. A subclass's own
+properties aggregate through the subclass's root or collection (`EmployeeAggregate { sum { salary } }`), since
+`PersonSum` holds Person's properties only.
+
+### 5.6 Groups (G7; built in PR5)
+
+```graphql
+type PersonGroup { key: PersonGroupKey!  count: BigInt!  sum: PersonSum  avg: PersonAvg  min: PersonMin  max: PersonMax }
+type PersonGroupKey { fullName: String  age: BigInt  born(truncate: DateUnit): Date  country: Country  firm: FirmGroupKey  address: AddressGroupKey }
+input PersonGroupHaving { count: BigIntFilter  sum: PersonSumFilter  avg: PersonAvgFilter  min: PersonMinFilter  max: PersonMaxFilter  AND: [PersonGroupHaving!]  OR: [PersonGroupHaving!]  NOT: PersonGroupHaving }
+input PersonGroupOrderBy { count: SortDirection  key: PersonOrderBy  sum: PersonSumOrderBy  avg: PersonAvgOrderBy  min: PersonMinOrderBy  max: PersonMaxOrderBy }
+enum DateUnit { YEAR QUARTER MONTH WEEK DAY HOUR }
+```
+
+The fields selected under `key` are the group keys; a `key` selection that is empty is a validation error naming
+`PersonAggregate` as the form for one group; an `orderBy: { key: ... }` naming a field not selected under `key` is an
+error. `truncate` is a field argument so that a key can be bucketed without leaving the type system.
+
+### 5.7 The reserved names and the refusals
+
+The generator fails the whole data space, naming the element, when: a property is named like a generated sibling
+(`employeesAggregate`, `asEmployee`, `__typename`); two classes share a simple name; a name is not a GraphQL name; a
+property's type is one lite cannot map (a `Map`, a function type, a `Variant` until a scalar for it is decided). A
+refused data space has no endpoint and `describe` says why. No renaming, no skipping, no defaulting.
+
+---
+
+## 6. The translator
+
+```
+document ─▶ GqlParser (exists) ─▶ Gql.Document ─▶ GqlValidator: graphql-js's rules + G10 + G11 over the generated schema
+                                                   │
+                                                   ▼
+                                     GqlToPure: one Pure ValueSpecification per root field
+                                     (Class.all() ─▶ graphFetch(tree with clauses) ─▶ serialize(tree))
+                                                   │
+                                                   ▼
+                                     Typer types it once ─▶ G½ … K (the graph emitter builds the JSON in SQL)
+```
+
+### 6.1 Construct by construct
+
+| GraphQL | Pure |
+|---|---|
+| root `Person(args) { sel }` | `Person.all()->graphFetch(#{Person(args){sel}}#)->serialize(#{Person(args){sel}}#)`; the root node carries the clauses exactly as a nested node does, so root and nested are one code path (§6.2) |
+| root `topFirms(n: 3) { sel }` | `topFirms(3)->graphFetch(...)->serialize(...)` |
+| a scalar field, an enum field | a tree leaf |
+| `alias: field` | the tree's alias (`'alias': field`, which lite's tree parses) |
+| a to-one field `firm { sel }` | a tree node |
+| a to-many field with arguments | a tree node with clauses (§6.2) |
+| `salaryOn(d: $d)` | a tree node with property parameters, which lite's tree parses (`k(%2024-01-01)`) |
+| milestoning arguments | the tree's temporal parameters, which lite's tree parses |
+| `... on Employee { sel }` on a `PersonInterface` selection | the tree's `->subType(@Employee) { sel }` entry, which lite's tree parses |
+| `__typename` | a tree leaf lite adds: the class name of the set implementation that produced the row (a spelled constant per union arm, `ClassConcatenates`; C6.2 of the tenet charter: a token compared, never computed) |
+| `where: { age: { gt: 30 } }` | `p \| $p.age > 30` |
+| `where: { firm: { legalName: { startsWith: "A" } } }` | `p \| $p.firm.legalName->startsWith('A')` with the to-one null carried as SQL carries it |
+| `where: { employees: { some: W } }` / `every` / `none` | `p \| $p.employees->exists(e \| W)` / `->forAll` / `!->exists`; the resolver's correlated subselects (`CorrelatedSubselects`) lower them |
+| `where: { asEmployee: W }` | the subclass test and the cast as the mapping spells them (`instanceOf` and `cast(@Employee)`, or the set implementation's discriminator directly: PR3 decides, measured) |
+| `where: { fullName: { equals: "x" } }` (a derived property) | the derived body inlined, as any derived property is |
+| `equals: null` / `not: null` | `->isEmpty()` / `->isNotEmpty()` |
+| `mode: insensitive` | `toLower` on both sides of that object's string comparisons |
+| `orderBy: [{ firm: { legalName: ASC } }, { age: DESC }]` | the node's ordered sort keys with directions (§6.2) |
+| `limit`, `offset` | the node's clauses; at the root also spellable as `->drop(m)->limit(n)` |
+| `employeesAggregate(where: W) { count sum { salary } }` | a tree node of kind aggregate (§6.2): the emitter's correlated subselect with `count(*)`, `sum(salary)` |
+| `PersonAggregate(where: W) { ... }` | `Person.all()->filter(W)` as the root of a one-row aggregate tree |
+| `PersonGroups(...) { key { ... } ... }` | the Relation API: `project` the keys and the aggregates, `groupBy`, `filter` for `having`, `sort`, `drop`, `limit`; the rows serialized to `{ key: {...}, count, sum: {...} }` by the key paths (PR5) |
+| `employeesGroups` under a parent | the same, correlated to the parent row and folded into its JSON array by the emitter (PR5) |
+| variables | Pure function parameters, typed by the declaration (`$w: PersonWhere!` is a typed input value, substituted into the filter at plan time) |
+| `@include(if: $x)` / `@skip` | applied before typing: the shape depends on the variables, so a plan is per distinct shape |
+| named fragments | inlined before typing |
+| several root fields in one document | one Pure expression per root field, one request, the endpoint carrying each answer under its alias (`extensions` names the plan per root) |
+
+### 6.2 What lite's tree lacks, and the extension
+
+`GraphFetchLiteral.Node` (`protocol/spec`) carries a property, parameters, an alias, a subtype view and children.
+What it cannot say: a filter, an ordered sort with directions, a limit and an offset **on a to-many node**, and an
+**aggregate node**. legend-engine's tree cannot either (its GraphQL supports `where` at the root only). With upstream
+compatibility off the table, the node gains typed clause fields: `where` (a lambda over the node's class), `orderBy`
+(a list of key lambda plus direction), `limit`, `offset`, and a node kind `aggregate` whose children are `count`,
+`sum`, `avg`, `min`, `max` with their property leaves. The record is the point; its Pure spelling is for the
+composer, so that the dumped Pure of a case reads and round-trips. The proposed spelling mirrors the GraphQL, which
+keeps the dump readable beside the query that produced it:
+
+```
+Firm.all()->graphFetch(#{
+  Firm(where: f | $f.legalName->startsWith('A'), orderBy: [~legalName->ascending()], limit: 10) {
+    legalName,
+    employees(where: e | $e.age > 30, orderBy: [~salary->descending()], limit: 3) { fullName, salary },
+    'headcount': employeesAggregate { count }
+  }
+}#)->serialize(...)
+```
+
+The `LEGEND_ENGINE` parser surface keeps refusing it; the own-corpus census declares it (LITE-DESIGN-graphql-tree,
+`docs/OWN_CORPUS_DECISIONS.md`); `PureComposer` prints it; `SpecParser` reads it; the Typer types a node's clauses
+against the node's class as it types the root's filter. Lowering: `GraphEmission` already builds each class-typed
+child as a correlated per-hop subselect with to-many children array-wrapped; a node's clauses are `WHERE`, `ORDER BY`,
+`LIMIT` and `OFFSET` on that subselect, and an aggregate node is that subselect with aggregates and no array. The SQL
+side exists; the Pure side is this extension; Java still computes nothing.
+
+### 6.3 Validation beyond graphql-js
+
+lite's validator runs the specification's validation rules (the ones graphql-js runs: fields exist, arguments typed,
+fragments spread on possible types, variables used and defined, leaf fields have no selection, composite fields have
+one) and then its own: G10 (the exact-type fragment inside an ancestor selection), G11 (collisions are a schema-time
+refusal, so a query never meets them), the group rules of §5.6, and the warnings (`limit` without `orderBy`; a
+deprecated field). Every error carries `LegendCompileException.Phase` (`PARSE`, `TYPE`, ...), line and column in the
+document, the message, and where a name is wrong, the nearest valid name of that type. `validate` returns all of them,
+not the first.
+
+### 6.4 Constraints
+
+- `protocol/**` depends only on protocol, values, JSON and the JDK (invariant 7b); the generator lives with the
+  compiler (`compiler/graphql/`), since it reads `ModelContext`; the endpoint in `server`.
+- TeaVM and GraalVM: the generator and the translator are JDK-only; each landing builds `//sdlc-server:page` and
+  `//wasm:planner`.
+- `//parser-equivalence:diagnostics` on every landing that touches `SpecParser`, `PureComposer` or a protocol record.
+- Java never computes a value: `__typename` is a spelled constant per arm; counts, sums and `truncate` are the
+  database's; the endpoint concatenates answers, it does not build them.
+
+---
+
+## 7. The worked example: every feature in one model
+
+The model (`graphql-parity/models/demo.pure` in the harness):
+
+```
+Class demo::Person
+{
+  firstName: String[1];
+  lastName: String[1];
+  age: Integer[1];
+  born: StrictDate[0..1];
+  fullName() { $this.firstName + ' ' + $this.lastName }: String[1];
+}
+Class demo::Employee extends demo::Person
+{
+  salary: Float[1];
+  manager: demo::Employee[0..1];
+  salaryOn(d: StrictDate[1]) { ... }: Float[1];
+}
+Class demo::Manager extends demo::Employee { budget: Float[1]; }
+Class demo::Firm { legalName: String[1]; founded: StrictDate[1]; }
+Class demo::Address { city: String[1]; country: demo::Country[1]; }
+Enum demo::Country { UK, US, JP }
+Association demo::Employment { firm: demo::Firm[0..1]; employees: demo::Person[*]; }
+Association demo::Residence { address: demo::Address[0..1]; residents: demo::Person[*]; }
+```
+
+The generated schema, abridged:
+
+```graphql
+scalar BigInt  scalar Date  scalar DateTime  scalar Decimal
+enum Country { UK US JP }   enum SortDirection { ASC DESC }   enum QueryMode { default insensitive }   enum DateUnit { YEAR QUARTER MONTH WEEK DAY HOUR }
+
+interface PersonInterface {
+  firstName: String!  lastName: String!  age: BigInt!  born: Date  fullName: String!
+  firm: Firm  address: Address
+}
+type Person implements PersonInterface { ...the same fields... }
+interface EmployeeInterface implements PersonInterface { ...Person's fields...  salary: Float!  manager: EmployeeInterface  salaryOn(d: Date!): Float! }
+type Employee implements EmployeeInterface & PersonInterface { ... }
+type Manager implements EmployeeInterface & PersonInterface { ...  budget: Float! }
+type Firm {
+  legalName: String!  founded: Date!
+  employees(where: PersonWhere, orderBy: [PersonOrderBy!], limit: Int, offset: Int): [PersonInterface!]!
+  employeesAggregate(where: PersonWhere): PersonAggregate!
+  employeesGroups(where: PersonWhere, having: PersonGroupHaving, orderBy: [PersonGroupOrderBy!], limit: Int, offset: Int): [PersonGroup!]!
+}
+type Address { city: String!  country: Country!  residents(...): [PersonInterface!]!  residentsAggregate(...): PersonAggregate!  residentsGroups(...): [PersonGroup!]! }
+
+input PersonWhere { firstName: StringFilter  lastName: StringFilter  age: BigIntFilter  born: DateFilter  fullName: StringFilter
+                    firm: FirmWhere  address: AddressWhere  asEmployee: EmployeeWhere  asManager: ManagerWhere
+                    AND: [PersonWhere!]  OR: [PersonWhere!]  NOT: PersonWhere }
+input PersonOrderBy { firstName: SortDirection  lastName: SortDirection  age: SortDirection  born: SortDirection  fullName: SortDirection
+                      firm: FirmOrderBy  address: AddressOrderBy  asEmployee: EmployeeOrderBy  asManager: ManagerOrderBy }
+type PersonAggregate { count: BigInt!  sum: PersonSum  avg: PersonAvg  min: PersonMin  max: PersonMax }
+type PersonSum { age: BigInt }   type PersonAvg { age: Float }
+type PersonMin { firstName: String  lastName: String  age: BigInt  born: Date  fullName: String }   type PersonMax { ...same... }
+type PersonGroup { key: PersonGroupKey!  count: BigInt!  sum: PersonSum  avg: PersonAvg  min: PersonMin  max: PersonMax }
+type PersonGroupKey { firstName: String  lastName: String  age: BigInt  born(truncate: DateUnit): Date  fullName: String  firm: FirmGroupKey  address: AddressGroupKey }
+
+type Query {
+  Person(where: PersonWhere, orderBy: [PersonOrderBy!], limit: Int, offset: Int): [PersonInterface!]!
+  PersonAggregate(where: PersonWhere): PersonAggregate!
+  PersonGroups(where: PersonWhere, having: PersonGroupHaving, orderBy: [PersonGroupOrderBy!], limit: Int, offset: Int): [PersonGroup!]!
+  Employee(...): [EmployeeInterface!]!   EmployeeAggregate(...): EmployeeAggregate!   EmployeeGroups(...): [EmployeeGroup!]!
+  Manager(...): [Manager!]!   ...   Firm(...): [Firm!]!   ...   Address(...): [Address!]!   ...
+}
+```
+
+**1. Filter, sort, page, navigate.**
+
+```graphql
+{
+  Person(
+    where: { age: { gt: 30 }, address: { country: { equals: UK } } }
+    orderBy: [{ lastName: ASC }, { age: DESC }]
+    limit: 10
+  ) { fullName age address { city } firm { legalName } }
+}
+```
+
+```json
+{ "data": { "Person": [ { "fullName": "Ann Adams", "age": 41, "address": { "city": "Leeds" }, "firm": { "legalName": "Acme" } }, ... ] } }
+```
+
+**2. Nested clauses and aggregates.**
+
+```graphql
+{
+  Firm(orderBy: [{ legalName: ASC }]) {
+    legalName
+    headcount: employeesAggregate { count }
+    seniors: employeesAggregate(where: { age: { gte: 50 } }) { count }
+    oldest: employeesAggregate { max { age born } }
+    top3: employees(orderBy: [{ asEmployee: { salary: DESC } }], limit: 3) { fullName ... on EmployeeInterface { salary } }
+  }
+}
+```
+
+```json
+{ "data": { "Firm": [ { "legalName": "Acme", "headcount": { "count": 12 }, "seniors": { "count": 4 },
+                        "oldest": { "max": { "age": 63, "born": "1961-02-11" } },
+                        "top3": [ { "fullName": "A. Lee", "salary": 410000.0 }, ... ] } ] } }
+```
+
+**3. Inheritance, a typed variable reused, a total beside a page.**
+
+```graphql
+query ($w: PersonWhere!) {
+  people: Person(where: $w, limit: 20) {
+    __typename
+    fullName
+    ... on EmployeeInterface { salary manager { fullName } }
+    ... on Manager { budget }
+  }
+  total: PersonAggregate(where: $w) { count }
+}
+```
+
+with `{ "w": { "OR": [ { "age": { "gt": 60 } }, { "asEmployee": { "salary": { "gt": 200000 } } } ] } }`:
+
+```json
+{ "data": { "people": [ { "__typename": "Manager", "fullName": "A. Lee", "salary": 410000.0, "manager": null, "budget": 2.0e6 },
+                        { "__typename": "Employee", "fullName": "B. Roy", "salary": 230000.0, "manager": { "fullName": "A. Lee" } },
+                        { "__typename": "Person", "fullName": "C. Oda" } ],
+            "total": { "count": 3 } } }
+```
+
+`... on Employee { salary }` in place of `... on EmployeeInterface` is refused by lite (G10): "`Employee` has the
+subclass `Manager`; inside a `Person` selection `... on Employee` matches exact Employees only; write `... on
+EmployeeInterface`, or `... on Employee` beside `... on Manager`."
+
+**4. Derived properties with arguments, milestoning, insensitive match.**
+
+```graphql
+{
+  Employee(businessDate: "2024-01-01", where: { lastName: { contains: "lee", mode: insensitive } }) {
+    fullName
+    salaryOn(d: "2024-06-30")
+  }
+}
+```
+
+**5. Groups (PR5).**
+
+```graphql
+{
+  PersonGroups(
+    where: { age: { gt: 18 } }
+    having: { count: { gt: 10 } }
+    orderBy: [{ count: DESC }, { key: { address: { country: ASC } } }]
+    limit: 20
+  ) {
+    key { address { country } born(truncate: YEAR) }
+    count
+    avg { age }
+  }
+}
+```
+
+```json
+{ "data": { "PersonGroups": [ { "key": { "address": { "country": "UK" }, "born": "1980-01-01" }, "count": 212, "avg": { "age": 44.1 } }, ... ] } }
+```
+
+**6. The same document inside Pure**, as the island, typed `String[1]`:
+
+```
+function demo::ukAdults(): String[1]
+{
+  #GQL{ { Person(where: { age: { gte: 18 }, address: { country: { equals: UK } } }) { fullName } } }#
+}
+```
+
+---
+
+## 8. The protocol around the language
+
+### 8.1 The endpoint
+
+`POST /graphql/{dataSpace}` on the lite server (`server/LegendHttpServer`, beside `PureV1Api` and `QueryService`),
+per the GraphQL-over-HTTP specification: `application/json` in, `application/graphql-response+json` out; `GET` for
+introspection and GraphiQL. One schema per data space (its classes, its mapping and runtime, its functions); the
+request names nothing else. `data` carries one entry per root field under its alias; `errors` the positioned errors;
+`extensions.plans` the Pure and the SQL per root when `explain` was asked.
+
+### 8.2 Results
+
+Nested JSON, to-many fields always arrays (empty, never null), to-one fields an object or null, nulls present rather
+than omitted, keys in the order written, `BigInt` and `Decimal` as JSON numbers, dates as ISO strings, enums as their
+names. Shape is the contract: agents rely on it more than people do.
+
+### 8.3 The island
+
+`#GQL{ document }#` inside Pure is the same document; its type is the serialized JSON, `String[1]`, as `serialize`
+answers (open: a Variant instead, decided when the Variant scalar of §5.7 is). It runs under the enclosing function's
+mapping and runtime, in Studio, the Query app, DataCube and Python without any of them learning GraphQL. The
+`LEGEND_ENGINE` surface keeps its refusal; the own-corpus census declares the island as lite's (LITE-DESIGN-gql-island).
+
+### 8.4 The four tools (G14)
+
+| Tool | Takes | Returns |
+|---|---|---|
+| `describe` | the data space; optionally a class list or a search term | the SDL for those classes and what they reach in one hop, with descriptions; never the whole schema of a large model unasked (the research's finding: accuracy collapses on large schemas) |
+| `validate` | a document and its variables | on success the typed result shape (`[{ fullName: String!, firm: { legalName: String! }? }]`); on failure every error with phase, line, column, message, nearest valid name; warnings beside |
+| `query` | a document, variables, a row cap | the answer, `truncated: true` when the cap cut it, the count of rows per root |
+| `explain` | a document and variables | the Pure per root field and the SQL per dialect, as `validate` plus the plans |
+
+As HTTP routes first (`/graphql/{ds}/schema`, `/validate`, `/graphql`, `/explain`), as MCP tools in PR6 with the
+one-page reference and five examples (three right, two labelled wrong: `where: { age: { _gt: 30 } }` and `where: {
+age: 30 }`) in the tool descriptions. Apollo's MCP server runs its `introspect`, `validate`, `execute` against the
+endpoint without any of this, which is the point of being GraphQL.
+
+### 8.5 Studio
+
+GraphiQL (MIT) in the Query app over the endpoint: introspection-driven completion, the docs panel showing the
+generated types beside their class. Later.
+
+---
+
+## 9. The harness
+
+### 9.1 Files: `core/src/test/resources/graphql-parity/`
+
+| File | Contents |
+|---|---|
+| `models/*.pure` and `models/*.rows.yaml` | the models and rows the cases run over: `demo` (§7), a milestoned model, a model with every scalar and enum, a three-level hierarchy with multiple inheritance, a model with a Pure function root |
+| `schema/*.graphql` | the generated SDL per model, golden; a change is a reviewed diff |
+| `lite/*.yaml` | lite's own cases: per case the document, the variables, the oracle (`prisma`, `sql`, `validity`), and for a `sql` case the SQL twin; for a `validity` case the expected verdict and message |
+| `prisma-answers.jsonl` | Prisma's answer per `prisma` case: the rows, the Prisma version, the Postgres version, the case's hash |
+| `validity.jsonl` | graphql-js's verdict per document of the randomized differential: valid, or the rule and message |
+| `ledger.tsv` | per case: the DuckDB status, the Postgres status, the oracle |
+| `decisions.tsv` | every REFUSED case with its reason and register row |
+
+### 9.2 The Prisma oracle: `tools/prisma-oracle/`
+
+`schema.mjs` writes a Prisma schema from a model's generated SDL (classes to models, scalars, enums, to-one and to-many
+relations with the harness's keys; inheritance flattened to the base model with the subclass columns nullable, since
+Prisma has none, which is why inheritance cases are `sql` cases). `snap.mjs` loads the rows into the embedded Postgres,
+runs each case's Prisma twin, which the YAML spells as a Prisma call (`findMany({ where, orderBy, take, skip, select
+})`, `aggregate`, `groupBy`), and writes the answers. `--check` re-runs and diffs. Node only, Prisma pinned in
+`package.json`; nothing of Prisma enters core.
+
+### 9.3 The judge and the differential
+
+`GraphqlParity` reuses `SqlParity`'s grid, statuses, ratchet, ledger I/O and YAML reader, with its own `outcome()`:
+lite's JSON against the oracle's rows, keys by name, lists in order where an `orderBy` fixes it and as sets otherwise,
+doubles within tolerance, dates as ISO, nulls as nulls. The validity differential generates documents over a golden
+schema (random selections, arguments drawn from the input types, variables, fragments, the G10 trap on purpose), runs
+graphql-js in the Node target to record verdicts, and asserts in every lane that lite rejects everything graphql-js
+rejects and accepts everything it accepts except the rules of §6.3, each of which the case names.
+
+### 9.4 Lanes and guards
+
+- `//core:graphql_parity_test` (DuckDB) and `//core:graphql_parity_postgres_test` (embedded Postgres 16), in
+  `//gates:core`; `//core:graphql_schema_golden_test`; `//core:graphql_validity_test` (reads `validity.jsonl`);
+  `//tools/graphql-js:differential` (Node; writes `validity.jsonl`; heavy lane).
+- UNSNAPPED, STALE, GONE as `iq-parity`; an answer snapped under another Prisma or Postgres version than the pinned
+  one is STALE.
+- The randomized check as the Postgres line's: type-correct documents over `demo`, run on Prisma and both lanes.
+- The size guard: generated SQL size per case from the first landing; nested clauses and aggregates multiply
+  correlated subselects, and the IQ line met a fourfold growth per level.
+
+---
+
+## 10. Milestones and slices
+
+Each landing: `//gates:local`, the TeaVM builds, one full CI run, an independent review by an agent that wrote none
+of it, a GATES entry, §13 here, `IN_FLIGHT`.
+
+| Slice | Content | Cases | Needs |
+|---|---|---|---|
+| **PR1** the schema and the validator | this study; `compiler/graphql/SchemaGenerator` (§5, every rule but groups' execution), the SDL and the introspection answer, the goldens; `GqlValidator` (§6.3) over the generated schema including G10 and G11; the routes `/graphql/{ds}/schema` and `/validate` with the typed result shape; the island's Typer arm to the validator (typed, not yet executed: a refusal by name after validation); the graphql-js differential and `validity.jsonl`; the own-corpus declaration | `schema/*.graphql`; `lite/validity.yaml`; the differential | the Typer arm, the server route; nothing in lowering |
+| **PR2** execution | `GqlToPure` for selections, aliases, variables, fragments, `@include`/`@skip`; the root and nested `where`, `orderBy`, `limit`, `offset`; the tree-node clauses (§6.2: protocol record, composer spelling, parser, Typer, `GraphEmission`); scalars and enums; derived properties with and without parameters; milestoning arguments; the endpoint and the envelope; the island executing; the Prisma oracle tool and `prisma-answers.jsonl` | `lite/basics.yaml`, `filters.yaml`, `nested.yaml`, `scalars.yaml`, `derived.yaml`; the randomized check | the clause extension announced in `IN_FLIGHT` (protocol, parser, composer, resolver files) |
+| **PR3** inheritance | interfaces and implementing types, `__typename`, `... on`, `asY` in `where` and `orderBy`, the G10 refusal end to end, abstract classes, multiple inheritance | `lite/inheritance.yaml` (SQL twins) | the mapping's set-implementation discriminator exposed to the translator; the `typemodifiers.abstract` stereotype read by name (new: nothing reads it today) |
+| **PR4** aggregates | `XAggregate` at the root and on collections, the aggregate node kind, `orderBy` by an aggregate | `lite/aggregates.yaml` (Prisma `aggregate` twins) | |
+| **PR5** groups | `XGroups`, `key` as the grouping, `truncate`, `having`, group `orderBy`, nested groups per parent | `lite/groups.yaml` (Prisma `groupBy` twins; `sql` twins for `truncate` and nested groups) | the Relation-rows-to-JSON fold in the emitter |
+| **PR6** the agent surface | `explain`; the MCP wrapper over the four routes; the tool descriptions as the one-page reference; GraphiQL in the Query app; an agent evaluation: forty natural-language tasks over `demo`, first-attempt validity and accuracy with and without `validate`, recorded as a measurement, not a claim | `eval/tasks.yaml` | |
+| **Later** | an OData reader onto the same translator (`$select`/`$expand` as a selection, `$filter` as a where, `$apply` as groups); cursor paging if a client needs it; `@defer`; mutations after F1; a `Variant` scalar; a numeric `bucket` on group keys; a schema per data space version served from Depot | | |
+
+**First slice: PR1 alone.** It ships the generated schema, introspection and a validator that returns typed result
+shapes, which is already the thing agents need most, before any row is fetched.
+
+---
+
+## 11. Risks
+
+- **Schema size on large models.** A model of five hundred classes generates several thousand types; introspection
+  is one answer of megabytes. `describe` is scoped from PR1; introspection is served whole because GraphiQL and Apollo
+  expect it, and its size is measured per test model from the first landing.
+- **Name collisions and the refusal.** G11 refuses a data space for one colliding property. Real models will meet it
+  (a property named `count` is fine; one named `employeesAggregate` is not). The refusal names the element and the
+  rule; a rename is the model author's.
+- **The fragment trap is lite's to catch.** G10 is a lite rule; graphql-js will keep accepting the query. GraphiQL
+  will not show the error until the request runs; the Query app's editor should ask `validate` as it types.
+- **Prisma as oracle has its own semantics.** `mode: insensitive`, `in: []`, `every` on an empty relation, nulls in
+  `orderBy`: each is measured on Postgres and recorded; where Prisma and SQL disagree the register row says which lite
+  follows (SQL's, with the Prisma case marked REFUSED by name). Prisma's version is pinned; a bump is a landing.
+- **64-bit integers in JSON.** `BigInt` serializes as a JSON number; JavaScript clients lose precision past 2^53. The
+  alternative, strings, breaks every other client. Documented in the register; the Python client reads exact.
+- **Variables and shape.** `@include(if: $x)` makes the plan depend on the variables; a plan cache keyed by shape, not
+  by document, from PR2.
+- **The tree extension touches shared files.** `protocol/spec/GraphFetchLiteral`, `SpecParser`, `PureComposer`,
+  `GraphFetchChecker`, `GraphEmission`: announced in `IN_FLIGHT` before PR2, as the Cypher plumbing was.
+- **Trademark and names.** GraphQL is a trademark of the GraphQL Foundation; Prisma's of Prisma Data, Inc.; neither
+  name appears in a type or a field. The dialect has no name of its own: it is "lite's GraphQL schema", generated.
+
+---
+
+## 12. Sources
+
+- **GraphQL:** the specification, September 2025 edition and the working draft (spec.graphql.org); "The September
+  2025 Edition" (graphql.org/blog, 2025-09-08); "Introducing GraphQL.js v17" (2026-06-15); the Foundation's 2026
+  budget post (2026-04-09); GraphQL over HTTP (graphql.github.io/graphql-over-http); graphql-js `src/__tests__`;
+  graphql-cats; the Composite Schemas roadmap.
+- **The dialects:** Hasura v2 and v3 filter, pagination and aggregation references; PostGraphile v5 filtering and
+  polymorphism; Prisma Client reference (filtering and sorting, aggregation, `groupBy`); Neo4j GraphQL library v3 to
+  v7 filtering and migration guides; AWS Amplify GraphQL transformer; Relay Cursor Connections; Shopify search
+  syntax; GitHub GraphQL pagination.
+- **Adoption and agents:** Postman State of the API 2025; SM3-Text-to-Query (arXiv 2411.05521); IBM text-to-GraphQL
+  (ACL Anthology 2024.emnlp-industry.117); CypherBench (arXiv 2412.18702); the TypeDB query-generation benchmark
+  (2026); Elastic's text-to-ES|QL benchmark; Anthropic "Writing tools for agents" and "Advanced tool use"; OpenAI
+  function-calling guidance; the Model Context Protocol specification (2025-06-18); Apollo MCP Server docs; Supabase,
+  Neo4j, BigQuery and MongoDB MCP servers; Microsoft Graph MCP server; Hasura PromptQL.
+- **Alternatives surveyed:** OData 4.01 and the Data Aggregation extension (OASIS); Apache Olingo's retirement
+  (attic.apache.org); JSON:API 1.1; PostgREST; MongoDB specifications (CC BY-NC-SA) and FerretDB; EdgeQL and the Gel
+  sunset notice; PartiQL and its license; ISO/IEC 39075:2024; Jakarta Data and Query; Cube and Malloy; Open Semantic
+  Interchange.
+- **legend-engine:** `legend-engine-xts-graphQL/` and `docs/graphQL/graphQL.md` (read for prior art; nothing loaded).
+- **This repository:** `docs/LEGEND_SQL_STUDY_2026_10_11.md`, `docs/IQ_SQL_STUDY_2026_10_13.md`,
+  `docs/CYPHER_STUDY_2026_10_15.md` (§1, §5.3, §8, §9), `docs/TENET_CHARTER.md`, `docs/WORLD_MAP.md`,
+  `docs/OWN_CORPUS_DECISIONS.md`, `docs/BI_AND_ETL_PLAN_2026_09_29.md` (F1), `core/.../parser/GqlParser.java`,
+  `core/.../protocol/spec/Gql.java`, `core/.../protocol/spec/GqlIsland.java`,
+  `core/.../protocol/spec/GraphFetchLiteral.java`, `core/.../compiler/spec/GraphFetchChecker.java`,
+  `core/.../resolver/GraphEmission.java`, `core/.../resolver/ClassConcatenates.java`,
+  `core/.../resolver/CorrelatedSubselects.java`, `core/src/test/java/com/legend/testcases/SqlParity.java`,
+  `core/src/test/resources/cypher-parity/`, `tools/iq-oracle/`, `MODULE.bazel` (rules_js).
+
+## 13. The record of landings
+
+None yet.
