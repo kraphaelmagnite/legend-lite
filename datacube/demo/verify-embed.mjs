@@ -91,6 +91,9 @@ try {
   if (rows.length !== 3) bad(`expected the file's 3 rows, saw ${rows.length}`);
   if (!rows.some((r) => r.includes('West') && r.includes('FX'))) bad('the file\'s rows are not on screen');
   if (rows.some((r) => /AMER|APAC|EMEA/.test(r.join(' ')))) bad('the demo\'s sample is on screen, not the file');
+  const status = await cube.evaluate(() => document.getElementById('status')?.textContent ?? '');
+  console.log(`status line: ${status}`);
+  if (/waiting for the host/.test(status)) bad('the status line still says it is waiting, with the file open');
   await page.close();
 
   // -- a host on an origin not allowed ------------------------------------------------------------------------------

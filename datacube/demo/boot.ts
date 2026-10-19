@@ -395,7 +395,10 @@ async function startPage(makePlanner: MakePlanner, settled: { show: (reason: str
   const hostedFile = async (link: Promise<HostLink>) => {
     status.textContent = 'waiting for the host\u2019s file\u2026';
     const { file, told } = await link;
-    return { kind: 'file' as const, file: await file, told };
+    const taken = await file;
+    // the status line at rest is the planner's word again, as on every other start
+    status.textContent = label;
+    return { kind: 'file' as const, file: taken, told };
   };
 
   // THE APP (src/app/datacube-app.ts), opened over the tab's services: what the address asks for first -- the sample
