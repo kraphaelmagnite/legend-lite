@@ -130,6 +130,39 @@ compress heavily, so enable gzip or brotli on whatever serves it.
 S3, GitHub Pages, nginx, a CDN — anything that serves files will do,
 and the URL is the product.
 
+## Inside another app's page
+
+An app that already has the rows — a query its own server ran, with
+credentials the browser never sees — can frame the cube and hand them
+over as a file. The cube opens it exactly as **Open a file** does:
+CSV, Parquet or JSON (an array of records, or one record per line),
+the format read from the name's extension.
+
+```html
+<iframe id="cube" src="/datacube/demo/index.html?embed"></iframe>
+<script>
+  const cube = document.getElementById('cube');
+  addEventListener('message', (e) => {
+    if (e.source !== cube.contentWindow) return;
+    if (e.data.type === 'datacube:ready') {
+      // bytes: an ArrayBuffer (transferred, not copied)
+      cube.contentWindow.postMessage(
+        { type: 'datacube:open-file', name: 'sales.json', bytes, mime: 'application/json' },
+        e.origin, [bytes]);
+    }
+    // then datacube:opened { name }, or datacube:error { message }
+  });
+</script>
+```
+
+With `?embed` the page opens no sample: it waits for one file from its
+parent (`src/host-file.ts`). Only the page's own origin is heard unless
+`config.json` names others in `embedOrigins` — and only `config.json`
+can, never the address, since the file is data the cube shows as fact.
+To open other rows, load the frame again. `bazel test
+//datacube:verify_embed_test` checks both halves: the file opened, and
+a host on another origin not heard.
+
 ## Check it end to end
 
 `bazel run //datacube:verify_real_data` drives the real page in a headless browser

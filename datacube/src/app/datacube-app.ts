@@ -65,7 +65,10 @@ export type AppStart =
   /** One frame of the host's (Python's `ll.show(df)`): a page of one grid over it, following the frame as it changes. */
   | { readonly kind: 'frame'; readonly name: string }
   /** The page another editor serves (`services.live.page`: Python's `ll.Page`), followed and reported back to it. */
-  | { readonly kind: 'live' };
+  | { readonly kind: 'live' }
+  /** A file the host hands over (a page embedding the cube: src/host-file.ts), opened as a picked one is; `told` how
+   *  the open went -- undefined, or why it did not. */
+  | { readonly kind: 'file'; readonly file: File; readonly told?: (problem: string | undefined) => void };
 
 /** How long a change waits to settle before the page reports its document to another editor (a drag, a typed name:
  *  one report, ms). */
@@ -1218,6 +1221,17 @@ export async function openDataCube(o: OpenDataCube): Promise<DataCubeApp> {
     if (start.kind === 'live') {
       const why = await openLive().catch((e: unknown) => (e instanceof Error ? e.message : String(e)));
       if (why !== undefined) failedStart(new Error(why));
+    }
+
+    // THE HOST'S FILE (a page embedding the cube): opened in place as a picked file is, the host told how it went
+    if (start.kind === 'file') {
+      try {
+        await openInPlace({ kind: 'file', file: start.file });
+        start.told?.(undefined);
+      } catch (e) {
+        failedStart(e);
+        start.told?.(startProblem);
+      }
     }
 
     // FOLLOWING THE OTHER EDITOR (services.live, §5): Python moves what the page shows -- the page itself (its version:

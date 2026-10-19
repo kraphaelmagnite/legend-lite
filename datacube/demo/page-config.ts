@@ -37,6 +37,11 @@ export interface PageConfig {
    * (//site:dist). The one key: nothing else in the config names a vendor folder.
    */
   readonly vendor: string;
+  /**
+   * The origins a page embedding the cube may hand it a file from (`?embed`: src/host-file.ts), besides the page's own.
+   * The file's only: never overridden by the address, since a file is data the cube shows as fact.
+   */
+  readonly embedOrigins: readonly string[];
 }
 
 export interface DepotConfig {
@@ -56,7 +61,7 @@ export interface ProjectConfig {
   readonly models: readonly string[];
 }
 
-const EMPTY: PageConfig = { legendLite: '', legendEngine: '', warehouse: '', queryStore: '', user: '', projects: [], vendor: './vendor/' };
+const EMPTY: PageConfig = { legendLite: '', legendEngine: '', warehouse: '', queryStore: '', user: '', projects: [], vendor: './vendor/', embedOrigins: [] };
 
 const texts = (v: unknown): string[] => (Array.isArray(v) ? v.map(text).filter((t) => t !== '') : []);
 
@@ -110,6 +115,7 @@ export async function pageConfig(location: Location = window.location): Promise<
         legendLite: text(raw['legendLite']), legendEngine: text(raw['legendEngine']), warehouse: text(raw['warehouse']),
         queryStore: text(raw['queryStore']), user: text(raw['user']), projects: projects(raw['projects'], url.href),
         vendor: text(raw['vendor']) || EMPTY.vendor,
+        embedOrigins: texts(raw['embedOrigins']),
         ...(byName ? { depot: byName } : {}),
       };
     }
@@ -125,6 +131,7 @@ export async function pageConfig(location: Location = window.location): Promise<
     user: file.user,
     projects: file.projects,
     vendor: file.vendor,
+    embedOrigins: file.embedOrigins,
     ...(file.depot ? { depot: file.depot } : {}),
   };
 }

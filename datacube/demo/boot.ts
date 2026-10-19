@@ -19,9 +19,10 @@ import type { ProjectDataSource } from '../../engine-client/src/project-data.ts'
 import { mountRemote } from '../src/remote.ts';
 import { isPageFragment } from '../src/share/link.ts';
 import type { TableModels } from '../src/infer.ts';
-import { pageConfig } from './page-config.ts';
+import { pageConfig, type PageConfig } from './page-config.ts';
 import { browserServices } from '../src/services/browser.ts';
 import { openDataCube } from '../src/app/datacube-app.ts';
+import type { HostLink } from '../src/host-file.ts';
 import type { PlaneService, PlaneWord, Services } from '../src/app/services.ts';
 import type { ColumnFormat } from '../src/format.ts';
 import type { CubeSnapshot } from '../src/snapshot.ts';
@@ -31,6 +32,8 @@ import { accessor, type ValueSpecification } from '../../pure-protocol/src/index
 // the query store's code, fetched the first time it is needed -- a query link in the address -- as charts are: a
 // grid-only page never downloads it (test/bundle-budget.test.ts)
 const queryStores = () => import('../../query-store/src/index.ts');
+// the embedding page's link, fetched only by an embedded page (?embed): a page standing alone never downloads it
+const hostFiles = () => import('../src/host-file.ts');
 
 /**
  * THE THREE PLANES, as data rather than as three copies of a menu.
@@ -70,14 +73,22 @@ export type { PlaneWord };
  * (docs/DATACUBE_APP_PLAN_2026_10_02.md, A3). Only `sample` builds the sample cube -- over the
  * generated trades, or over a `?remote=` file read through the same model. A share link or a saved
  * page in the address opens in place of nothing; so does the single-user app's launch key
- * (`#key=…&table=schema.name`, a fragment: never sent to a server).
+ * (`#key=…&table=schema.name`, a fragment: never sent to a server). A page embedding the cube (`?embed`) hands it a
+ * file instead (src/host-file.ts), listened for from the start, from the origins the configuration allows.
  */
 type Start =
   | { readonly kind: 'sample' }
   | { readonly kind: 'link' }
-  | { readonly kind: 'warehouse'; readonly key: string; readonly table?: string };
+  | { readonly kind: 'warehouse'; readonly key: string; readonly table?: string }
+  | { readonly kind: 'embed'; readonly link: Promise<HostLink> };
 
-async function startOf(where: Location): Promise<Start> {
+async function startOf(where: Location, configured: Promise<PageConfig>): Promise<Start> {
+  if (new URLSearchParams(where.search).has('embed')) {
+    return {
+      kind: 'embed',
+      link: Promise.all([configured, hostFiles()]).then(([c, { hostFile }]) => hostFile(window, c.embedOrigins)),
+    };
+  }
   if (where.hash.startsWith('#key=')) {
     const p = new URLSearchParams(where.hash.slice(1));
     const table = p.get('table');
@@ -291,10 +302,10 @@ async function startPage(makePlanner: MakePlanner, settled: { show: (reason: str
   // reported as unhandled in the window before that.
   engineReady.catch(() => {});
 
-  const start = await startOf(location);
   // the deployment's settings (config.json, the address's overrides), read once: the services hold what they say
   const configured = pageConfig();
   configured.catch(() => {});
+  const start = await startOf(location, configured);
   status.textContent = 'starting DuckDB and the planner…';
 
   // the one start of a tab's DuckDB (engine-client's startDuckDbInTab): its files and extensions from ./vendor/, its
@@ -380,14 +391,22 @@ async function startPage(makePlanner: MakePlanner, settled: { show: (reason: str
     epoch: 1,
   });
 
+  /** The embedding page's file, once it has handed it over: the page opens on nothing else. */
+  const hostedFile = async (link: Promise<HostLink>) => {
+    status.textContent = 'waiting for the host\u2019s file\u2026';
+    const { file, told } = await link;
+    return { kind: 'file' as const, file: await file, told };
+  };
+
   // THE APP (src/app/datacube-app.ts), opened over the tab's services: what the address asks for first -- the sample
-  // (the generated trades, or a `?remote=` file read through the same model), a link, or the launch key
+  // (the generated trades, or a `?remote=` file read through the same model), a link, the launch key, or the file an
+  // embedding page handed over
   await openDataCube({
     services,
     host: must('app'),
     status,
     windows: document.body,
-    start: start.kind === 'sample'
+    start: start.kind === 'embed' ? await hostedFile(start.link) : start.kind === 'sample'
       ? {
         kind: 'sample',
         sample: {

@@ -396,6 +396,7 @@ _HEADLESS_TESTS = [
     "grid-edits",
     "group-derived",
     "host",
+    "host-file",
     "infer",
     "json-shape",
     "lite-planner",
@@ -1613,6 +1614,7 @@ _HARNESSES = [
     "verify-charts",
     "verify-class",
     "verify-cubes",
+    "verify-embed",
     "verify-engine",
     "verify-engine-differential",
     "verify-features",
@@ -1640,6 +1642,8 @@ _BROWSER_TESTS = {
     # Create a Class… (docs/DATACUBE_MODEL_DESIGN_2026_10_10.md §15.7): two classes of two grids, in the page's SDLC
     "verify-class": "large",
     "verify-cubes": "large",
+    # a page embedding the cube hands it a file (src/host-file.ts): opened, and refused from an origin not allowed
+    "verify-embed": "large",
     "verify-layout": "large",
     "verify-page": "large",
     "verify-upload": "large",

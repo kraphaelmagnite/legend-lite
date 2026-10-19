@@ -1846,6 +1846,9 @@ TEST_IMPORTS = {
         "src/headless/url.ts",
         "src/headless/web.ts",
     ],
+    "host-file": [
+        "src/host-file.ts",
+    ],
     "host": [
         "src/host.ts",
     ],
